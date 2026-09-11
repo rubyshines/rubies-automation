@@ -64,9 +64,8 @@ const EXTRACT_TOOL = {
       city: { type: ['string', 'null'], description: 'The city of that address. null if not printed.' },
       region: { type: ['string', 'null'], description: 'The state, province or county of that address, as printed (e.g. "TX", "ON", "WA"). null if not printed.' },
       country: { type: ['string', 'null'], description: 'The country of that address, only if the signature names one. null otherwise — never infer it from the state or postal code.' },
-      phone: { type: ['string', 'null'], description: 'The organisation\'s main phone number from the signature. Prefer a shop or office number over a personal mobile. null if none is printed.' },
     },
-    required: ['first_name', 'last_name', 'title', 'street_address', 'city', 'region', 'country', 'phone'],
+    required: ['first_name', 'last_name', 'title', 'street_address', 'city', 'region', 'country'],
   },
 };
 
@@ -254,11 +253,10 @@ function planLocationFill(company = {}, extracted = {}, { requireStreet = true }
   const city = str(extracted.city, 100);
   const region = str(extracted.region, 100);
   const country = str(extracted.country, 100);
-  const phone = str(extracted.phone, 50);
 
   // A street with no city is still postable; a city on its own is not worth the
   // risk of contradicting a hand-set location.
-  if (requireStreet && !street && !phone) return null;
+  if (requireStreet && !street) return null;
   if (street && (/https?:|@|^www\./i.test(street) || street.length < 5)) return null;
 
   // City and country are the guard; the region is not. Recorded regions are a
@@ -278,7 +276,6 @@ function planLocationFill(company = {}, extracted = {}, { requireStreet = true }
   put('city', city);
   put('region', region);
   put('country', country);
-  put('phone', phone);
 
   if (!filled.length) return null;
   return { patch, why: `signature gave ${filled.join(', ')}` };
@@ -357,7 +354,7 @@ async function harvestContactDetails(sb, { company_id, sender, subject, body, co
     if (!contact || contact.company_id !== company_id) return null;
 
     const { data: company, error: cErr } = await sb.from('b2b_companies')
-      .select('id, name, address, city, region, country, phone')
+      .select('id, name, address, city, region, country')
       .eq('id', company_id).maybeSingle();
     if (cErr) throw new Error(cErr.message);
     const name = companyName || company?.name || null;
@@ -370,7 +367,7 @@ async function harvestContactDetails(sb, { company_id, sender, subject, body, co
     // their sample kit", so a known person at a company with no address on
     // file is still worth reading.
     const contactGaps = missingDetails(contact);
-    const companyGaps = ['address', 'phone'].filter(k => !str(company?.[k]));
+    const companyGaps = ['address'].filter(k => !str(company?.[k]));
     if (!contactGaps.length && !companyGaps.length) return null;
 
     // The other half of that trap, in slow motion: plenty of people never print

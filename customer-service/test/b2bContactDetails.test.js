@@ -119,7 +119,7 @@ test('missingDetails is the gate that keeps a model call off a complete row', ()
  *  test rather than the company's own gaps. */
 const COMPLETE_COMPANY = {
   id: 'the-bra-room', name: 'The Bra Room', address: '1 Main St',
-  city: 'Rothesay', region: 'NB', country: 'Canada', phone: '506 555 0100',
+  city: 'Rothesay', region: 'NB', country: 'Canada',
 };
 
 /** Minimal Supabase stub: one contact row, a count of their stored mail, and a
@@ -181,13 +181,13 @@ test('a known person at a company with no address is still worth reading', async
   const { sb, state } = stubDb({
     email: 'k@thebraroom.ca', company_id: 'the-bra-room',
     first_name: 'Katherine', last_name: 'Crilley', full_name: 'Katherine Crilley', title: 'Co-Owner',
-  }, 1, { id: 'the-bra-room', name: 'The Bra Room', address: null, city: 'Rothesay', region: 'NB', country: 'Canada', phone: null });
+  }, 1, { id: 'the-bra-room', name: 'The Bra Room', address: null, city: 'Rothesay', region: 'NB', country: 'Canada' });
   const got = await harvestContactDetails(sb, {
     company_id: 'the-bra-room', sender: 'k@thebraroom.ca', body: 'hi',
-    extract: async () => { state.extracted++; return { street_address: '2 King St', city: 'Rothesay', phone: '506 555 0111' }; },
+    extract: async () => { state.extracted++; return { street_address: '2 King St', city: 'Rothesay' }; },
   });
   assert.equal(state.extracted, 1, 'the sample-kit address is worth one read even when the person is known');
-  assert.deepEqual(got.company_filled.sort(), ['address', 'phone']);
+  assert.deepEqual(got.company_filled.sort(), ['address']);
   assert.deepEqual(state.updates, [], 'nothing on the contact changed');
 });
 
@@ -232,11 +232,11 @@ const { planLocationFill } = require('../../b2b-outreach/lib/contactDetails');
 
 test('a signature address fills the empty company fields', () => {
   const p = planLocationFill(
-    { city: null, region: null, country: null, address: null, phone: null },
+    { city: null, region: null, country: null, address: null },
     { street_address: '2097 Danforth Ave', city: 'Toronto', region: 'ON', country: 'Canada', phone: '647 725 6838' });
   assert.deepEqual(p.patch, {
-    address: '2097 Danforth Ave', city: 'Toronto', region: 'ON', country: 'Canada', phone: '647 725 6838',
-  });
+    address: '2097 Danforth Ave', city: 'Toronto', region: 'ON', country: 'Canada',
+  }, 'the phone in the signature is ignored — we do not keep phone numbers');
 });
 
 test('an address that contradicts the city on file is refused whole', () => {
@@ -258,9 +258,10 @@ test('a website or an email address is never stored as a street', () => {
   assert.equal(planLocationFill({}, { street_address: 'hello@example.com' }), null);
 });
 
-test('a phone with no address still lands', () => {
-  const p = planLocationFill({ address: '1 Main St' }, { street_address: null, phone: '(828) 484-8878' });
-  assert.deepEqual(p.patch, { phone: '(828) 484-8878' });
+// Retired 2026-09-11: nobody here phones a retailer, and the column it fed was
+// 85% asset hashes. A signature's phone number is read and dropped.
+test('a signature with a phone but no address writes nothing', () => {
+  assert.equal(planLocationFill({ address: null }, { street_address: null, phone: '(828) 484-8878' }), null);
 });
 
 test('a signature with no location writes nothing', () => {

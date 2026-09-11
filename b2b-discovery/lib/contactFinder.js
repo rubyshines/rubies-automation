@@ -113,38 +113,6 @@ function pickBestEmail(emails) {
   return emails[0];
 }
 
-function extractPhone(html) {
-  if (!html) return null;
-
-  // US phone number patterns — require 10+ digits
-  const phonePatterns = [
-    /(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g,
-  ];
-
-  const faxIndicators = /fax[:\s]*(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/gi;
-
-  // Build set of fax numbers to exclude
-  const faxNumbers = new Set();
-  const faxMatches = html.match(faxIndicators) || [];
-  for (const faxLine of faxMatches) {
-    const digits = faxLine.replace(/\D/g, '');
-    if (digits.length >= 10) faxNumbers.add(digits.slice(-10));
-  }
-
-  for (const pattern of phonePatterns) {
-    const matches = html.match(pattern) || [];
-    for (const raw of matches) {
-      const digits = raw.replace(/\D/g, '');
-      const normalized = digits.slice(-10);
-      if (normalized.length === 10 && !faxNumbers.has(normalized)) {
-        return raw.trim();
-      }
-    }
-  }
-
-  return null;
-}
-
 function findContactForm(html, pageUrl) {
   if (!html) return null;
 
@@ -199,9 +167,12 @@ function resolveUrl(url, base) {
   }
 }
 
+// No phone: the scraper used to read one off the page, which is how a column
+// the panel displayed filled up with asset hashes and build ids — and nobody
+// here phones a retailer anyway (Jamie, 2026-09-11). Google Places' own
+// formatted number still rides along in researcher.js for the research table.
 function findContacts(htmlByPage) {
   const allEmails = [];
-  let phone = null;
   let contactFormUrl = null;
   let contactPageUrl = null;
 
@@ -214,11 +185,6 @@ function findContacts(htmlByPage) {
       if (!allEmails.some((existing) => existing.email === e.email)) {
         allEmails.push(e);
       }
-    }
-
-    // Phone (take first found)
-    if (!phone) {
-      phone = extractPhone(html);
     }
 
     // Contact form
@@ -255,7 +221,6 @@ function findContacts(htmlByPage) {
     email: best?.email || null,
     emailType: best?.type || null,
     additionalEmails,
-    phone,
     contactFormUrl,
     contactPageUrl,
     contactMethod,
@@ -266,7 +231,6 @@ module.exports = {
   findContacts,
   extractEmails,
   pickBestEmail,
-  extractPhone,
   findContactForm,
   isPlaceholderEmail,
 };

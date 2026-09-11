@@ -7803,7 +7803,7 @@ function renderOutreachSidebarContext() {
     : '<span class="outreach-place-missing">timezone unknown</span>';
   const placeHtml = `<button class="outreach-place-edit" onclick="showLocationForm()"
       title="Edit city, state/province, country and timezone">${place ? esc(place) : '<span class="outreach-place-missing">no location</span>'} <span class="outreach-place-tz">&middot; ${tzText}</span></button>`;
-  const line2 = [placeHtml, ...[c.phone, c.general_email].filter(Boolean).map(esc)]
+  const line2 = [placeHtml, ...[c.general_email].filter(Boolean).map(esc)]
     .join('<span class="customer-sep">&middot;</span>');
 
   // The CS sidebar's parts, in the CS order: a header bar (the link out, the

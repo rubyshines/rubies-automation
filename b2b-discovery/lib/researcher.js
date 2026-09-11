@@ -133,12 +133,13 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey, skipIfNo
   // ── Step 4: Contact finder ─────────────────────────────────────────────────
   const contacts = Object.keys(rawHtmlByPage).length > 0
     ? findContacts(rawHtmlByPage)
-    : { email: null, emailType: null, additionalEmails: [], phone: result.phone || null, contactFormUrl: null, contactPageUrl: null, contactMethod: 'none' };
+    : { email: null, emailType: null, additionalEmails: [], contactFormUrl: null, contactPageUrl: null, contactMethod: 'none' };
 
   result.email = contacts.email;
   result.email_type = contacts.emailType;
   result.additional_emails = contacts.additionalEmails;
-  result.phone = contacts.phone || result.phone;
+  // result.phone is whatever Google Places gave us, if anything — the page
+  // scrape no longer contributes one.
   result.contact_form_url = contacts.contactFormUrl;
   result.contact_page_url = contacts.contactPageUrl;
   result.contact_method = contacts.contactMethod;
@@ -147,7 +148,6 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey, skipIfNo
     console.log(`[CONTACTS]`);
     console.log(`  → Best email: ${contacts.email} (${contacts.emailType})`);
     if (contacts.contactFormUrl) console.log(`  → Contact form: ${contacts.contactFormUrl}`);
-    console.log(`  → Phone: ${contacts.phone || '(none)'}`);
     console.log(`  → Contact method: ${contacts.contactMethod}`);
   } else if (verbose) {
     console.log(`[CONTACTS] No email found | form: ${contacts.contactFormUrl || 'none'} | method: ${contacts.contactMethod}`);
