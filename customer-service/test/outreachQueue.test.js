@@ -148,3 +148,56 @@ test('a reminder row replies inside the newest open thread when there is one (20
   assert.equal(without.tier, 5);
   assert.equal(without.thread_id, undefined, 'no open thread: a new email, subject typed by the operator');
 });
+
+// ── a claim nobody made cannot hide the mail that created it (2026-09-11) ───
+//
+// On Me is derived from open commitments, and the summariser reads a
+// commitment out of an incoming reply. Forbidden Fruit asked for the sample
+// kit and pricing at 18:41:47; the claim that reply produced was stamped
+// 18:41:58, eleven seconds later — and the queue, which drops a reply older
+// than the deferral on the reasoning that the operator deferred knowing it was
+// there, dropped the newest mail in the system. Provenance decides, not the
+// clock: a person's claim may suppress, a machine's may not.
+const CLAIM = '2026-06-10T09:00:00Z';
+const REPLY_BEFORE = { lastInboundAt: '2026-06-10T08:59:49Z', lastOutboundAt: '2026-06-09T00:00:00Z' };
+
+test('an engine-made claim never suppresses an unanswered reply', () => {
+  const c = retailer({ on_me_at: CLAIM, on_me_source: 'engine' });
+  const e = computeQueueEntry(c, REPLY_BEFORE, NOW);
+  assert.ok(e, 'the reply that created the claim must still be queue work');
+  assert.equal(e.tier, 1);
+  assert.match(e.reason, /waiting on us/);
+});
+
+test('an operator claim still suppresses a reply that predates it', () => {
+  // Unchanged, and the reason the rule exists: Jamie saw the mail and claimed
+  // the row anyway, so the queue must not hand it back to him.
+  const c = retailer({ on_me_at: CLAIM, on_me_source: 'operator' });
+  assert.equal(computeQueueEntry(c, REPLY_BEFORE, NOW), null);
+});
+
+test('a claim with no source recorded reads as the operator’s', () => {
+  // Rows predate the marker; every one of those claims was hand-made.
+  const c = retailer({ on_me_at: CLAIM });
+  assert.equal(computeQueueEntry(c, REPLY_BEFORE, NOW), null);
+});
+
+test('a reply landing after an engine claim surfaces too', () => {
+  const c = retailer({ on_me_at: CLAIM, on_me_source: 'engine' });
+  const e = computeQueueEntry(c, { lastInboundAt: '2026-06-10T10:00:00Z', lastOutboundAt: '2026-06-09T00:00:00Z' }, NOW);
+  assert.equal(e.tier, 1);
+});
+
+test('an engine claim does not resurrect a company with nothing waiting', () => {
+  // The claim is not a free pass back into the queue — it only stops being a
+  // reason to HIDE. With the last word ours, there is still nothing due.
+  const c = retailer({ on_me_at: CLAIM, on_me_source: 'engine' });
+  const ctx = { sentTypes: new Set(), lastInboundAt: '2026-06-08T00:00:00Z', lastOutboundAt: '2026-06-09T00:00:00Z' };
+  assert.equal(computeQueueEntry(c, ctx, NOW), null);
+});
+
+test('a pause still suppresses whoever put the claim there', () => {
+  // Pause is always a deliberate act, and it is the later stamp here.
+  const c = retailer({ on_me_at: CLAIM, on_me_source: 'engine', outreach_paused_at: '2026-06-10T09:30:00Z' });
+  assert.equal(computeQueueEntry(c, REPLY_BEFORE, NOW), null);
+});

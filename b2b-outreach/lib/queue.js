@@ -70,9 +70,34 @@ const TIER_BY_TYPE = {
  * value does is judge whether an unanswered reply is stale (below), and the
  * operator's most recent decision is the one that saw the most mail.
  */
+/**
+ * Did a person claim this company, or did something else? PURE.
+ *
+ * On Me is derived from open commitments, so a claim can be typed in (a person
+ * decided), written by the follow-up ladder running out of rungs, or extracted
+ * by the summariser from an email or a meeting. Only the first is a decision
+ * taken with knowledge of the mail on the record, which is the one thing the
+ * suppression rule below is entitled to assume. A missing source is read as
+ * operator: rows predate the marker, and those claims were all hand-made.
+ */
+function onMeSetByOperator(company) {
+  return (company?.on_me_source || 'operator') === 'operator';
+}
+
 function deferredSince(company, now = new Date()) {
   if (!company) return null;
-  const stamps = [company.outreach_paused_at, company.on_me_at];
+  const stamps = [company.outreach_paused_at];
+  // An On Me claim suppresses a reply only when a PERSON made it. On Me is
+  // derived from open commitments (2026-09-10), and the summariser extracts a
+  // commitment out of the very message that should put the company at Tier 1:
+  // Forbidden Fruit's reply asked for the sample kit and pricing, and the claim
+  // it created was stamped eleven seconds later, so the queue read their newest
+  // mail as something already seen and consciously set aside. A machine claim
+  // is not a decision that saw anything. The whole suppression rule rests on
+  // "the operator deferred knowing what was sitting there", which is true of a
+  // click and false of an extraction — so it is the claim's PROVENANCE, not its
+  // timestamp, that decides whether it may hide mail.
+  if (company.on_me_at && onMeSetByOperator(company)) stamps.push(company.on_me_at);
   if (company.snoozed_until && new Date(company.snoozed_until) > now) {
     // Older rows were snoozed before set-time was recorded. Falling back to the
     // snooze END date would suppress a reply that arrived during the snooze, so
@@ -290,6 +315,6 @@ function assembleQueue(items, now = new Date()) {
 }
 
 module.exports = {
-  computeQueueEntry, assembleQueue, humanAge, deferredSince,
+  computeQueueEntry, assembleQueue, humanAge, deferredSince, onMeSetByOperator,
   replyLandedAfter, replyWaiting, TIER_BY_TYPE,
 };

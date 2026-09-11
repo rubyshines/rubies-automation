@@ -140,15 +140,35 @@ async function openCommitmentsForCompany(sb, companyId) {
 }
 
 /**
+ * Who put this company on Jamie, from its open me-rows. PURE.
+ *
+ * Three kinds, and the difference is load-bearing rather than cosmetic: an On
+ * Me claim is a deferral, and `queue.deferredSince` lets one suppress an
+ * unanswered reply ONLY when a person made it. Calling an engine extraction
+ * 'operator' therefore did more than mislabel the row — it let a commitment
+ * read out of an incoming email hide that very email from the queue eleven
+ * seconds after it arrived (Forbidden Fruit, 2026-09-11).
+ *
+ * A cadence hand-off still wins the label when one is present: it is the only
+ * kind that carries a note, and "the ladder gave up on this" is the more
+ * urgent fact about a company than anything sitting beside it.
+ */
+function claimProvenance(openMeRows) {
+  const cadence = (openMeRows || []).find(r => r.source === 'cadence');
+  if (cadence) return { on_me_source: 'cadence', on_me_note: cadence.text };
+  const byHand = (openMeRows || []).some(r => r.created_by !== 'engine');
+  return { on_me_source: byHand ? 'operator' : 'engine', on_me_note: null };
+}
+
+/**
  * Recompute the derived On Me columns for a company from its open me-rows.
  * The ONLY writer of on_me_at / on_me_source / on_me_note.
  */
 async function syncOnMeFlag(sb, companyId) {
   if (!companyId) return null;
   const open = (await openCommitmentsForCompany(sb, companyId)).filter(r => r.owner === 'me');
-  const cadence = open.find(r => r.source === 'cadence');
   const patch = open.length
-    ? { on_me_at: open[0].created_at, on_me_source: cadence ? 'cadence' : 'operator', on_me_note: cadence ? cadence.text : null }
+    ? { on_me_at: open[0].created_at, ...claimProvenance(open) }
     : { on_me_at: null, on_me_source: null, on_me_note: null };
   const { error } = await sb.from('b2b_companies').update(patch).eq('id', companyId);
   if (error) throw new Error(`on me sync: ${error.message}`);
@@ -374,7 +394,7 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
     if (!c) continue;
     if (channel && c.relationship_type !== channel) continue;
     const ordered = orderCommitments(items.map(r => decorate(r, c, now)), now);
-    const cadence = items.find(r => r.source === 'cadence');
+    const { on_me_source, on_me_note } = claimProvenance(items);
     groups.push({
       company_id: cid,
       company_name: c.name,
@@ -383,8 +403,11 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
       count: items.length,
       items: ordered,
       oldest_text: items[0].text,
-      claimed_by: cadence ? 'cadence' : 'operator',
-      claim_note: cadence ? cadence.text : null,
+      // Same derivation as the denormalised column, from the same rows, so the
+      // list and the company row can never tell two different stories about
+      // who is holding this.
+      claimed_by: on_me_source,
+      claim_note: on_me_note,
     });
   }
   groups.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)));
@@ -394,7 +417,7 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
 module.exports = {
   OWNERS, SOURCES,
   normalizeText, classifyOwner, parseNextSteps, todayET, orderCommitments, decorate,
-  openCommitmentsForCompany, syncOnMeFlag,
+  openCommitmentsForCompany, syncOnMeFlag, claimProvenance,
   upsertCommitments, addCommitment, updateCommitment, completeCommitment, reopenCommitment,
   deleteCommitment, settleOnSend, abandonClaims, listCommitments, companiesOnMe,
 };

@@ -62,7 +62,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Gmail read state:** `b2b-outreach/lib/readState.js` mirrors Gmail unread to "waiting on us", called from the send tool, the correlator, and a nightly sweep.
 
-**Deferrals:** pause (indefinite, `outreach_paused_at`/`_reason`) and On Me (`on_me_at`, with `on_me_source` / `outreach_paused_source` distinguishing operator from cadence claims) on `b2b_companies`; snooze is deprecated (read path only). Thread Close/Reopen is separate from deferrals.
+**Deferrals:** pause (indefinite, `outreach_paused_at`/`_reason`) and On Me (`on_me_at`, with `on_me_source` / `outreach_paused_source` recording whether the operator, the cadence or the engine set it) on `b2b_companies`; snooze is deprecated (read path only). Thread Close/Reopen is separate from deferrals.
 
 ## Current Status
 
@@ -85,6 +85,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/tools/storeLocator.js` — store locator MCP tools.
 
 ## Key Decisions
+
+- **2026-09-11 — Only a deferral a person set may hide an unanswered reply.** On Me became derived from open commitments, and the summariser reads a commitment out of incoming mail, so a reply asking for a sample kit produced a claim eleven seconds later and the queue dropped that very reply as one the operator had seen and set aside. Every machine-made claim did this. The suppression test is now the claim's provenance rather than its timestamp: `on_me_source` distinguishes operator, cadence and engine, derived in one place from the rows themselves, and only an operator claim suppresses. A derived column that flattens who acted into a single default is not a labelling problem when something downstream reads it as consent.
 
 - **2026-09-11 — A human reply reopens a closed thread, and a due ladder rung is never operator work.** Close was the one deferral without the rule that a reply arriving after it was set always surfaces: a partner's hand-off and the new coordinator's reply sat on a closed thread invisible to Tier 1, and the read-state sweep then un-bolded them in Gmail because closed reads as nobody waiting. The correlator now flips a closed thread open on the first delivery of a human reply (never on a replay, which could undo a close made after reading it; never for machine mail), and the thank-you closer may close it straight back. Separately, rungs go due at the UTC day boundary and the draft pass runs once a day, so every chase sat in the queue for half a day with a composer inviting a hand-written version of an email the engine was about to send; the operator surfaces now drop ladder-owned rungs and bring one back badged stuck a business day past due, the same shape as the scheduled-draft rule.
 

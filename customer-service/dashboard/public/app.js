@@ -6247,9 +6247,15 @@ function outreachOnMeRowHtml(r) {
       : r.next_step
         ? esc(r.next_step)
         : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
-      ${r.claimed_by === 'cadence' || r.replied_since_claim || r.next_step_owner === 'them' ? `<div class="queue-item-row2">
+      ${r.claimed_by === 'cadence' || r.claimed_by === 'engine' || r.replied_since_claim || r.next_step_owner === 'them' ? `<div class="queue-item-row2">
         ${r.claimed_by === 'cadence'
     ? '<span class="badge badge-muted" title="The follow-up ladder ran out of moves and handed this to you — you did not claim it">handed over</span>'
+    : ''}
+        ${r.claimed_by === 'engine'
+    // Nobody clicked: this list entry was read out of a message or a call.
+    // Worth saying, because such a claim does not take the company out of the
+    // queue — only a claim you made yourself does that.
+    ? '<span class="badge badge-muted" title="Read off their message or a call, not claimed by you — this company is still in the queue">picked up for you</span>'
     : ''}
         ${r.replied_since_claim
     // Same class the queue gives its Tier-1 "reply needed" rows, because it is
@@ -6769,10 +6775,15 @@ function outreachStatePill(c) {
     // A hand-off is a different fact from a claim: you did not pick this up, the
     // ladder ran out of moves and gave it to you.
     const handed = c.on_me_source === 'cadence';
+    // A claim nothing human made cannot take a company out of the queue
+    // (queue.deferredSince), so the pill must not promise that it did.
+    const machine = c.on_me_source === 'engine';
     const tip = handed
       ? `${c.on_me_note ? c.on_me_note + ' — ' : ''}The follow-up ladder is spent, so nothing further will be sent automatically. Any draft is kept; sending clears it.`
-      : 'Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue.';
-    return `<span class="badge badge-onme" title="${esc(tip)}">${handed ? 'handed to you' : 'on you'} · ${days}d</span>`;
+      : machine
+        ? 'Read off their message or a call rather than claimed by you, so this company stays in the queue as well. Sending clears it.'
+        : 'Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue.';
+    return `<span class="badge badge-onme" title="${esc(tip)}">${handed ? 'handed to you' : machine ? 'picked up for you' : 'on you'} · ${days}d</span>`;
   }
   if (c.outreach_paused_at) {
     return `<span class="badge badge-paused" title="Not drafted, not chased, not followed up. A new reply still surfaces.">paused · ${esc(c.outreach_paused_reason || 'no reason recorded')}</span>`;

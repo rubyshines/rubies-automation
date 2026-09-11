@@ -133,7 +133,12 @@ test('upsert inserts once, dedupes on normalised text, and sets the derived On M
 
   const c = sb.tables.b2b_companies[0];
   assert.equal(c.on_me_at, NOW.toISOString(), 'the company is on me because I owe it something');
-  assert.equal(c.on_me_source, 'operator');
+  // 'engine', not 'operator' (2026-09-11): these rows were read out of a call's
+  // Next Steps, and Jamie clicked nothing. The distinction is load-bearing —
+  // queue.deferredSince lets only a hand-made claim suppress an unanswered
+  // reply — so an extraction that called itself his decision could hide mail he
+  // had never seen.
+  assert.equal(c.on_me_source, 'engine');
 });
 
 test('theirs alone does not put a company on me', async () => {
@@ -234,4 +239,53 @@ test('list decorates with company, channel, overdue and age; On Me groups by com
   assert.deepEqual(groups.map(g => g.company_id), ['b', 'a'], 'oldest claim first');
   assert.equal(groups[1].count, 1, 'their item does not count toward on me');
   assert.equal(groups[1].items[0].text, 'Overdue thing');
+});
+
+// ── who claimed it: provenance is load-bearing, not a label (2026-09-11) ────
+// queue.deferredSince lets an On Me claim suppress an unanswered reply only
+// when a person made it, so calling an engine extraction 'operator' let a
+// commitment read out of an email hide that email from the queue.
+test('claimProvenance: a row the engine wrote is an engine claim', () => {
+  const p = C.claimProvenance([{ source: 'email', created_by: 'engine', text: 'Send the sample kit' }]);
+  assert.equal(p.on_me_source, 'engine');
+  assert.equal(p.on_me_note, null);
+});
+
+test('claimProvenance: anything hand-made makes it the operator’s', () => {
+  assert.equal(C.claimProvenance([{ source: 'manual', created_by: 'operator', text: 'Call them' }]).on_me_source, 'operator');
+  // One typed row among engine ones is still a decision he made.
+  assert.equal(C.claimProvenance([
+    { source: 'email', created_by: 'engine', text: 'Send the kit' },
+    { source: 'manual', created_by: 'operator', text: 'Call them' },
+  ]).on_me_source, 'operator');
+});
+
+test('claimProvenance: a cadence hand-off wins the label and carries its note', () => {
+  const p = C.claimProvenance([
+    { source: 'email', created_by: 'engine', text: 'Send the kit' },
+    { source: 'cadence', created_by: 'engine', text: '3 unanswered since 2026-08-01' },
+  ]);
+  assert.equal(p.on_me_source, 'cadence');
+  assert.equal(p.on_me_note, '3 unanswered since 2026-08-01');
+});
+
+test('claimProvenance: no open rows is not a claim at all', () => {
+  assert.equal(C.claimProvenance([]).on_me_source, 'engine');
+});
+
+test('syncOnMeFlag stamps engine provenance for a commitment read off an email', async () => {
+  const sb = fakeSb({ b2b_companies: [{ id: 'forbidden-fruit', name: 'Forbidden Fruit', relationship_type: 'wholesale' }] });
+  await C.upsertCommitments(sb, {
+    company_id: 'forbidden-fruit', source: 'email', created_by: 'engine',
+    items: [{ owner: 'me', text: 'Send sample kit and wholesale pricing' }],
+  });
+  const c = sb.tables.b2b_companies.find(r => r.id === 'forbidden-fruit');
+  assert.ok(c.on_me_at, 'still claimed — the obligation is real');
+  assert.equal(c.on_me_source, 'engine', 'but nobody clicked, and the queue must know');
+});
+
+test('syncOnMeFlag stamps operator provenance for a typed row', async () => {
+  const sb = fakeSb({ b2b_companies: [{ id: 'shop-x', name: 'Shop X', relationship_type: 'wholesale' }] });
+  await C.addCommitment(sb, { company_id: 'shop-x', owner: 'me', text: 'Ring them', source: 'manual', created_by: 'operator' });
+  assert.equal(sb.tables.b2b_companies.find(r => r.id === 'shop-x').on_me_source, 'operator');
 });
