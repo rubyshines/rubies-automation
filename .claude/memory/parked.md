@@ -8,6 +8,20 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Re-sync stored Gmail bodies so the signatures come back
+- Parked: 2026-09-11
+- Domains: b2b_sales, cs, tech
+- Type: idea
+- Priority: medium
+- Notes: `stripQuotedContent` was deleting every sender's signature block before storage (fixed 2026-09-11), so mail already in `email_messages` / `b2b_messages` is still truncated — the Forbidden Fruit reply stops before "Cheers, Lynn Raridon". New mail is fine. A re-fetch through `gmail-management/sync/backfillGmail.js` would restore the sign-offs, after which `scripts/backfillContactDetails.js` would find names, titles and addresses it currently cannot see (the first sweep filled 75 contacts and 16 company addresses working with truncated bodies). Weigh against Gmail API cost/rate limits and the fact that it rewrites stored bodies.
+
+## `b2b_companies.phone` is mostly placeholder digits
+- Parked: 2026-09-11
+- Domains: b2b_sales, community
+- Type: bug
+- Priority: low
+- Notes: 242 of 286 phone values are bare 9-11 digit strings with no formatting, and they are provably junk: `2545352419` on 14 unrelated companies, `2147483647` (INT32_MAX) on 9, `3333333333` on 5, `6666666667` on 3, plus many with invalid area codes. Spread across every source (discovery, klaviyo_centerlink, donation_form, email), so it is an import mapping, not one bad run. Effect: the panel shows a nonsense phone, and the signature harvest's fill-only rule can never replace one because the column is not empty. Suggested cleanup, narrow enough to be safe: null any phone that is all one repeated digit, is a known sentinel, or is an unformatted digit string shared by 3+ companies. Everything else stays.
+
 ## Commitments in the daily sync digest
 - Parked: 2026-09-11
 - Domains: b2b_sales, tech

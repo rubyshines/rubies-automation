@@ -7165,7 +7165,7 @@ function showContactForm(replaces, edit = null) {
             title="The address is who this is — to write to a different address, use replace">`
         : `<input type="text" id="contact-email" placeholder="email@org.org" autocomplete="off" ${onEnter}>`}
       <input type="text" id="contact-title" placeholder="Title (optional)" autocomplete="off"
-        value="${esc(current?.title || current?.role || '')}" ${onEnter}>
+        value="${esc(current?.title || '')}" ${onEnter}>
       <div class="outreach-contact-form-actions">
         <button class="btn btn-primary" onclick="${save}">Save</button>
         <button class="btn btn-ghost" onclick="hideContactForm()">Cancel</button>
@@ -7708,6 +7708,19 @@ function showOutreachQueue() {
   if (location.hash.startsWith('#outreach-')) history.replaceState(null, '', location.pathname + location.search);
 }
 
+/**
+ * The company's address as you would write it on a parcel, not just the street
+ * line. "Send the sample kit" is a real reply we get, and answering it meant
+ * reading a bare street with no city under it. Returns '' when there is no
+ * street on file — a city on its own is a location, not somewhere to post to,
+ * and it already reads on the place control above.
+ */
+function mailingAddress(c) {
+  if (!c || !c.address) return '';
+  const line2 = [c.city, c.region].filter(Boolean).join(', ');
+  return [c.address, line2, c.country].filter(Boolean).join('\n');
+}
+
 function renderOutreachSidebarContext() {
   const entry = outreachEntries.get(outreachSelectedId);
   if (!entry) return;
@@ -7743,7 +7756,7 @@ function renderOutreachSidebarContext() {
   const contactRow = (ct) => `
     <div class="outreach-contact-row">
       <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}${ct.is_primary ? ' <span class="badge badge-muted">primary</span>' : ''}</span>
-      ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
+      ${ct.title ? `<span class="outreach-contact-role">${esc(ct.title)}</span>` : ''}
       <span class="outreach-contact-email">${esc(ct.email)}</span>
       <span class="outreach-contact-actions">
         ${ct.is_primary ? '' : `<button onclick="contactAction('primary', '${esc(ct.email)}')"
@@ -7769,7 +7782,7 @@ function renderOutreachSidebarContext() {
       ${former.map(ct => `
         <div class="outreach-contact-row outreach-contact-retired">
           <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}</span>
-          ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
+          ${ct.title ? `<span class="outreach-contact-role">${esc(ct.title)}</span>` : ''}
           <span class="outreach-contact-email">${esc(ct.email)}</span>
           ${ct.bounced_at ? '<span class="badge badge-warn" title="Mail to this address was rejected by their server. Restoring it will bounce again.">address dead</span>' : ''}
           <span class="outreach-contact-actions">
@@ -7816,11 +7829,11 @@ function renderOutreachSidebarContext() {
       <div id="outreach-location-form"></div>
       ${flags.length ? `<div class="customer-compact-line2">${flags.map(f => `<span class="badge badge-muted">${esc(f)}</span>`).join(' ')}</div>` : ''}
     </div>
-    ${c.description || c.address ? `
+    ${c.description || mailingAddress(c) ? `
     <details class="context-details">
       <summary class="context-section-label">About</summary>
       ${c.description ? `<div class="outreach-company-desc">${esc(c.description)}</div>` : ''}
-      ${c.address ? `<div class="outreach-company-meta">${esc(c.address)}</div>` : ''}
+      ${mailingAddress(c) ? `<div class="outreach-company-meta outreach-company-address">${esc(mailingAddress(c))}</div>` : ''}
     </details>` : ''}
     <details class="context-details" open>
       <summary class="context-section-label">Contacts${active.length ? ` <span class="badge badge-muted">${active.length}</span>` : ''}</summary>

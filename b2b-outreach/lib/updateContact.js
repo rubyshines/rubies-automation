@@ -31,10 +31,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * rules below are directly testable.
  *
  * @param existing  b2b_contacts rows already on the company
- * @param input     { email, full_name, title, role, replaces }
+ * @param input     { email, full_name, title, replaces }
  * @returns {{ contact, demote: string[], deactivate: string[] }}
  */
-function planContactUpdate(existing, { email, full_name, title, role, replaces } = {}) {
+function planContactUpdate(existing, { email, full_name, title, replaces } = {}) {
   const next = normalizeEmail(email);
   if (!next) throw new Error('email required');
   if (!EMAIL_RE.test(next)) throw new Error(`'${email}' is not an email address`);
@@ -66,7 +66,6 @@ function planContactUpdate(existing, { email, full_name, title, role, replaces }
       email: next,
       full_name: full_name?.trim() || null,
       title: title?.trim() || null,
-      role: role?.trim() || null,
       is_primary: true,
       is_active: true,
     },
@@ -79,7 +78,7 @@ function planContactUpdate(existing, { email, full_name, title, role, replaces }
  * Apply a contact change for a company.
  * @returns {{ company_id, contact, demoted, deactivated, previous_recipient }}
  */
-async function updateCompanyContact(sb, { company_id, email, full_name, title, role, replaces } = {}) {
+async function updateCompanyContact(sb, { company_id, email, full_name, title, replaces } = {}) {
   if (!company_id) throw new Error('company_id required');
 
   const { data: company, error: cErr } = await sb.from('b2b_companies')
@@ -92,7 +91,7 @@ async function updateCompanyContact(sb, { company_id, email, full_name, title, r
   if (eErr) throw new Error(eErr.message);
 
   const previous = (existing || []).find(c => c.is_active !== false && c.is_primary) || null;
-  const plan = planContactUpdate(existing, { email, full_name, title, role, replaces });
+  const plan = planContactUpdate(existing, { email, full_name, title, replaces });
 
   // An email is unique across the whole table, so the address may already sit on
   // ANOTHER company. Refuse rather than silently move it — that is how one org's

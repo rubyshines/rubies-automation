@@ -201,7 +201,9 @@ async function syncWholesaleSheet(sheets) {
         email,
         company_id: companyId,
         full_name: row['Primary Contact Name'] || null,
-        role: row['Role'] || null,
+        // The sheet's Role column is prose, not a job title ("Store owner said
+        // it wasn't a fit"), so it is no longer imported; `title` is the one
+        // field for who somebody is, and signatures fill it (contactDetails.js).
         is_primary: true,
         is_active: true,
         source: 'google_sheet',
@@ -286,7 +288,6 @@ async function syncDonationForm(sheets) {
         email: contactEmail,
         company_id: companyId,
         full_name: row['What is the name and title of the primary point of contact for this program']?.split('-')[0]?.trim() || null,
-        role: 'program_coordinator',
         is_primary: true,
         is_active: true,
         source: 'donation_form',

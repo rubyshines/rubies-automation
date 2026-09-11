@@ -129,7 +129,7 @@ async function buildCompanyContext(sb, companyId) {
   if (error || !company) throw new Error(`company ${companyId}: ${error?.message || 'not found'}`);
 
   const contacts = await fetchAllPaginated(() => sb.from('b2b_contacts')
-    .select('email, full_name, role, title, is_primary, is_active, notes')
+    .select('email, full_name, title, is_primary, is_active, notes')
     .eq('company_id', companyId).order('is_primary', { ascending: false }));
 
   const messages = await fetchAllPaginated(() => sb.from('b2b_messages')
@@ -367,7 +367,7 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   lines.push('');
   lines.push('## Contacts');
   for (const c of contacts) {
-    lines.push(`- ${c.full_name || c.email}${c.title ? ` (${c.title})` : c.role ? ` (${c.role})` : ''} <${c.email}>${c.is_primary ? ' [primary]' : ''}${c.is_active === false ? ' [INACTIVE]' : ''}`);
+    lines.push(`- ${c.full_name || c.email}${c.title ? ` (${c.title})` : ''} <${c.email}>${c.is_primary ? ' [primary]' : ''}${c.is_active === false ? ' [INACTIVE]' : ''}`);
     if (c.notes) lines.push(`  NOTES: ${c.notes}`);
   }
   lines.push('');
