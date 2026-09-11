@@ -97,19 +97,23 @@ gets buried. **The close-out sweep is a check you run and act on. The report is 
 If nothing clears the bar, the section does not appear. Do not invent an entry to fill it, and do not soften a
 real one into the block.
 
-**`Next steps`** — at most three lines, and only for things **Jamie himself has to do**. One action per line,
-shortest form that works: if it's a command, give the exact command and nothing else; if it's a decision, state
-the choice in one sentence. No rationale, no alternatives, no "you may want to consider."
+**`Next steps`** — **absent by default.** A finished session ends at the block. Shipping *is* the close; a
+ship that hands back a to-do list has reopened the thing it was supposed to close.
 
-The test is "would this be undone or unfinished if Jamie did nothing?" If yes, it's a next step. If no, it
-isn't:
-- Work **I** will do next is not a next step. Do it, or park it.
-- Optional ideas, someday-improvements, and things worth thinking about are not next steps. They go to
-  `parked.md` or nowhere.
-- Scope that got parked belongs in `Worth knowing`, not here — it's context, not an action.
+It appears only when the session is genuinely still open, which means one of exactly three things:
+- We are **working through a plan** and phases remain.
+- Jamie **explicitly deferred something this session** ("I'll get to that after," "leave that for later").
+- The ship is **blocked on an action only Jamie can take** (an approval prompt, a merge he must run).
 
-Most clean ships have no next step: the work is live and there is nothing to do. The section is absent then.
-Never pad it to make a ship feel more complete than it is.
+That is the whole list. A next step is never inferred from "an action exists" — it has to trace back to a plan
+in flight, something Jamie said, or a blocker. If you cannot point at which of the three it is, there is no
+`Next steps` section.
+
+When it does appear: at most three lines, one action each, shortest form that works. A command gets the exact
+command and nothing else; a decision gets one sentence. No rationale, no alternatives, no "you may want to
+consider." Work **I** will do next is not a next step — do it, or park it. Optional ideas go to `parked.md` or
+nowhere. Parked scope stays in `Worth knowing`; it's context, not an action. And never restate a step Jamie has
+already been given earlier in the session.
 
 **Never report** (all of this is routine, and success is assumed):
 - Worktrees — created, removed, still open, belonging to other sessions. If it's open, assume it was handled.
