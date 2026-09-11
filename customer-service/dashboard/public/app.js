@@ -6723,18 +6723,43 @@ function outreachAdvancePast(companyId) {
     if (outreachSelectedId === companyId) loadOutreachContext(companyId, false);
     return;
   }
-  const idx = outreachQueue.findIndex(e => e.company_id === companyId);
-  const next = outreachQueue[idx + 1] || outreachQueue[idx - 1] || null;
+  const neighbour = outreachQueueNeighbour(companyId);
   outreachQueue = outreachQueue.filter(e => e.company_id !== companyId);
   renderOutreachQueue();
+  outreachLandAfterRemoval(neighbour);
+}
+
+// The row to land on when the selected company leaves the queue: the one after
+// it, else the one before. Read BEFORE the list changes — afterwards there is
+// no position left to be adjacent to.
+function outreachQueueNeighbour(companyId) {
+  const idx = outreachQueue.findIndex(e => e.company_id === companyId);
+  if (idx === -1) return null;
+  return outreachQueue[idx + 1] || outreachQueue[idx - 1] || null;
+}
+
+// Put selection somewhere sensible once the acted-on company is out of the
+// queue. Shared by the optimistic path (send/dismiss) and the refetching one
+// (close), so "what happens when the queue empties" has one answer: nothing
+// selected, no stale detail panel, the queue sidebar back.
+//
+// `preferred` is re-checked rather than trusted — a refetch can have removed it
+// too (the nightly pass ran, someone else worked the row), and selecting a
+// company that is no longer in the list leaves j/k with nowhere to step from.
+function outreachLandAfterRemoval(preferred) {
+  outreachDraft = null;
+  outreachComposeFor = null;
+  outreachRecipientOverride = null;
+  const next = (preferred && outreachQueue.find(e => e.company_id === preferred.company_id))
+    || outreachQueue[0] || null;
   if (next) {
     selectOutreachEntry(next.company_id);
-  } else {
-    outreachSelectedId = null;
-    document.getElementById('outreach-detail').style.display = 'none';
-    document.getElementById('outreach-placeholder').style.display = 'flex';
-    showOutreachQueue(); // nothing selected — restore the queue sidebar
+    return;
   }
+  outreachSelectedId = null;
+  document.getElementById('outreach-detail').style.display = 'none';
+  document.getElementById('outreach-placeholder').style.display = 'flex';
+  showOutreachQueue(); // nothing selected — restores the queue sidebar and drops the deep-link hash
 }
 
 // Conversation history pane: threads newest-first, messages oldest-first.
@@ -7589,14 +7614,41 @@ async function closeOutreachThread(threadId, { refreshList = false, okMessage = 
     showToast(`Could not close: ${err.message}`, 'error');
     return false;
   }
-  showToast(okMessage, 'success');
-  if (outreachSelectedId === companyId) {
+  if (outreachSelectedId !== companyId) { showToast(okMessage, 'success'); return true; } // moved on while it saved
+
+  // Closing the thread that held the Tier-1 signal takes the company out of the
+  // queue, so while working the queue this should land on the next row rather
+  // than leaving you on a company you have just finished with.
+  //
+  // It ASKS rather than assuming, which is the whole point: a queue row is not
+  // always the thread. A company can be due for a cadence touch that has
+  // nothing to do with the conversation just closed (a vetted prospect's first
+  // touch, a seasonal check-in), and dropping the row locally would hide work
+  // the engine still wants — the optimistic removal that is correct after a
+  // send, where the row's own reason is what was just settled, is a lie here.
+  // So: refetch the queue, and advance only if the company genuinely left it.
+  if (outreachMode === 'queue') {
+    const neighbour = outreachQueueNeighbour(companyId);
+    await loadOutreachQueue(true);
+    if (outreachSelectedId !== companyId) return true; // moved on during the refetch
+    if (!outreachQueue.some(e => e.company_id === companyId)) {
+      showToast(okMessage, 'success');
+      outreachLandAfterRemoval(neighbour);
+      return true;
+    }
+    // Still due for something else. Stay put, and say which of the two things
+    // happened — the row sitting there after the click otherwise reads as the
+    // close having failed, and the caller's "out of the queue" message would be
+    // a flat contradiction of the list in front of you.
+    const still = outreachQueue.find(e => e.company_id === companyId);
+    showToast(`Thread closed. Still in the queue: ${still.reason || 'another touch is due'}.`, 'success');
     await loadOutreachContext(companyId, false);
-    // Closing the thread that held the Tier-1 signal takes the company out of
-    // the queue, so the list has to be redrawn or the row sits there unchanged
-    // and the click reads as having done nothing.
-    if (refreshList) loadOutreachSidebar();
+    return true;
   }
+
+  showToast(okMessage, 'success');
+  await loadOutreachContext(companyId, false);
+  if (refreshList) loadOutreachSidebar();
   return true;
 }
 

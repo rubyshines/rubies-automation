@@ -211,6 +211,26 @@ test('a vetted prospect gets the first touch for its channel', () => {
   assert.equal(evaluateDue(aff, freshCtx(), NOW).message_type, 'affiliate_intro');
 });
 
+test('a prospect we have already written to gets no first touch, whatever the state column says', () => {
+  // `relationship_state` is maintained by a nightly sweep, so between an
+  // inbound-email intake and the next run it can say `prospect` about a
+  // company an operator answered minutes ago. The branch checks its own
+  // stated reason instead of trusting the column (2026-09-11).
+  const c = org({ relationship_state: 'prospect', vetted_at: '2026-06-01T00:00:00Z' });
+  // An operator's hand-written reply: no message type, no engine source.
+  const operatorReply = freshCtx({
+    lastOutboundAt: '2026-06-10T09:00:00Z',
+    lastOutboundType: 'operator_message',
+    lastOutboundSource: 'send_tool',
+  });
+  assert.equal(evaluateDue(c, operatorReply, NOW), null);
+  // Any outbound at all counts, engine or not — a manual Gmail send reconciled
+  // in carries no type and is still evidence we have contacted them.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2026-06-09T09:00:00Z', lastOutboundSource: 'manual_send' }), NOW), null);
+  // The branch still fires when there genuinely is no outbound.
+  assert.equal(evaluateDue(c, freshCtx(), NOW).message_type, 'intro_outreach');
+});
+
 test('an unvetted prospect never surfaces — vetted_at is the admission gate', () => {
   // This is what keeps ~120 unenriched CenterLink rows out of the panel while
   // the 23 donation-form orgs go through.

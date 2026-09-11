@@ -89,7 +89,17 @@ async function addProspect(sb, {
     // `in_contact` because this path predates that state, which left it outside
     // Tier-4 first-touch entirely — visible only while its draft was pending,
     // and gone from the queue the moment that draft was dismissed.
-    relationship_state: existing?.relationship_state === 'lost' ? 'lost' : (existing?.relationship_state || 'prospect'),
+    //
+    // An org admitted from its own inbound mail is the exception, and not a
+    // matter of degree: `prospect` asserts we have never approached them, and
+    // the queue turns that assertion into a cold "let me introduce RUBIES".
+    // For a company whose entire reason for existing in the book is that THEY
+    // wrote to US, the assertion is false the moment the row is created. The
+    // nightly state sweep already promotes this row on the same evidence, so
+    // writing `prospect` here only buys a window — up to a day — in which the
+    // queue offers a first touch into a live conversation (2026-09-11).
+    relationship_state: existing?.relationship_state === 'lost' ? 'lost'
+      : (existing?.relationship_state || (source === 'inbound_email' ? 'in_contact' : 'prospect')),
     // An operator adding a named referral IS the vetting decision, so stamp the
     // Tier-4 admission gate here rather than making them triage their own
     // deliberate act. Preserved if already set.

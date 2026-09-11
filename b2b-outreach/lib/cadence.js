@@ -576,7 +576,22 @@ function evaluateDue(company, ctx, now = new Date()) {
       // vetted_at is the admission gate: Tier 4 only surfaces prospects a human
       // has actually looked at, so enriched and unenriched imports don't arrive
       // in the panel together.
-      if (state === 'prospect' && company.vetted_at) {
+      //
+      // `!ctx.lastOutboundAt` is the branch checking its own stated reason
+      // rather than trusting `relationship_state` to be current. That column is
+      // maintained by a NIGHTLY sweep (syncB2bCompanyState), so between an
+      // intake and the next 2am run it can say `prospect` about a company we
+      // answered ten minutes ago — and this branch would offer a cold "let me
+      // introduce RUBIES" into a live conversation. Any outbound counts, not
+      // just an engine send: an operator's own reply is the most emphatic
+      // possible evidence that we have contacted them (2026-09-11).
+      //
+      // Falling through is the right outcome, not a gap. A prospect we have
+      // just written to has nothing due: the ladder below chases the ask if it
+      // was a chaseable engine send, and the ongoing-relationship tracks all
+      // require `active`, so the company correctly leaves the queue until
+      // either they reply or the ladder comes round.
+      if (state === 'prospect' && company.vetted_at && !ctx.lastOutboundAt) {
         return { message_type: firstTouchType(company), reason: 'vetted prospect, never contacted' };
       }
       // Previously worked outside the engine (sheet history, samples sent, a
