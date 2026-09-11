@@ -95,7 +95,7 @@ function wholesaleTermsLines(discountPercent, { international = false } = {}) {
   return [
     `${d}% off retail, priced in USD`,
     `$${MINIMUM_ORDER_USD} USD minimum order, no unit minimums`,
-    'Free shipping, no duties',
+    'Free shipping from Portland, no duties',
     'Orders typically arrive within 5 business days',
     ...(international ? [PAYMENT_LINE] : []),
   ];
