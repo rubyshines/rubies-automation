@@ -3111,7 +3111,7 @@ async function apiB2bRefreshSummary(companyId) {
 // itself in the UI rather than throwing.
 async function apiB2bSaveDraft(companyId, body = {}) {
   return b2bQueueService.saveOperatorDraft(getSupabaseClient(), {
-    company_id: companyId, body: body.body, subject: body.subject,
+    company_id: companyId, body: body.body, subject: body.subject, to: body.to, cc: body.cc,
     // "Done, write to them": the commitment this composer was opened from rides
     // on the draft so a refresh mid-compose does not lose the link.
     completes_commitment_id: body.completes_commitment_id ?? undefined,
@@ -3561,6 +3561,7 @@ async function apiB2bComposeDraft(companyId, body = {}) {
     subject: body.subject,
     message_type: body.message_type || undefined,
     thread_id: body.thread_id || undefined,
+    to: body.to, cc: body.cc,
   });
 }
 

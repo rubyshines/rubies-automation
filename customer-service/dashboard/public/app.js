@@ -5547,6 +5547,10 @@ let outreachActivityDir = '';    // '' = both | outbound | inbound
 let outreachActivitySyncing = false;
 let outreachSelectedId = null;   // company_id of the selected row
 let outreachDraft = null;        // full b2b_drafts row currently shown
+// To/Cc typed into the recipient editor BEFORE any draft row exists (the empty
+// composer). Carried on the next autosave so the row is created with them —
+// otherwise the edit had nothing to save to and the row got the defaults.
+let outreachRecipientOverride = null;
 let outreachHistory = null;      // { threads: [...] } for the selected company (null = loading)
 let pendingOutreachRestore = null; // company_id from an #outreach-<id> deep link, applied after queue load
 // Detail rendering needs an entry for the selected company. Queue rows are
@@ -6646,6 +6650,7 @@ async function selectOutreachEntry(companyId) {
   outreachDraft = null;
   outreachHistory = null;
   outreachComposeFor = null;
+  outreachRecipientOverride = null;
   // The lit To do item survives only if it belongs to the company being opened.
   if (outreachTodoHighlight && findTodo(outreachTodoHighlight)?.company_id !== companyId) outreachTodoHighlight = null;
   location.hash = `outreach-${encodeURIComponent(companyId)}`; // reload restores this company
@@ -6707,7 +6712,8 @@ function navigateOutreach(direction) {
 // auto-polled, so there's nothing to resurrect the removed row.
 function outreachAdvancePast(companyId) {
   outreachDraft = null;
-  outreachComposeFor = null;   // the send settled it (or there was none)
+  outreachComposeFor = null;        // the send settled it (or there was none)
+  outreachRecipientOverride = null;
   // Only the queue is a worklist you burn down. In the directory and the
   // activity feed the row is a fact about the company, not a task — dropping it
   // on send would make the company you just wrote to vanish from the search you
@@ -8020,7 +8026,7 @@ async function ensureOutreachDraftId() {
   const subject = document.getElementById('outreach-subject-editor')?.value || '';
   clearTimeout(composerSaveTimer);
   const res = await api(`/api/b2b/companies/${encodeURIComponent(outreachSelectedId)}/save-draft`, {
-    method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
+    method: 'POST', body: composerSavePayload(body, subject),
   });
   return res.draft_id || null;
 }
@@ -8503,7 +8509,16 @@ async function dismissOutreachDraft() {
 function outreachRecipientHtml() {
   const r = outreachHistory?.recipient;
   const delivery = outreachHistory?.delivery;
-  const threaded = !!outreachDraft?.thread_id;
+  // Before a draft row exists the line comes from the compose target — the
+  // thread and reply-all cc the autosave will stamp on the row — plus whatever
+  // the operator has already typed into the editor. Once a row exists it is
+  // the truth: an absent structured.cc there means the operator cleared it.
+  // Reading only the draft here showed "starts a new email" with a blank Cc
+  // over a reply that was about to be threaded and cc'd, and editing To then
+  // saved that blank over the default and dropped the colleague.
+  const target = outreachDraft ? null : (outreachHistory?.compose_target || null);
+  const override = outreachDraft ? null : outreachRecipientOverride;
+  const threaded = outreachDraft ? !!outreachDraft.thread_id : !!target?.thread_id;
 
   if (delivery?.mode === 'form') {
     const host = String(delivery.url || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
@@ -8518,9 +8533,12 @@ function outreachRecipientHtml() {
   // the person you are actually answering — but it is a line you read, not a
   // form you fill, so the inputs open on "edit" and keep their ids for the
   // save and send paths.
-  const toValue = outreachDraft?.structured?.to || r?.email || '';
-  const ccValue = outreachDraft?.structured?.cc || '';
-  const via = !outreachDraft?.structured?.to && r?.via === 'general_email' ? ' (general inbox)' : '';
+  const toOverride = outreachDraft ? outreachDraft.structured?.to : override?.to;
+  const toValue = toOverride || r?.email || '';
+  const ccValue = outreachDraft
+    ? (outreachDraft.structured?.cc || '')
+    : (override ? override.cc : (target?.cc || ''));
+  const via = !toOverride && r?.via === 'general_email' ? ' (general inbox)' : '';
 
   return `<div id="outreach-recipient" class="outreach-recipient">
     <div class="outreach-recipient-line">
@@ -9260,9 +9278,15 @@ function fmtTimeET(iso) {
 
 /** Persist edited To/Cc onto the draft so the send path uses them. */
 async function saveOutreachRecipients() {
-  if (!outreachDraft) return;
   const to = document.getElementById('outreach-to-editor')?.value ?? '';
   const cc = document.getElementById('outreach-cc-editor')?.value ?? '';
+  if (!outreachDraft) {
+    // No row to save to yet. Hold the edit and let the autosave carry it, so
+    // the row is created with these rather than the defaults it would get.
+    outreachRecipientOverride = { to: to.trim(), cc: cc.trim() };
+    if ((document.getElementById('outreach-draft-editor')?.value || '').trim()) queueComposerAutosave();
+    return;
+  }
   try {
     await api(`/api/b2b/drafts/${outreachDraft.id}/recipients`, { method: 'POST', body: { to, cc } });
     outreachDraft.structured = { ...(outreachDraft.structured || {}), to: to.trim() || undefined, cc: cc.trim() || undefined };
@@ -9290,6 +9314,20 @@ function queueComposerAutosave() {
   composerSaveTimer = setTimeout(saveComposerDraft, 1200);
 }
 
+/**
+ * The body every save-draft / compose call sends. Recipient edits made before
+ * the row existed travel with it; `to`/`cc` are absent otherwise, so the
+ * server leaves structured alone. The commitment this composer was opened from
+ * rides along too, so a refresh mid-compose does not lose the link.
+ */
+function composerSavePayload(body, subject) {
+  return {
+    body, subject,
+    completes_commitment_id: outreachComposeFor || undefined,
+    ...(outreachRecipientOverride || {}),
+  };
+}
+
 async function saveComposerDraft() {
   const companyId = outreachSelectedId;
   const bodyEl = document.getElementById('outreach-draft-editor');
@@ -9302,7 +9340,7 @@ async function saveComposerDraft() {
   const seq = ++composerSaveSeq;
   try {
     const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
-      method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
+      method: 'POST', body: composerSavePayload(body, subject),
     });
     if (seq !== composerSaveSeq || outreachSelectedId !== companyId) return;
     if (res.saved === false && res.reason === 'advisor_draft') return; // not ours to overwrite
@@ -9341,13 +9379,13 @@ async function sendComposedDraft() {
   try {
     clearTimeout(composerSaveTimer);
     composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
-      method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
+      method: 'POST', body: composerSavePayload(body, subject),
     });
     // save-draft declines to overwrite an advisor draft, and returns no row when
     // it does. Nothing to send down that path but a fresh one.
     if (!composed?.draft_id) {
       composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/compose`, {
-        method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
+        method: 'POST', body: composerSavePayload(body, subject),
       });
     }
     const res = await api('/api/b2b/send', {

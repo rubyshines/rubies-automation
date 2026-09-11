@@ -20,13 +20,13 @@
  *   sendDraftById            — load a pending draft → sendB2bEmail (two-phase,
  *                              gate pass-through); marks the draft sent
  */
-const { assembleQueue, deferredSince, replyLandedAfter, humanAge } = require('./queue');
+const { assembleQueue, deferredSince, replyLandedAfter, replyWaiting, humanAge } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { nextScheduledTouch, LADDER_TYPES } = require('./cadence');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
-const { defaultReplyCc } = require('./replyCc');
+const { defaultReplyCc, computeReplyCc, pickReplyAnchor } = require('./replyCc');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
@@ -894,7 +894,7 @@ function composeDraftRow({ company_id, body, subject, message_type, thread_id, e
  *
  * @returns {{ draft_id, saved: boolean, reason?: string }}
  */
-async function saveOperatorDraft(sb, { company_id, body, subject, completes_commitment_id } = {}) {
+async function saveOperatorDraft(sb, { company_id, body, subject, to, cc, completes_commitment_id } = {}) {
   if (!company_id) throw new Error('company_id required');
   const text = (body || '').trim();
   // The commitment this message settles, kept on the row (structured is
@@ -922,16 +922,23 @@ async function saveOperatorDraft(sb, { company_id, body, subject, completes_comm
   }
 
   if (pending) {
-    const { error } = await sb.from('b2b_drafts')
-      .update({
-        body: text, subject: subject?.trim() || null,
-        ...(structuredPatch ? { structured: { ...(pending.structured || {}), ...structuredPatch } } : {}),
-      }).eq('id', pending.id);
+    const patch = { body: text, subject: subject?.trim() || null };
+    // A To/Cc typed into the empty composer rides the autosave (there is no row
+    // to POST it to until this creates one), and so does the commitment this
+    // message settles. Both only when actually touched: a keystroke must never
+    // rewrite structured, which also holds the attachments.
+    if (to !== undefined || cc !== undefined || structuredPatch) {
+      patch.structured = {
+        ...mergeRecipients(pending.structured, { to, cc }),
+        ...(structuredPatch || {}),
+      };
+    }
+    const { error } = await sb.from('b2b_drafts').update(patch).eq('id', pending.id);
     if (error) throw new Error(`draft autosave: ${error.message}`);
     return { draft_id: pending.id, saved: true };
   }
 
-  const { draft_id } = await composeDraft(sb, { company_id, body: text, subject });
+  const { draft_id } = await composeDraft(sb, { company_id, body: text, subject, to, cc });
   if (structuredPatch && structuredPatch.completes_commitment_id) {
     const { data: fresh } = await sb.from('b2b_drafts').select('structured').eq('id', draft_id).maybeSingle();
     await sb.from('b2b_drafts').update({ structured: { ...(fresh?.structured || {}), ...structuredPatch } }).eq('id', draft_id);
@@ -939,7 +946,7 @@ async function saveOperatorDraft(sb, { company_id, body, subject, completes_comm
   return { draft_id, saved: true, created: true };
 }
 
-async function composeDraft(sb, { company_id, body, subject, message_type, thread_id } = {}) {
+async function composeDraft(sb, { company_id, body, subject, message_type, thread_id, to, cc } = {}) {
   if (!company_id) throw new Error('company_id required');
   if (!body || !body.trim()) throw new Error('body required — nothing to send');
 
@@ -949,13 +956,18 @@ async function composeDraft(sb, { company_id, body, subject, message_type, threa
   if (!company) throw new Error(`company '${company_id}' not found`);
 
   const contexts = await buildContexts(sb, [company]);
-  const [entry] = assembleQueue([{ company, ctx: { ...contexts.get(company.id), hasPendingDraft: false } }]);
+  const ctx = contexts.get(company.id) || {};
+  const [queued] = assembleQueue([{ company, ctx: { ...ctx, hasPendingDraft: false } }]);
+  const entry = composeInheritEntry(queued, ctx);
   const draftRow = composeDraftRow({ company_id, body, subject, message_type, thread_id, entry });
 
-  // A hand-written reply into a thread starts with reply-all cc, same as an
+  // Recipients the operator already decided on (typed before this row existed)
+  // win outright, and an explicit empty cc is "cc nobody". Otherwise a
+  // hand-written reply into a thread starts with reply-all cc, same as an
   // advisor draft: whoever the contact kept on the conversation stays on it,
   // visible in the panel's Cc field where the operator can clear it.
-  if (draftRow.thread_id) {
+  if (to !== undefined || cc !== undefined) draftRow.structured = mergeRecipients(draftRow.structured, { to, cc });
+  if (cc === undefined && draftRow.thread_id) {
     const ccDefault = await defaultReplyCc(sb, { thread_id: draftRow.thread_id, our_email: FROM_EMAIL });
     if (ccDefault) draftRow.structured = { ...draftRow.structured, cc: ccDefault };
   }
@@ -1070,6 +1082,55 @@ function mergeFactVerification(structured, index, verified) {
 }
 
 /**
+ * Recipient overrides merged into a draft's `structured`. `undefined` leaves a
+ * field alone; an empty string clears it (To falls back to the resolved
+ * contact, Cc means cc nobody). Pure.
+ */
+function mergeRecipients(structured, { to, cc } = {}) {
+  const out = { ...(structured || {}) };
+  if (to !== undefined) { if (String(to).trim()) out.to = String(to).trim(); else delete out.to; }
+  if (cc !== undefined) { if (String(cc).trim()) out.cc = String(cc).trim(); else delete out.cc; }
+  return out;
+}
+
+/**
+ * The queue entry a hand-written message inherits its thread from.
+ *
+ * A deferred company (On Me, paused, snoozed) has no queue entry — that is what
+ * deferring means — but a reply they are waiting on still belongs in the thread
+ * they wrote in. Without this, claiming a Tier-1 row On Me and then answering
+ * it from the panel sent the answer as a brand-new email, with no thread and no
+ * cc, which is the opposite of what a claim is for. Same predicate as Tier 1
+ * without the deferral gate; the entry, when there is one, always wins. Pure.
+ */
+function composeInheritEntry(entry, ctx) {
+  if (entry) return entry;
+  if (replyWaiting(ctx) && ctx?.lastInboundThreadId) return { thread_id: ctx.lastInboundThreadId };
+  return undefined;
+}
+
+/**
+ * What a message typed into an EMPTY composer becomes, before any draft row
+ * exists: the thread it will inherit from the queue entry and the reply-all cc
+ * that thread implies. The panel shows this the moment the company opens.
+ * Until it did, "starts a new email" and a blank Cc stood over a reply the
+ * autosave would thread and cc correctly, and editing the To line then saved
+ * that blank Cc over the default, dropping the colleague the contact had kept
+ * on the conversation. Same inputs as composeDraft, so the line the operator
+ * reads and the row it becomes cannot disagree. Pure.
+ */
+function composeTarget({ entry, threads, ourEmail } = {}) {
+  const threadId = entry?.thread_id || null;
+  if (!threadId) return null;
+  const thread = (threads || []).find(t => t.id === threadId) || null;
+  return {
+    thread_id: threadId,
+    subject: thread?.subject || null,
+    cc: thread ? computeReplyCc(pickReplyAnchor(thread.messages || []), ourEmail) : null,
+  };
+}
+
+/**
  * Persist edited recipients on a pending draft. Stored on `structured`
  * alongside the attachment specs, so the send path reads one place.
  * Empty string clears an override and falls back to the resolved contact.
@@ -1082,9 +1143,7 @@ async function setDraftRecipients(sb, { draft_id, to, cc } = {}) {
   if (!draft) throw new Error(`draft #${draft_id} not found`);
   if (draft.status !== 'pending') throw new Error(`draft #${draft_id} is '${draft.status}' — only pending drafts can be changed`);
 
-  const structured = { ...(draft.structured || {}) };
-  if (to !== undefined) { if (String(to).trim()) structured.to = String(to).trim(); else delete structured.to; }
-  if (cc !== undefined) { if (String(cc).trim()) structured.cc = String(cc).trim(); else delete structured.cc; }
+  const structured = mergeRecipients(draft.structured, { to, cc });
 
   const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', draft_id);
   if (uErr) throw new Error(uErr.message);
@@ -1260,8 +1319,24 @@ async function fetchCompanyThreads(sb, companyId) {
     logoUrl = match?.logo_url || null;
   }
 
+  const threadsOut = [...byThread.values()];
+  // The queue entry composeDraft will inherit from, computed the same way it
+  // does. Fail-soft: the target is a line in the panel, never a reason to lose
+  // the pane.
+  let target = null;
+  try {
+    const ctx = (company && ctxMap.get(company.id)) || {};
+    const [queued] = company
+      ? assembleQueue([{ company, ctx: { ...ctx, hasPendingDraft: false } }])
+      : [];
+    target = composeTarget({ entry: composeInheritEntry(queued, ctx), threads: threadsOut, ourEmail: FROM_EMAIL });
+  } catch (err) {
+    console.error(`[queueService] compose target failed: ${err.message}`);
+  }
+
   return {
-    threads: [...byThread.values()],
+    threads: threadsOut,
+    compose_target: target,
     orders: ordersRes.data || [],
     // Derived here rather than in the panel so the detail pane and the directory
     // rows can never disagree about what stage a company is at.
@@ -1431,6 +1506,9 @@ module.exports = {
   mergeFactVerification,
   setFactVerified,
   setDraftRecipients,
+  mergeRecipients,
+  composeTarget,
+  composeInheritEntry,
   // directory / activity / thread state
   sanitizeSearchTerm,
   rollupThreads,

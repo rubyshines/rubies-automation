@@ -51,6 +51,23 @@ test('an existing operator draft is updated in place, not duplicated', async () 
   assert.deepEqual(state.updates[0].patch, { body: 'hello', subject: 'hi' }, 'trimmed');
 });
 
+test('a recipient edit made before the row existed rides the autosave onto it', async () => {
+  const state = { pending: { id: 9, advisor: null, structured: { cc: 'asha@colage.org', attachments: ['x'] } }, updates: [] };
+  await saveOperatorDraft(makeSb(state), { company_id: 'x', body: 'hello', subject: '', cc: '' });
+  assert.deepEqual(state.updates[0].patch, { body: 'hello', subject: null, structured: { attachments: ['x'] } },
+    'an explicit empty cc clears the default; everything else on structured survives');
+
+  const state2 = { pending: { id: 9, advisor: null, structured: { cc: 'asha@colage.org' } }, updates: [] };
+  await saveOperatorDraft(makeSb(state2), { company_id: 'x', body: 'hello', to: 'katy@colage.org', cc: 'asha@colage.org, board@colage.org' });
+  assert.deepEqual(state2.updates[0].patch.structured, { to: 'katy@colage.org', cc: 'asha@colage.org, board@colage.org' });
+});
+
+test('a plain keystroke never touches structured', async () => {
+  const state = { pending: { id: 9, advisor: null, structured: { cc: 'asha@colage.org' } }, updates: [] };
+  await saveOperatorDraft(makeSb(state), { company_id: 'x', body: 'hello' });
+  assert.equal('structured' in state.updates[0].patch, false);
+});
+
 test('clearing the box dismisses the draft rather than saving an empty one', async () => {
   const state = { pending: { id: 9, advisor: null }, updates: [] };
   const res = await saveOperatorDraft(makeSb(state), { company_id: 'x', body: '   ' });
