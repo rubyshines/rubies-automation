@@ -4311,13 +4311,26 @@ function showToast(message, type = 'success', opts = {}) {
     });
     toast.appendChild(viewBtn);
   }
+  // A generic action (Undo, mostly): one button, dismisses the toast, runs.
+  if (opts.action && typeof opts.action.onClick === 'function') {
+    toast.classList.add('toast-has-action');
+    const actBtn = document.createElement('button');
+    actBtn.className = 'toast-view-btn';
+    actBtn.textContent = opts.action.label || 'Undo';
+    actBtn.addEventListener('click', () => {
+      toast.classList.remove('toast-visible');
+      setTimeout(() => toast.remove(), 300);
+      opts.action.onClick();
+    });
+    toast.appendChild(actBtn);
+  }
 
   container.appendChild(toast);
   setTimeout(() => toast.classList.add('toast-visible'), 10);
   setTimeout(() => {
     toast.classList.remove('toast-visible');
     setTimeout(() => toast.remove(), 300);
-  }, opts.ticketId != null ? 6500 : 3000);
+  }, opts.ticketId != null || opts.action ? 6500 : 3000);
 }
 
 function esc(str) {
@@ -5764,30 +5777,130 @@ function todoSourceLabel(r) {
       : r.source === 'cadence' ? 'handed over' : '';
 }
 
+// ── To do rows: one row per promise, edited in place ───────────────────────
+// The row is the unit of work. A square check marks it done (with Undo), the
+// chevron opens an editor beneath it — wording, date, whose it is, which
+// company — and Delete lives there with Undo, so no dialog ever takes you away
+// from the list you are working. A request in flight disables its own buttons.
+let todoExpanded = null;             // commitment id whose editor is open
+const todoBusy = new Set();          // ids with a request in flight
+
 function outreachTodoRowHtml(r) {
   const isDone = r.status === 'done';
-  const mine = r.owner === 'me';
   const company = r.company_name
     ? `<span class="todo-company outreach-channel-chip outreach-channel-${esc(r.channel || '')}">${esc(r.company_name)}</span>` : '';
   const when = isDone ? ''
     : r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>`
       : `<span class="todo-age">${r.days_open}d</span>`;
   const source = todoSourceLabel(r);
-  const check = `<button class="todo-check${isDone ? ' todo-check-done' : ''}${!mine && !isDone ? ' todo-check-theirs' : ''}"
-      onclick="event.stopPropagation(); toggleTodoDone(${r.id}, ${isDone ? 'false' : 'true'})"
-      title="${isDone ? 'Reopen' : mine ? 'Done' : 'They did it'}" aria-label="${isDone ? 'Reopen' : 'Mark done'}"></button>`;
-  const open = r.company_id ? `openTodo(${r.id})` : `editTodo(${r.id})`;
-  return `<div class="queue-item outreach-row todo-row${isDone ? ' todo-row-done' : ''}${r.pinned_at ? ' todo-row-pinned' : ''}${r.id === outreachTodoHighlight ? ' active' : ''}"
+  const expanded = todoExpanded === r.id;
+  const open = r.company_id ? `openTodo(${r.id})` : `toggleTodoEditor(${r.id})`;
+  return `<div class="queue-item outreach-row todo-row${isDone ? ' todo-row-done' : ''}${r.pinned_at ? ' todo-row-pinned' : ''}${r.id === outreachTodoHighlight ? ' active' : ''}${expanded ? ' todo-row-open' : ''}"
        data-id="${r.id}" onclick="${open}">
     <div class="queue-item-inner todo-row-inner">
-      ${check}
+      ${todoCheckHtml(r)}
       <div class="todo-main">
         <div class="todo-text">${esc(r.text)}</div>
         <div class="todo-meta">${company}${when}${source ? `<span class="todo-source">${source}</span>` : ''}${r.blocked_by ? '<span class="badge badge-muted">blocked</span>' : ''}</div>
       </div>
-      <button class="todo-more" onclick="event.stopPropagation(); editTodo(${r.id})" title="Edit or delete">&#8943;</button>
+      ${todoExpandHtml(r)}
+    </div>
+    ${expanded ? todoEditorHtml(r, { withCompany: true }) : ''}
+  </div>`;
+}
+
+function todoCheckHtml(r) {
+  const isDone = r.status === 'done';
+  const mine = r.owner === 'me';
+  return `<button class="todo-check${isDone ? ' todo-check-done' : ''}${!mine && !isDone ? ' todo-check-theirs' : ''}"${todoBusy.has(r.id) ? ' disabled' : ''}
+      onclick="event.stopPropagation(); toggleTodoDone(${r.id}, ${isDone ? 'false' : 'true'})"
+      title="${isDone ? 'Reopen' : mine ? 'Mark done' : 'They did it'}" aria-label="${isDone ? 'Reopen' : 'Mark done'}"></button>`;
+}
+
+function todoExpandHtml(r) {
+  const expanded = todoExpanded === r.id;
+  return `<button class="todo-expand${expanded ? ' todo-expand-open' : ''}" onclick="event.stopPropagation(); toggleTodoEditor(${r.id})"
+      title="${expanded ? 'Close' : 'Edit'}" aria-label="${expanded ? 'Close editor' : 'Edit'}" aria-expanded="${expanded}"></button>`;
+}
+
+// The editor, beneath the row it belongs to. Enter saves, Escape closes.
+function todoEditorHtml(r, { withCompany = false } = {}) {
+  const dis = todoBusy.has(r.id) ? ' disabled' : '';
+  return `<div class="todo-editor" onclick="event.stopPropagation()" onkeydown="todoEditorKeys(event, ${r.id})">
+    <input type="text" class="todo-add-input todo-editor-text" id="todo-edit-text-${r.id}" value="${esc(r.text)}" aria-label="Wording"${dis}>
+    <div class="todo-editor-row">
+      <div class="todo-owner-toggle" role="group" aria-label="Whose">
+        <button class="${r.owner === 'me' ? 'active' : ''}" onclick="setTodoEditorOwner(${r.id}, 'me', this)"${dis}>I owe</button>
+        <button class="${r.owner === 'them' ? 'active' : ''}" onclick="setTodoEditorOwner(${r.id}, 'them', this)"${dis}>They owe</button>
+      </div>
+      <input type="hidden" id="todo-edit-owner-${r.id}" value="${esc(r.owner)}">
+      <input type="date" class="todo-add-input todo-editor-date" id="todo-edit-due-${r.id}" value="${esc(r.due_on || '')}" aria-label="Due date" title="Due date"${dis}>
+      ${withCompany ? `<input type="text" class="todo-add-input todo-editor-company" id="todo-edit-company-${r.id}" list="todo-company-list" placeholder="Company" value="${esc(r.company_name || '')}" autocomplete="off" aria-label="Company"${dis}>` : ''}
+    </div>
+    <div class="todo-editor-actions">
+      <button class="btn btn-primary btn-xs" onclick="saveTodoEditor(${r.id})"${dis}>Save</button>
+      ${r.status === 'open' ? `<button class="btn btn-ghost btn-xs" onclick="toggleTodoDone(${r.id}, true)"${dis}>${r.owner === 'them' ? 'They did it' : 'Done'}</button>` : ''}
+      <button class="btn btn-ghost btn-xs btn-ghost-danger" onclick="deleteTodo(${r.id})"${dis}>Delete</button>
+      <button class="btn btn-ghost btn-xs todo-editor-cancel" onclick="toggleTodoEditor(null)"${dis}>Cancel</button>
     </div>
   </div>`;
+}
+
+function toggleTodoEditor(id) {
+  todoExpanded = (id === null || todoExpanded === id) ? null : id;
+  repaintTodoRows();
+  if (todoExpanded) {
+    const t = document.getElementById(`todo-edit-text-${todoExpanded}`);
+    if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+  }
+}
+
+function setTodoEditorOwner(id, owner, btn) {
+  const h = document.getElementById(`todo-edit-owner-${id}`);
+  if (h) h.value = owner;
+  for (const b of btn.parentElement.querySelectorAll('button')) b.classList.toggle('active', b === btn);
+}
+
+function todoEditorKeys(ev, id) {
+  if (ev.key === 'Enter' && ev.target.tagName === 'INPUT') { ev.preventDefault(); saveTodoEditor(id); }
+  if (ev.key === 'Escape') { ev.preventDefault(); toggleTodoEditor(null); }
+}
+
+// Redraw wherever rows live without refetching: the sidebar list and the
+// company's block. A refetch would drop the editor the operator has open.
+function repaintTodoRows() {
+  if (outreachMode === 'todo' && document.getElementById('outreach-list')) renderOutreachList();
+  const relEl = document.getElementById('outreach-relationship');
+  const entry = outreachSelectedId && outreachEntries.get(outreachSelectedId);
+  if (relEl && entry && outreachHistory) relEl.outerHTML = outreachRelationshipHtml(entry);
+}
+
+async function saveTodoEditor(id) {
+  const r = findTodo(id);
+  if (!r) return;
+  const text = (document.getElementById(`todo-edit-text-${id}`)?.value || '').trim();
+  if (!text) { showToast('Give it some wording, or delete it', 'error'); return; }
+  const owner = document.getElementById(`todo-edit-owner-${id}`)?.value || r.owner;
+  const due_on = document.getElementById(`todo-edit-due-${id}`)?.value || '';
+  const body = { action: 'edit', text, owner, due_on };
+  const companyEl = document.getElementById(`todo-edit-company-${id}`);
+  if (companyEl) {
+    const typed = companyEl.value.trim();
+    if (!typed) body.company_id = '';
+    else if (typed !== (r.company_name || '')) {
+      const hit = matchTodoCompany(typed);
+      if (!hit) { showToast(`No company called "${typed}"`, 'error'); return; }
+      body.company_id = hit.id;
+    }
+  }
+  todoExpanded = null;
+  await todoAction(id, body, 'Saved');
+}
+
+function matchTodoCompany(typed) {
+  const q = typed.toLowerCase();
+  return (outreachTodoCompanies || []).find(c => c.name.toLowerCase() === q)
+    || (outreachTodoCompanies || []).find(c => c.name.toLowerCase().includes(q)) || null;
 }
 
 function findTodo(id) {
@@ -5805,18 +5918,33 @@ function refreshTodoSurfaces() {
   if (outreachSelectedId) loadOutreachContext(outreachSelectedId, false);
 }
 
+// Done and Delete both come back: Undo on the toast reverses either. The
+// request disables the row's own buttons until it lands, so a double click
+// cannot send twice.
 async function toggleTodoDone(id, done) {
-  await todoAction(id, { action: done ? 'done' : 'reopen' }, done ? 'Done' : 'Reopened');
+  if (done && todoExpanded === id) todoExpanded = null;
+  await todoAction(id, { action: done ? 'done' : 'reopen' }, done ? 'Done' : 'Reopened', done ? { action: 'reopen' } : null);
 }
 
-async function todoAction(id, body, okMessage) {
+async function deleteTodo(id) {
+  todoExpanded = null;
+  await todoAction(id, { action: 'delete' }, 'Deleted', { action: 'restore' });
+}
+
+async function todoAction(id, body, okMessage, undo = null) {
+  if (todoBusy.has(id)) return false;
+  todoBusy.add(id);
+  repaintTodoRows();
   try {
     await api(`/api/b2b/commitments/${id}`, { method: 'POST', body });
   } catch (err) {
+    todoBusy.delete(id);
+    repaintTodoRows();
     showToast(`Could not update: ${err.message}`, 'error');
     return false;
   }
-  showToast(okMessage, 'success');
+  todoBusy.delete(id);
+  showToast(okMessage, 'success', undo ? { action: { label: 'Undo', onClick: () => todoAction(id, undo, 'Put back') } } : {});
   refreshTodoSurfaces();
   return true;
 }
@@ -5827,23 +5955,6 @@ function openTodo(id) {
   if (!r || !r.company_id) return;
   outreachTodoHighlight = id;
   selectOutreachEntry(r.company_id);
-}
-
-// Edit or delete, in two prompts: the wording, then the date. Empty wording
-// offers delete — for a wrong capture; a finished one is Done, not deleted.
-async function editTodo(id) {
-  const r = findTodo(id);
-  if (!r) return;
-  const text = prompt('Edit this item. Leave it empty to delete it.', r.text);
-  if (text === null) return;
-  if (!text.trim()) {
-    if (!confirm('Delete this item? (If it was finished, use Done instead so the record keeps it.)')) return;
-    await todoAction(id, { action: 'delete' }, 'Deleted');
-    return;
-  }
-  const due = prompt('Due date as YYYY-MM-DD, or empty for none.', r.due_on || '');
-  if (due === null) return;
-  await todoAction(id, { action: 'edit', text: text.trim(), due_on: due.trim() }, 'Updated');
 }
 
 async function createTodo(body) {
@@ -5867,9 +5978,7 @@ async function addTodoFromList() {
   const typed = (document.getElementById('todo-add-company')?.value || '').trim();
   let company_id = null;
   if (typed) {
-    const q = typed.toLowerCase();
-    const hit = (outreachTodoCompanies || []).find(c => c.name.toLowerCase() === q)
-      || (outreachTodoCompanies || []).find(c => c.name.toLowerCase().includes(q));
+    const hit = matchTodoCompany(typed);
     if (!hit) showToast(`No company called "${typed}" — added as a general item`, 'error');
     else company_id = hit.id;
   }
@@ -5926,13 +6035,15 @@ function outreachCommitmentsHtml(rows) {
       <button class="btn btn-ghost btn-xs" onclick="addTodoForCompany('me')" title="Something you owe them">I owe</button>
       <button class="btn btn-ghost btn-xs" onclick="addTodoForCompany('them')" title="Something you are waiting on from them">They owe</button>
     </div>`;
-  const item = r => `<div class="todo-inline${r.id === outreachTodoHighlight ? ' todo-inline-hl' : ''}">
-      <button class="todo-check${r.owner === 'them' ? ' todo-check-theirs' : ''}" onclick="toggleTodoDone(${r.id}, true)"
-        title="${r.owner === 'them' ? 'They did it' : 'Done'}" aria-label="Mark done"></button>
-      <span class="todo-inline-text">${esc(r.text)}</span>
-      ${r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>` : ''}
-      ${r.owner === 'me' ? `<button class="btn btn-ghost btn-xs" onclick="writeToThemFor(${r.id})" title="Opens the composer; sending marks this done">Done, write to them</button>` : ''}
-      <button class="todo-more" onclick="editTodo(${r.id})" title="Edit or delete">&#8943;</button>
+  const item = r => `<div class="todo-inline${r.id === outreachTodoHighlight ? ' todo-inline-hl' : ''}${todoExpanded === r.id ? ' todo-inline-open' : ''}" data-id="${r.id}">
+      <div class="todo-inline-row">
+        ${todoCheckHtml(r)}
+        <span class="todo-inline-text">${esc(r.text)}</span>
+        ${r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>` : ''}
+        ${r.owner === 'me' ? `<button class="btn btn-ghost btn-xs" onclick="writeToThemFor(${r.id})" title="Opens the composer; sending marks this done">Done, write to them</button>` : ''}
+        ${todoExpandHtml(r)}
+      </div>
+      ${todoExpanded === r.id ? todoEditorHtml(r) : ''}
     </div>`;
   return `<div class="outreach-recap outreach-commitments">
     <div class="outreach-recap-k${mine.length ? ' outreach-recap-next' : ''}">You owe</div>
@@ -10134,3 +10245,52 @@ async function assessReview(id) {
     showToast(`Assess failed: ${err.message}`, 'error');
   }
 }
+
+// ── Resizable sidebar, every panel ──────────────────────────────────────────
+// The list pane's width is the operator's, remembered across visits, so a long
+// to-do line or a wide queue row need not wrap. One variable on the root, one
+// drag handle per panel, so every panel shares the width. Double-click the
+// handle to go back to the default. Desktop only; the mobile layout stacks.
+const SIDEBAR_MIN = 280;
+const SIDEBAR_MAX = 720;
+
+function initSidebarResizers() {
+  let saved = null;
+  try { saved = parseInt(localStorage.getItem('sidebarWidth'), 10); } catch (_) { /* no storage */ }
+  if (saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX) document.documentElement.style.setProperty('--sidebar-w', `${saved}px`);
+
+  for (const sidebar of document.querySelectorAll('.panel > .sidebar')) {
+    if (sidebar.nextElementSibling && sidebar.nextElementSibling.classList.contains('sidebar-resizer')) continue;
+    const handle = document.createElement('div');
+    handle.className = 'sidebar-resizer';
+    handle.title = 'Drag to resize the list. Double-click to reset.';
+    handle.addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      handle.setPointerCapture(ev.pointerId);
+      const startX = ev.clientX;
+      const startW = sidebar.getBoundingClientRect().width;
+      document.body.classList.add('sidebar-resizing');
+      const move = e => {
+        const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(startW + e.clientX - startX)));
+        document.documentElement.style.setProperty('--sidebar-w', `${w}px`);
+      };
+      const up = () => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+        document.body.classList.remove('sidebar-resizing');
+        const w = parseInt(document.documentElement.style.getPropertyValue('--sidebar-w'), 10);
+        try { if (w) localStorage.setItem('sidebarWidth', String(w)); } catch (_) { /* no storage */ }
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
+    handle.addEventListener('dblclick', () => {
+      document.documentElement.style.removeProperty('--sidebar-w');
+      try { localStorage.removeItem('sidebarWidth'); } catch (_) { /* no storage */ }
+    });
+    sidebar.insertAdjacentElement('afterend', handle);
+  }
+}
+document.addEventListener('DOMContentLoaded', initSidebarResizers);

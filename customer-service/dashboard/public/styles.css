@@ -314,8 +314,8 @@ main { height: calc(100vh - 56px); }
 /* ─── Sidebar (Queue List) ───────────────────────────────── */
 
 .sidebar {
-  width: 360px;
-  min-width: 360px;
+  width: var(--sidebar-w, 360px);
+  min-width: var(--sidebar-w, 360px);
   border-right: 1px solid var(--border);
   overflow-y: auto;
   overflow-x: hidden; /* overflow-y:auto alone computes overflow-x to auto — a wide child would scroll the pane (and page) sideways */
@@ -7035,9 +7035,10 @@ main { height: calc(100vh - 56px); }
 .todo-row-inner { display: flex; align-items: flex-start; gap: 8px; }
 .todo-check {
   flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; padding: 0;
-  border: 1.5px solid var(--border-strong); border-radius: 50%;
+  border: 1.5px solid var(--border-strong); border-radius: 4px;   /* a checkbox, not a radio */
   background: var(--surface); cursor: pointer; position: relative;
 }
+.todo-check:disabled { opacity: 0.5; cursor: progress; }
 .todo-check:hover { border-color: var(--teal); }
 .todo-check-done { background: var(--teal); border-color: var(--teal); }
 .todo-check-done::after {
@@ -7072,7 +7073,8 @@ main { height: calc(100vh - 56px); }
 
 /* The same items inside "Where this stands". */
 .outreach-commitments { margin-top: 10px; }
-.todo-inline { display: flex; align-items: center; gap: 8px; padding: 3px 0; flex-wrap: wrap; }
+.todo-inline { padding: 3px 0; }
+.todo-inline-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .todo-inline-text { flex: 1; min-width: 12ch; font-size: 13px; }
 .todo-inline-hl { background: var(--teal-soft); margin: 0 -6px; padding: 4px 6px; border-radius: var(--radius); }
 .outreach-compose-for {
@@ -7095,3 +7097,53 @@ main { height: calc(100vh - 56px); }
   .todo-check { width: 22px; height: 22px; }
   .todo-more { font-size: 20px; }
 }
+
+/* ── To do: the in-place editor (2026-09-11) ─────────────────────────────
+   Nothing about a row is edited in a dialog. The chevron opens the editor
+   beneath the row; Done and Delete come back through Undo on the toast. */
+.todo-expand {
+  flex-shrink: 0; width: 22px; height: 22px; padding: 0; margin-top: -2px;
+  border: none; background: transparent; cursor: pointer; position: relative;
+  color: var(--text-tertiary);
+}
+.todo-expand::after {
+  content: ''; position: absolute; left: 7px; top: 6px; width: 7px; height: 7px;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+  transition: transform 120ms ease;
+}
+.todo-expand:hover { color: var(--text); }
+.todo-expand-open::after { transform: rotate(-135deg); top: 9px; }
+.todo-row-open { background: var(--surface-inset); }
+.todo-editor {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 8px 0 2px 26px; cursor: default;
+}
+.todo-inline .todo-editor { margin-left: 26px; }
+.todo-editor-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.todo-editor-date { flex: 0 0 auto; }
+.todo-editor-company { flex: 1; min-width: 120px; }
+.todo-owner-toggle {
+  display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+}
+.todo-owner-toggle button {
+  padding: 5px 9px; font: inherit; font-size: 12px; border: none; background: transparent;
+  color: var(--text-secondary); cursor: pointer;
+}
+.todo-owner-toggle button + button { border-left: 1px solid var(--border); }
+.todo-owner-toggle button.active { background: var(--teal-soft); color: var(--teal); font-weight: 600; }
+.todo-owner-toggle button:disabled { cursor: progress; }
+.todo-editor-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.todo-editor-cancel { margin-left: auto; }
+.todo-editor .btn:disabled { opacity: 0.5; cursor: progress; }
+.todo-inline-open { background: var(--surface-inset); margin: 0 -6px; padding: 4px 6px; border-radius: var(--radius); }
+
+/* ── Resizable sidebar ────────────────────────────────────────────────── */
+.sidebar-resizer {
+  flex: 0 0 6px; margin-left: -3px; z-index: 2;
+  cursor: col-resize; background: transparent;
+  transition: background 120ms ease;
+}
+.sidebar-resizer:hover, body.sidebar-resizing .sidebar-resizer { background: var(--teal-soft); }
+body.sidebar-resizing { cursor: col-resize; user-select: none; }
+body.sidebar-resizing .sidebar, body.sidebar-resizing .detail { pointer-events: none; }
+@media (max-width: 768px) { .sidebar-resizer { display: none; } }

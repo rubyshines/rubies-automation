@@ -267,6 +267,7 @@ async function completeCommitment(sb, { id, by = 'operator', done_message_id = n
   return data;
 }
 
+/** Back to open, from done or from deleted (the toast's Undo). */
 async function reopenCommitment(sb, { id, now = new Date() } = {}) {
   const row = await loadCommitment(sb, id);
   const { data, error } = await sb.from('b2b_commitments')
@@ -277,13 +278,18 @@ async function reopenCommitment(sb, { id, now = new Date() } = {}) {
   return data;
 }
 
-/** A wrong capture. Gone, not done — done is history the summariser may read. */
-async function deleteCommitment(sb, { id } = {}) {
+/**
+ * A wrong capture. Hidden (status 'deleted') rather than removed, so the
+ * toast's Undo can put it straight back with its links intact; done is history
+ * the summariser may read, deleted is not, and neither is on any list.
+ */
+async function deleteCommitment(sb, { id, now = new Date() } = {}) {
   const row = await loadCommitment(sb, id);
-  const { error } = await sb.from('b2b_commitments').delete().eq('id', id);
+  const { data, error } = await sb.from('b2b_commitments')
+    .update({ status: 'deleted', updated_at: now.toISOString() }).eq('id', id).select('*').single();
   if (error) throw new Error(error.message);
   await syncOnMeFlag(sb, row.company_id);
-  return row;
+  return data;
 }
 
 /**

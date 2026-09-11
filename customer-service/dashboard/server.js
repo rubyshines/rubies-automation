@@ -3072,7 +3072,7 @@ async function apiB2bCommitmentAction(id, body = {}) {
   const sb = getSupabaseClient();
   switch (body.action) {
     case 'done': return C.completeCommitment(sb, { id, by: 'operator' });
-    case 'reopen': return C.reopenCommitment(sb, { id });
+    case 'reopen': case 'restore': return C.reopenCommitment(sb, { id });
     case 'delete': return C.deleteCommitment(sb, { id });
     case 'edit': return C.updateCommitment(sb, { id, text: body.text, due_on: body.due_on, owner: body.owner, company_id: body.company_id, pinned: body.pinned });
     default: {

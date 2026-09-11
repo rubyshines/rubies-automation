@@ -607,8 +607,8 @@ async function handleCommitments(input = {}) {
     }
     if (!input.id) return text(`Error: id required for ${action}`);
     if (action === 'done') { const r = await C.completeCommitment(sb, { id: input.id, by: 'operator' }); return text(`Done: #${r.id} ${r.text}`); }
-    if (action === 'reopen') { const r = await C.reopenCommitment(sb, { id: input.id }); return text(`Reopened: #${r.id} ${r.text}`); }
-    if (action === 'delete') { const r = await C.deleteCommitment(sb, { id: input.id }); return text(`Deleted: #${r.id} ${r.text}`); }
+    if (action === 'reopen' || action === 'restore') { const r = await C.reopenCommitment(sb, { id: input.id }); return text(`Reopened: #${r.id} ${r.text}`); }
+    if (action === 'delete') { const r = await C.deleteCommitment(sb, { id: input.id }); return text(`Deleted: #${r.id} ${r.text} (reopen restores it)`); }
     if (action === 'edit') {
       const r = await C.updateCommitment(sb, { id: input.id, text: input.text, due_on: input.due_on, owner: input.owner, company_id: input.company_id, pinned: input.pinned });
       return text(`Updated #${r.id}: ${r.owner === 'me' ? 'Jamie' : 'them'} — ${r.text}${r.due_on ? ` (due ${r.due_on})` : ''}`);

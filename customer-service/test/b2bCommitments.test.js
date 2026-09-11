@@ -196,18 +196,21 @@ test('a send settles the item the composer was opened from and any reply-claim o
   assert.equal(byId(otherThread.id).status, 'open', 'a reply-claim on another thread is untouched');
 });
 
-test('delete removes the row and clears the flag; reopen brings it back', async () => {
+test('delete hides the row and clears the flag; reopen (Undo) brings it back', async () => {
   const sb = fakeSb({ b2b_companies: [company('x')] });
   const row = await C.addCommitment(sb, { company_id: 'x', owner: 'me', text: 'Wrong capture', now: NOW });
-  await C.deleteCommitment(sb, { id: row.id });
-  assert.equal(sb.tables.b2b_commitments.length, 0);
+  await C.deleteCommitment(sb, { id: row.id, now: NOW });
+  assert.equal(sb.tables.b2b_commitments[0].status, 'deleted', 'kept, so Undo has something to restore');
   assert.equal(sb.tables.b2b_companies[0].on_me_at, null);
-
-  const again = await C.addCommitment(sb, { company_id: 'x', owner: 'me', text: 'Real one', now: NOW });
-  await C.completeCommitment(sb, { id: again.id, now: NOW });
-  assert.equal(sb.tables.b2b_companies[0].on_me_at, null);
-  await C.reopenCommitment(sb, { id: again.id, now: NOW });
+  assert.equal((await C.listCommitments(sb, { now: NOW })).length, 0, 'a deleted row is on no list');
+  await C.reopenCommitment(sb, { id: row.id, now: NOW });
+  assert.equal(sb.tables.b2b_commitments[0].status, 'open');
   assert.equal(sb.tables.b2b_companies[0].on_me_at, NOW.toISOString());
+
+  await C.completeCommitment(sb, { id: row.id, now: NOW });
+  assert.equal(sb.tables.b2b_companies[0].on_me_at, null);
+  await C.reopenCommitment(sb, { id: row.id, now: NOW });
+  assert.equal(sb.tables.b2b_companies[0].on_me_at, NOW.toISOString(), 'Undo on Done is the same reopen');
 });
 
 test('list decorates with company, channel, overdue and age; On Me groups by company oldest first', async () => {
