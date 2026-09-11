@@ -3,7 +3,7 @@ name: IRAP Proposal
 description: NRC-IRAP funding for AI Operations Platform, standard technical project, Jun 2026-Feb 2027
 type: project
 domains: [finance, cs, b2b_sales, marketing, tech]
-last_updated: 2026-09-02
+last_updated: 2026-09-11
 originSessionId: cea77ddb-41cd-438f-8b81-dd16fbb62d78
 ---
 ## Goal
@@ -22,6 +22,7 @@ Secure NRC-IRAP funding via the **standard technical IRAP** track (reframed from
 Proposal submitted, NRC project number 1044596. Monthly status report generator built (`finance/generate-irap-status-report.js`): builds each report from the month's actual repo history, Opus-synthesized into the NRC template; first report (June 2026, per backdated CA start) includes a "starting point at project commencement" baseline section disclosing pre-existing capabilities. Reports describe in-period work only — pre-project work is disclosed as baseline, never re-reported as new (integrity decision, 2026-07-22). Founder hours are claimable as eligible salary cost (agentic development practice).
 
 - July-August 2026 combined report generated as claim 2 (Sep 2026; the July claim was skipped, so the catch-up spans both months). Generator now supports multi-month claim periods. A report need not cover every objective every period, and metrics are included only when the founder supplies them as notes (Jamie's call, 2026-09-02).
+- NRC rejected the claim 2 report for not using their template (Sep 2026). The narrative was fine; the document was a lookalike that dropped the template's own instruction text and added an objectives appendix the template has no section for. Regenerated on the real template and ready to resubmit. Anything NRC asks to be filled on their form gets filled on their form, never rebuilt from scratch.
 
 ## Project Title
 RUBIES AI Operations Platform: Agentic AI Tooling for Productivity and Revenue Growth

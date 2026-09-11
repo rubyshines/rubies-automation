@@ -4,9 +4,9 @@
  * Given a reporting month, collects the actual git activity across the RUBIES
  * repos for that period, has Opus group the project-relevant work into
  * "Key Developments" sections in the style of past submitted reports, and
- * renders a Google-Docs-pastable HTML document matching the NRC status report
- * template (header fields, timeline, firm info, activities and outcomes,
- * variations, stacking, prepared-by, objectives appendix).
+ * renders it onto the NRC status report template itself (NRC banners, running
+ * footer, and every line of the template's own instruction text, answered or
+ * not) as a PDF, or as the same document in HTML.
  *
  * The report describes work performed IN the reporting period — the AI is
  * instructed to use only commit evidence and operator notes from that window.
@@ -309,98 +309,197 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-const H2_STYLE = 'color:#00808b;font-size:16pt;margin:24px 0 6px;border-bottom:2px solid #1f6fb2;padding-bottom:4px;';
+// Colours, tab stops and banner geometry are measured off the NRC template
+// ("Status Report - Document for Clients", rev. February 2023) and off a
+// previously accepted completed report, so the output IS the template, filled
+// in — not a lookalike. NRC rejected a lookalike in September 2026.
+const TEAL = '#007799';   // section headings
+const RULE = '#2E74B5';   // the rule that sits ABOVE each heading
+const HINT = '#5B9BD5';   // the template's own italic instruction text
+const TEMPLATE_REV = 'Last Modified: February 2023';
 
-function renderAppendix(objectivesAppendix) {
-  return objectivesAppendix.map((o) => {
-    const lines = o.text.split('\n').map((l) => l.trim()).filter(Boolean);
-    const body = lines.map((l) => (
-      l.startsWith('- ')
-        ? `<li style="margin:2px 0;">${esc(l.slice(2))}</li>`
-        : `<p style="margin:6px 0;">${esc(l)}</p>`
-    ));
-    // wrap consecutive <li> runs in a <ul>
-    const html = [];
-    let list = [];
-    for (const piece of body) {
-      if (piece.startsWith('<li')) { list.push(piece); continue; }
-      if (list.length) { html.push(`<ul style="margin:4px 0 8px;">${list.join('')}</ul>`); list = []; }
-      html.push(piece);
-    }
-    if (list.length) html.push(`<ul style="margin:4px 0 8px;">${list.join('')}</ul>`);
-    return `<h3 style="font-size:11pt;margin:14px 0 4px;">${esc(o.heading)}</h3>${html.join('')}`;
-  }).join('');
+// Banners and the Government of Canada signature, extracted from the template.
+const ASSETS_DIR = path.join(__dirname, '..', 'assets', 'irap');
+const assetCache = new Map();
+function asset(file) {
+  if (!assetCache.has(file)) {
+    const buf = fs.readFileSync(path.join(ASSETS_DIR, file));
+    assetCache.set(file, `data:image/jpeg;base64,${buf.toString('base64')}`);
+  }
+  return assetCache.get(file);
 }
 
-function renderReportHtml({ config, fields, sections }) {
-  const check = (v) => (v ? 'X yes &nbsp;&nbsp; &#9744; no' : '&#9744; yes &nbsp;&nbsp; X no');
+const BOX = '&#9744;';
+// Word form checkboxes print as a literal X beside the chosen option.
+const tick = (on) => (on ? 'X' : BOX);
+
+/** Place a run at one of the template's tab stops, in inches from the margin. */
+const at = (inches, html) => `<span class="at" style="left:${inches}in">${html}</span>`;
+const yesNo = (on, yesAt, noAt) =>
+  at(yesAt, `${tick(on)}&nbsp;&nbsp;yes`) + at(noAt, `${tick(!on)}&nbsp;&nbsp;no`);
+
+/** The stacking table: header plus the template's 15 empty claim rows. */
+function renderStackingTable() {
+  const head = `<tr>
+    <th class="c1">Claim No.</th>
+    <th class="c2">Period of claimed amounts</th>
+    <th class="c3">Cost Category</th>
+    <th class="c4">Government Program Name</th>
+    <th class="c5">Government Funding that intersects with NRC IRAP Project Costs ($)</th>
+  </tr>`;
+  const row = `<tr>
+    <td>&nbsp;</td>
+    <td>From<span style="display:inline-block;width:0.55in;"></span>To</td>
+    <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
+  </tr>`;
+  return `<table class="stacking">${head}${row.repeat(15)}</table>`;
+}
+
+function renderReportHtml({ fields, sections }) {
   const sectionsHtml = sections.map((s) => `
-    <h3 style="font-size:11pt;margin:14px 0 4px;">${esc(s.heading)}</h3>
-    <ul style="margin:4px 0 10px;">
-      ${s.bullets.map((b) => `<li style="margin:3px 0;">${esc(b)}</li>`).join('\n      ')}
-    </ul>`).join('\n');
+    <p class="sub"><b>${esc(s.heading)}</b></p>
+    <ul>${s.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>`).join('');
 
-  const stackingRows = Array.from({ length: 4 }, () =>
-    '<tr>' + '<td style="border:1px solid #999;padding:4px;">&nbsp;</td>'.repeat(5) + '</tr>').join('');
+  const baseline = fields.baseline ? `
+    <p class="sub"><b>${esc(fields.baseline.heading)} (capabilities already in place before ${esc(fields.periodFrom)})</b></p>
+    <p>${esc(fields.baseline.intro)}</p>
+    <ul>${fields.baseline.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : '';
 
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11pt;color:#111;max-width:7.5in;">
-  <h1 style="color:#00808b;font-size:20pt;margin:0 0 2px;">Status Report</h1>
-  <p style="font-style:italic;margin:0 0 16px;">Document for Clients</p>
+  // Every line of instruction text below is the template's own wording and must
+  // stay, answered or not: deleting it is what got the September 2026 report
+  // bounced as "not the template".
+  return `
+<table class="sheet"><thead><tr><td>
+  <div class="banner"><img src="${asset('banner-cont.jpg')}"></div>
+</td></tr></thead><tbody><tr><td class="body">
 
-  <table style="border-collapse:collapse;margin-bottom:12px;">
-    <tr><td style="padding:2px 24px 2px 0;">Claim Number</td><td style="padding:2px 40px 2px 0;"><b>${esc(fields.claimNumber || '')}</b></td>
-        <td style="padding:2px 24px 2px 0;">NRC IRAP Project Number</td><td><b>${esc(fields.projectNumber)}</b></td></tr>
-    <tr><td style="padding:2px 24px 2px 0;">Firm name</td><td colspan="3"><b>${esc(fields.firmName)}</b></td></tr>
-    <tr><td style="padding:2px 24px 2px 0;">Reporting period</td><td colspan="3"><b>From ${esc(fields.periodFrom)} To ${esc(fields.periodTo)}</b></td></tr>
-  </table>
+<div class="banner first-banner">
+  <img src="${asset('banner-first.jpg')}">
+  <div class="banner-title">Status Report</div>
+  <div class="banner-sub">Document for Clients</div>
+  <div class="banner-rev">${TEMPLATE_REV}</div>
+</div>
 
-  <h2 style="${H2_STYLE}">Project timeline</h2>
-  <p style="margin:6px 0;">Is the project on schedule? &nbsp;&nbsp; ${check(fields.onSchedule)}</p>
-  ${fields.onSchedule ? '' : `<p style="margin:6px 0;">Explanation for delays: ${esc(fields.delayExplanation || '')}</p>`}
-  <p style="margin:6px 0;">Provide a forecasted project completion date: &nbsp;${esc(fields.completionDate)}</p>
+<p class="hint">Use the tab button to move to the next field</p>
 
-  <h2 style="${H2_STYLE}">Information on the Firm</h2>
-  <p style="margin:6px 0;">Has your Firm&rsquo;s address changed since the last status report? &nbsp;&nbsp; ${check(fields.addressChanged)}</p>
-  <p style="margin:6px 0;">Has your Firm&rsquo;s name changed since the last status report? &nbsp;&nbsp; ${check(fields.nameChanged)}</p>
+<p class="row">Claim Number${at(1.51, esc(fields.claimNumber || ''))}${at(2.51, 'NRC IRAP Project Number')}${at(4.51, esc(fields.projectNumber))}</p>
+<p class="row">Firm name${at(1.51, esc(fields.firmName))}</p>
+<p class="row">Reporting period${at(1.51, `From&nbsp;&nbsp;&nbsp;${esc(fields.periodFrom)} To ${esc(fields.periodTo)}`)}</p>
 
-  <h2 style="${H2_STYLE}">Activities and outcomes (minimum 2 paragraphs)</h2>
-  ${fields.baseline ? `<h3 style="font-size:11pt;margin:14px 0 4px;">${esc(fields.baseline.heading)} (capabilities already in place before ${esc(fields.periodFrom)})</h3>
-  <p style="margin:6px 0;">${esc(fields.baseline.intro)}</p>
-  <ul style="margin:4px 0 10px;">
-    ${fields.baseline.bullets.map((b) => `<li style="margin:3px 0;">${esc(b)}</li>`).join('\n    ')}
-  </ul>` : ''}
-  <p style="margin:6px 0;"><b>Key Developments during this reporting period (${esc(fields.periodFrom)} to ${esc(fields.periodTo)}):</b></p>
-  ${sectionsHtml}
+<h2>Project timeline</h2>
+<p class="row">Is the project on schedule?${yesNo(fields.onSchedule, 2.5, 3.52)}</p>
+<p>If you answered &ldquo;No&rdquo;, provide a brief explanation for delays</p>
+<p>${esc(fields.delayExplanation || '')}&nbsp;</p>
+<p>If you answered &ldquo;No&rdquo;, provide a forecasted project completion date:&nbsp;&nbsp;${esc(fields.completionDate)}</p>
 
-  <h2 style="${H2_STYLE}">Variations from the original objectives, work plan or budget</h2>
-  <p style="margin:6px 0;">${esc(fields.variations)}</p>
+<h2>Information on the Firm</h2>
+<p class="row">Has the Firm&rsquo;s address changed since the last status report?${yesNo(fields.addressChanged, 4.51, 5.51)}</p>
+<p>If yes, please update the address in the NRC IRAP Innovation Portal by clicking on the firm name hyperlink. Note that only the designated signing authority can update the address.</p>
+<p>&nbsp;</p>
+<p class="row">Has the Firm&rsquo;s name changed since the last status report?${yesNo(fields.nameChanged, 4.51, 5.51)}</p>
+<p>If yes, provide new name</p>
+<p>&nbsp;</p>
+<p>If the Firm name has been changed, does this result in a change of ownership?</p>
+<p class="row">${BOX}&nbsp;&nbsp;yes${at(1.05, `${BOX}&nbsp;&nbsp;no`)}</p>
 
-  <h2 style="${H2_STYLE}">Stacking of Government Funding</h2>
-  <p style="margin:6px 0;font-size:10pt;">As stipulated in the Contribution Agreement, a Firm must declare any funding received from federal, provincial, territorial and municipal government sources for costs associated with the project as incurred by the Firm, which would constitute Stacking of Government Assistance.</p>
-  <table style="border-collapse:collapse;width:100%;font-size:9pt;margin:8px 0;">
-    <tr>
-      <th style="border:1px solid #999;padding:4px;">Claim No.</th>
-      <th style="border:1px solid #999;padding:4px;">Period of claimed amounts</th>
-      <th style="border:1px solid #999;padding:4px;">Cost Category</th>
-      <th style="border:1px solid #999;padding:4px;">Government Program Name</th>
-      <th style="border:1px solid #999;padding:4px;">Government Funding that intersects with NRC IRAP Project Costs ($)</th>
-    </tr>
-    ${stackingRows}
-  </table>
+<h2>Activities and outcomes (minimum 2 paragraphs)</h2>
+<p>Provide a brief description of activities related as per the Contribution Agreement. Include objectives met or progressed during the reporting period.</p>
+${baseline}
+<p class="sub"><b>Key Developments during this reporting period (${esc(fields.periodFrom)} to ${esc(fields.periodTo)}):</b></p>
+${sectionsHtml}
 
-  <p style="margin:18px 0 4px;">Prepared by &nbsp;&nbsp; <b>${esc(fields.preparedBy)}</b> &nbsp;&nbsp;&nbsp;&nbsp; Title: &nbsp; <b>${esc(fields.preparedByTitle)}</b></p>
-  <p style="margin:4px 0 24px;">Date &nbsp;&nbsp; <b>${esc(fields.preparedDate)}</b></p>
+<h2>Variations from the original objectives, work plan or budget</h2>
+<p>Briefly explain new challenges found during the work completed in this reporting period. Describe any budget variation including changes to project related resources.</p>
+<p>&nbsp;</p>
+<p>${esc(fields.variations)}</p>
 
-  <h2 style="${H2_STYLE}">OBJECTIVES &amp; ACTIVITIES FROM CONTRIBUTION AGREEMENT</h2>
-  ${renderAppendix(config.objectivesAppendix)}
-</div>`;
+<h2>Stacking of Government Funding</h2>
+<p>As stipulated in the Contribution Agreement, a Firm must declare any funding received from federal, provincial, territorial and municipal government sources for costs associated with the project as incurred by the Firm, which would constitute Stacking of Government Assistance.</p>
+<ul class="tbullets">
+  <li>In cases where the Firm receives Government support, the Firm must determine which portion of Government funding intersects with NRC IRAP supported Project Costs.</li>
+  <li>To determine attribution of Government funding toward NRC IRAP supported Project Costs, the Firm should apply a pro-rated approach for each supported cost category.</li>
+  <li>Additional information on Stacking is available on the NRC IRAP Innovation Portal in the Info Centre, under the claims instruction section.</li>
+</ul>
+<p class="hint">Complete the following table to identify Government support received which intersect with the NRC IRAP Project claimed amounts, which have not been previously reported.</p>
+${renderStackingTable()}
+<p class="hint">Note: Your claim will be adjusted by NRC IRAP based on the information provided. All adjustments will be available on the processed claim.&nbsp; It is recommended to save a copy of all completed claim for your Firm&rsquo;s records. It is the Firm&rsquo;s obligation to keep adequate financial records with the ability to segregate NRC IRAP Project Costs from the Firm&rsquo;s normal operating expenses as stipulated in the Contribution Agreement.</p>
+
+<p class="hint ruled"><b>Notes:</b></p>
+<ul class="tbullets hint">
+  <li>The Status Report must be prepared by the client.</li>
+  <li>The Status Report must be attached to your claim and submitted by the dates specified in the Contribution Agreement whether progress made or not.</li>
+</ul>
+<div class="signoff">
+<p class="row prepared">Prepared by${at(1.0, esc(fields.preparedBy))}${at(4.0, 'Title:')}${at(5.01, esc(fields.preparedByTitle))}</p>
+<p class="row">Date${at(1.51, esc(fields.preparedDate))}</p>
+</div>
+</td></tr></tbody></table>
+`;
 }
 
-/** Wrap the report body in a printable HTML document. */
+// Bottom margin reserved for the running footer, sized so its rule lands where
+// the template's does (10.1in down a Letter page).
+const FOOTER_IN = 0.9;
+
+/** Wrap the report body in a printable, self-contained HTML document. */
 function wrapHtmlDoc(bodyHtml, title) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-<style>@page { size: Letter; } body { margin: 0; } h2, h3 { page-break-after: avoid; } ul, table { page-break-inside: avoid; }</style>
-</head><body>${bodyHtml}</body></html>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+  @page { size: Letter; margin: 0 0 ${FOOTER_IN}in 0; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.2; color: #000; }
+
+  /* The banner rides in a repeating <thead>: headless Chrome drops
+     position:fixed after page one, and page.pdf's headerTemplate cannot differ
+     between the first page and the rest. */
+  .sheet { width: 8.5in; border-collapse: collapse; table-layout: fixed; }
+  .sheet > thead > tr > td, .sheet > tbody > tr > td { padding: 0; border: 0; }
+  .sheet > tbody > tr > td.body { padding: 0.1in 0.5in 0.04in; position: relative; }
+  .banner { width: 8.5in; height: 1.5in; }
+  .banner img { display: block; width: 8.5in; }
+  /* Page one only: the NRC-CNRC banner painted over the running one. */
+  .first-banner { position: absolute; top: -1.5in; left: 0; z-index: 5; }
+  .banner-title { position: absolute; top: 0.555in; left: 0; width: 8.5in; text-align: center;
+                  color: #fff; font-size: 16pt; font-weight: bold; letter-spacing: -0.4px; line-height: 1; }
+  .banner-sub   { position: absolute; top: 0.845in; left: 0; width: 8.5in; text-align: center;
+                  color: #fff; font-size: 11pt; font-weight: bold; font-style: italic; letter-spacing: 0.6px; line-height: 1; }
+  .banner-rev   { position: absolute; top: 1.155in; right: 0.39in; color: #fff; font-size: 8pt; line-height: 1; }
+
+  p { margin: 0 0 6pt; }
+  .row { position: relative; }
+  .at { position: absolute; top: 0; white-space: nowrap; }
+  h2 { color: ${TEAL}; font-size: 16pt; font-weight: bold; margin: 6pt 0 4pt;
+       border-top: 2.25pt solid ${RULE}; padding-top: 4pt; page-break-after: avoid; }
+  .hint { color: ${HINT}; font-style: italic; }
+  .hint b { color: ${HINT}; }
+  .ruled { border-top: 2.25pt solid ${RULE}; padding-top: 5pt; margin-top: 2pt; }
+  .prepared { margin-top: 4pt; }
+  .signoff { page-break-inside: avoid; }
+  .sub { margin: 8pt 0 3pt; page-break-after: avoid; }
+  ul { margin: 3pt 0 7pt; padding-left: 0.33in; }
+  li { margin: 0 0 3pt; }
+  .tbullets { padding-left: 0.36in; margin-bottom: 4pt; }
+  .tbullets li { margin: 0 0 1pt; }
+
+  .stacking { border-collapse: collapse; width: 7.5in; font-size: 10pt; margin: 4pt 0 2pt;
+              table-layout: fixed; page-break-inside: auto; }
+  .stacking th, .stacking td { border: 1px solid #BFBFBF; padding: 1px 4px; }
+  .stacking th { text-align: center; font-weight: bold; vertical-align: middle; height: 0.5in; }
+  .stacking td { height: 0.145in; line-height: 1; }
+  .stacking .c1 { width: 0.55in; } .stacking .c2 { width: 2.00in; }
+  .stacking .c3 { width: 1.17in; } .stacking .c4 { width: 1.80in; }
+</style></head><body>${bodyHtml}</body></html>`;
+}
+
+/** The template's running footer. page.pdf renders this into the bottom margin. */
+function footerTemplate() {
+  return `<div style="width:100%;font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#000;padding:0 0.5in;margin:0;">
+      <div style="border-top:2.25pt solid ${RULE};padding-top:3pt;">
+        <div style="font-weight:bold;">Status Report</div>
+        <div style="display:flex;justify-content:space-between;">
+          <span>Protected B / Confidential Business Information (when completed)</span>
+          <span style="font-weight:bold;">PAGE <span class="pageNumber"></span></span>
+        </div>
+      </div></div>`;
 }
 
 async function htmlToPdf(html, pdfPath) {
@@ -414,10 +513,12 @@ async function htmlToPdf(html, pdfPath) {
       path: pdfPath,
       format: 'Letter',
       printBackground: true,
-      margin: { top: '0.6in', bottom: '0.6in', left: '0.7in', right: '0.7in' },
+      // Left/right/top margins are zero so the banner can bleed to the
+      // template's own edges; text insets come from .body's padding.
+      margin: { top: '0in', bottom: `${FOOTER_IN}in`, left: '0in', right: '0in' },
       displayHeaderFooter: true,
       headerTemplate: '<div></div>',
-      footerTemplate: '<div style="font-size:8px;color:#666;width:100%;padding:0 0.7in;display:flex;justify-content:space-between;"><span>Status Report — Protected B / Confidential Business Information</span><span>PAGE <span class="pageNumber"></span></span></div>',
+      footerTemplate: footerTemplate(),
     });
   } finally {
     await browser.close();
@@ -461,12 +562,13 @@ async function generateStatusReport(opts) {
     }),
   };
 
-  const html = renderReportHtml({ config, fields, sections });
+  const body = renderReportHtml({ fields, sections });
+  const html = wrapHtmlDoc(body, `Status Report - ${period.label}`);
   const outPath = expandHome(opts.outPath || `~/Downloads/IRAP Status Report - ${period.label}.pdf`);
   if (outPath.endsWith('.html')) {
-    fs.writeFileSync(outPath, html); // Google-Docs-pastable variant
+    fs.writeFileSync(outPath, html); // same document, for the browser
   } else {
-    await htmlToPdf(wrapHtmlDoc(html, `Status Report - ${period.label}`), outPath);
+    await htmlToPdf(html, outPath);
   }
   return { outPath, archivePath, period, claimNumber, commitCount, priorCount: prior.length, sections };
 }

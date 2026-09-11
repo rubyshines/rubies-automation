@@ -20,9 +20,9 @@
  *   --address-changed    answer "yes" to the firm-address-changed question
  *   --date "<date>"      prepared-by date (default: today, ET)
  *   --out <path>         output path (default: ~/Downloads/IRAP Status Report - <period>.pdf;
- *                        a .html path writes Google-Docs-pastable HTML instead)
+ *                        a .html path writes the same document as HTML instead)
  *
- * Output is a PDF matching the NRC status report template. Every generated
+ * Output is the NRC status report template itself, filled in. Every generated
  * report is archived to finance/irap-reports/<YYYY-MM>.json and fed into
  * later months' synthesis so the reports form one continuous narrative.
  */

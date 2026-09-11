@@ -8,6 +8,7 @@ const {
   shouldIncludeBaseline,
   extractJson,
   renderReportHtml,
+  wrapHtmlDoc,
   formatActivityForPrompt,
   loadPriorReports,
   saveReportArchive,
@@ -67,7 +68,6 @@ test('shouldIncludeBaseline: only the project start month', () => {
 });
 
 test('renderReportHtml: baseline section renders when present, omitted when null', () => {
-  const config = { objectivesAppendix: [] };
   const fields = {
     baseline: { heading: 'Starting point at project commencement', intro: 'The starting point was:', bullets: ['CS: supervised drafts only'] },
     claimNumber: '1', projectNumber: '1044596', firmName: 'Rubies Apparel Inc.',
@@ -77,13 +77,13 @@ test('renderReportHtml: baseline section renders when present, omitted when null
     preparedBy: 'Jamie Alexander', preparedByTitle: 'Founder', preparedDate: 'August 1, 2026',
   };
   const sections = [{ heading: 'H', bullets: ['b'] }];
-  const withBaseline = renderReportHtml({ config, fields, sections });
+  const withBaseline = renderReportHtml({ fields, sections });
   assert.match(withBaseline, /Starting point at project commencement \(capabilities already in place before July 1, 2026\)/);
   assert.match(withBaseline, /Key Developments during this reporting period \(July 1, 2026 to July 31, 2026\)/);
   assert.match(withBaseline, /CS: supervised drafts only/);
   // baseline must precede Key Developments
   assert.ok(withBaseline.indexOf('Starting point') < withBaseline.indexOf('Key Developments'));
-  const without = renderReportHtml({ config, fields: { ...fields, baseline: null }, sections });
+  const without = renderReportHtml({ fields: { ...fields, baseline: null }, sections });
   assert.doesNotMatch(without, /Starting point at project commencement/);
 });
 
@@ -178,7 +178,6 @@ test('formatActivityForPrompt: one block per repo with counts', () => {
 });
 
 test('renderReportHtml: fills template fields and escapes content', () => {
-  const config = { objectivesAppendix: [{ heading: 'Objectives:', text: 'Line one\n- bullet a\n- bullet b' }] };
   const fields = {
     claimNumber: '2', projectNumber: '9999999', firmName: 'Rubies Apparel Inc.',
     periodFrom: 'June 1, 2026', periodTo: 'June 30, 2026',
@@ -188,14 +187,62 @@ test('renderReportHtml: fills template fields and escapes content', () => {
     preparedBy: 'Jamie Alexander', preparedByTitle: 'Founder', preparedDate: 'July 22, 2026',
   };
   const sections = [{ heading: 'CS Agent', bullets: ['We improved <things>.'] }];
-  const html = renderReportHtml({ config, fields, sections });
+  const html = renderReportHtml({ fields, sections });
 
   assert.match(html, /Status Report/);
-  assert.match(html, /From June 1, 2026 To June 30, 2026/);
-  assert.match(html, /&#9744; yes &nbsp;&nbsp; X no/); // off-schedule renders "no" checked
+  assert.match(html, /From&nbsp;&nbsp;&nbsp;June 1, 2026 To June 30, 2026/);
+  // off-schedule checks "no"; the unanswered ownership question stays blank
+  assert.match(html, /&#9744;&nbsp;&nbsp;yes<\/span><span class="at" style="left:3.52in">X&nbsp;&nbsp;no/);
+  assert.match(html, /&#9744;&nbsp;&nbsp;yes<span class="at" style="left:1.05in">&#9744;&nbsp;&nbsp;no/);
   assert.match(html, /Supplier &lt;delay&gt;/); // escaped
   assert.match(html, /We improved &lt;things&gt;\./);
-  assert.match(html, /OBJECTIVES &amp; ACTIVITIES FROM CONTRIBUTION AGREEMENT/);
-  assert.match(html, /<li[^>]*>bullet a<\/li>/);
   assert.match(html, /There have been no variations\./);
+});
+
+test('renderReportHtml: keeps every line of the template the client must not delete', () => {
+  const fields = {
+    claimNumber: '2', projectNumber: '1044596', firmName: 'Rubies Apparel Inc.',
+    periodFrom: 'July 1, 2026', periodTo: 'August 31, 2026',
+    onSchedule: true, completionDate: 'February 28, 2027',
+    addressChanged: false, nameChanged: false, variations: 'There have been no variations.',
+    preparedBy: 'Jamie Alexander', preparedByTitle: 'Founder', preparedDate: 'September 2, 2026',
+  };
+  const html = renderReportHtml({ fields, sections: [{ heading: 'H', bullets: ['b'] }] });
+
+  // NRC bounced the September 2026 report for not using the template. These are
+  // the template's own words and furniture; none of them may be dropped again.
+  for (const line of [
+    'Use the tab button to move to the next field',
+    'If you answered &ldquo;No&rdquo;, provide a brief explanation for delays',
+    'If you answered &ldquo;No&rdquo;, provide a forecasted project completion date:',
+    'Has the Firm&rsquo;s address changed since the last status report?',
+    'If yes, please update the address in the NRC IRAP Innovation Portal',
+    'If yes, provide new name',
+    'If the Firm name has been changed, does this result in a change of ownership?',
+    'Provide a brief description of activities related as per the Contribution Agreement',
+    'Briefly explain new challenges found during the work completed in this reporting period',
+    'In cases where the Firm receives Government support',
+    'To determine attribution of Government funding toward NRC IRAP supported Project Costs',
+    'Additional information on Stacking is available on the NRC IRAP Innovation Portal',
+    'Complete the following table to identify Government support received',
+    'Note: Your claim will be adjusted by NRC IRAP based on the information provided',
+    'The Status Report must be prepared by the client.',
+    'The Status Report must be attached to your claim and submitted by the dates specified',
+  ]) {
+    assert.ok(html.includes(line), `template line missing: ${line}`);
+  }
+
+  // The stacking table keeps the template's 15 claim rows.
+  assert.equal((html.match(/>From<span/g) || []).length, 15);
+  // Both NRC banners are embedded (first page and continuation).
+  assert.equal((html.match(/data:image\/jpeg;base64,/g) || []).length, 2);
+  // The objectives appendix is NOT part of the template and must not come back.
+  assert.doesNotMatch(html, /OBJECTIVES &amp; ACTIVITIES FROM CONTRIBUTION AGREEMENT/);
+});
+
+test('wrapHtmlDoc: the blue rule sits above each heading, never below', () => {
+  const doc = wrapHtmlDoc('<p>x</p>', 'T');
+  assert.match(doc, /h2 \{[^}]*border-top: 2\.25pt solid #2E74B5/);
+  assert.doesNotMatch(doc, /h2 \{[^}]*border-bottom/);
+  assert.match(doc, /@page \{ size: Letter; margin: 0 0 0\.9in 0; \}/);
 });

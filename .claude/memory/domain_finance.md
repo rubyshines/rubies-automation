@@ -18,7 +18,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Expense Receipt Capture:** photograph a receipt on a phone; one vision call extracts merchant, date, taxes, tip, total, currency, payment method and line items, categorized against the live QBO chart of accounts. Images live in a private Storage bucket served as signed URLs; a long receipt is captured as multiple overlapping photos read as one receipt. Receipt MCP tools on the finance server plus a `/receipts` page on the CS ops dashboard (capture, ledger, per-receipt review and correction). Tables `expense_receipts`, `expense_receipt_items`, `expense_receipt_pages`.
 
-**IRAP Status Reporting:** `irap_status_report` MCP tool (CLI `finance/generate-irap-status-report.js <month>`) builds the NRC-IRAP monthly status report from the month's git history across the RUBIES repos (Opus synthesis, PDF or HTML output). Reports archive to `finance/irap-reports/` and feed the next month's narrative; project constants live in `finance/config/irap-project.json`. Local-machine only.
+**IRAP Status Reporting:** `irap_status_report` MCP tool (CLI `finance/generate-irap-status-report.js <month>`) builds the NRC-IRAP monthly status report from the month's git history across the RUBIES repos (Opus synthesis, PDF or HTML output), rendered onto the NRC template itself rather than a lookalike — template banners live in `finance/assets/irap/`. Reports archive to `finance/irap-reports/` and feed the next month's narrative; project constants live in `finance/config/irap-project.json`. Local-machine only.
 
 ## Current Status
 
