@@ -189,8 +189,7 @@ async function handleReopen(input = {}) {
     if (res.existing_draft_id) {
       return text(`Thread #${res.thread.id} ("${res.thread.subject}") reopened. ${res.thread.company_id} already had pending draft #${res.existing_draft_id} — review that one rather than drafting over it.`);
     }
-    const d = res.draft;
-    return text(`Thread #${res.thread.id} ("${res.thread.subject}") reopened and follow-up draft #${d.draft_id} written on it (${d.message_type}, confidence ${d.confidence}).\n\nSubject: ${d.email_subject}\n\n${d.email_body}\n\nIt will send inside the existing thread. Review in the Outreach panel or send with send_b2b_email.`);
+    return text(`Thread #${res.thread.id} ("${res.thread.subject}") reopened. Reopening is a status flip: the reply is operator-written — the Outreach composer lands it inside this thread, or use b2b_draft with steer.`);
   } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }
@@ -916,7 +915,7 @@ module.exports = [
   },
   {
     name: 'b2b_reopen_thread',
-    description: 'Reopen a concluded outreach thread and draft the follow-up inside it, so the email lands in the existing conversation instead of starting a new one. Use when Jamie wants to pick an old conversation back up. Never auto-sends.',
+    description: 'Reopen a concluded outreach thread so the next reply lands inside the existing conversation instead of starting a new one. A status flip only — continuations are operator-written (the Outreach composer, or b2b_draft with steer), never auto-drafted here. Use when Jamie wants to pick an old conversation back up.',
     inputSchema: {
       type: 'object',
       properties: {

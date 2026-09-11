@@ -324,6 +324,14 @@ const FOLLOWUP_MAX_AGE_DAYS = 90;
 const CHASEABLE_SOURCES = new Set(['send_tool']);
 
 /**
+ * The rungs the ladder sends on its own (autoFollowUp's send pass). One set,
+ * read by the draft pass (what to schedule) and by the operator queue (what
+ * to keep out of sight), so the two can never disagree about whose work a
+ * rung is.
+ */
+const LADDER_TYPES = new Set(['followup_1', 'followup_2']);
+
+/**
  * Gate conditions every cadence message shares (locked + drafted spec):
  * not lost, not deferred (snoozed / paused / on me), contact known,
  * no pending draft.
@@ -415,15 +423,27 @@ function followUpRung(company, ctx, now = new Date()) {
   const thread_id = ctx.lastOutboundThreadId || null;
   const waited = daysSince(at, now);
 
+  // `business_days_past_due` is how long the ladder has had this rung: 0 on
+  // the day it goes due. The operator queue reads it to keep ladder work out
+  // of sight while the daily draft pass still has its turn, and to bring a
+  // rung back badged stuck once that turn has passed (queueService).
   if (type === 'followup_2') return null; // exhausted — see exhaustedDecision
   if (type === 'followup_1') {
-    if (businessDaysSince(at, now) < FOLLOWUP_2_AFTER_BUSINESS_DAYS) return null;
-    return { message_type: 'followup_2', reason: `no reply ${waited}d after first follow-up`, thread_id };
+    const elapsed = businessDaysSince(at, now);
+    if (elapsed < FOLLOWUP_2_AFTER_BUSINESS_DAYS) return null;
+    return {
+      message_type: 'followup_2', reason: `no reply ${waited}d after first follow-up`, thread_id,
+      business_days_past_due: elapsed - FOLLOWUP_2_AFTER_BUSINESS_DAYS,
+    };
   }
   const wait = CHASE_AFTER_BUSINESS_DAYS[type];
   if (!wait) return null;
-  if (businessDaysSince(at, now) < wait) return null;
-  return { message_type: 'followup_1', reason: `no reply ${waited}d after ${type}`, thread_id };
+  const elapsed = businessDaysSince(at, now);
+  if (elapsed < wait) return null;
+  return {
+    message_type: 'followup_1', reason: `no reply ${waited}d after ${type}`, thread_id,
+    business_days_past_due: elapsed - wait,
+  };
 }
 
 /**
@@ -761,6 +781,7 @@ module.exports = {
   INITIATING_TYPES,
   CHASE_AFTER_BUSINESS_DAYS,
   CHASEABLE_SOURCES,
+  LADDER_TYPES,
   FOLLOWUP_MAX_AGE_DAYS,
   FOLLOWUP_2_AFTER_BUSINESS_DAYS,
   EXHAUSTED_AFTER_BUSINESS_DAYS,

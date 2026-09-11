@@ -202,10 +202,12 @@ async function correlateInbound(msg) {
 
   let threadId = null;
   let threadWasNew = false;
+  let threadStatus = 'open';
   const { data: thread } = await sb.from('b2b_threads')
-    .select('id').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
+    .select('id, status').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
   if (thread) {
     threadId = thread.id;
+    threadStatus = thread.status || 'open';
   } else {
     threadWasNew = true;
     // A thread whose FIRST message is machine-generated is born concluded.
@@ -280,6 +282,28 @@ async function correlateInbound(msg) {
   // 4. State updates
   const nowIso = new Date().toISOString();
   await sb.from('b2b_threads').update({ last_message_at: received_at || nowIso }).eq('id', threadId);
+  // A person writing into a CLOSED thread reopens it (2026-09-11). Closing is
+  // the operator saying "nothing more to say until they come back" — and this
+  // is them coming back. Every other deferral already holds the rule that a
+  // reply arriving after it was set always surfaces; close was the one that
+  // did not, so a hand-off and a new coordinator's reply sat on a closed
+  // thread invisible to Tier 1, and the read-state sweep then un-bolded them
+  // in Gmail because "thread closed" reads as "nobody waiting". Only on the
+  // FIRST delivery of the message: the nightly replay re-reads stored mail,
+  // and reopening on a redelivery would undo a close the operator made after
+  // reading this very reply. Never for machine mail — an out-of-office says
+  // nothing about whether the conversation is live. The thank-you closer runs
+  // after this and may close it straight back if the reply is a bare "thanks".
+  let reopened = false;
+  if (inboundType === null && !duplicate && !threadWasNew && threadStatus === 'closed') {
+    const { data: flipped, error: rErr } = await sb.from('b2b_threads')
+      .update({ status: 'open' }).eq('id', threadId).eq('status', 'closed').select('id');
+    if (rErr) console.warn(`[correlate] reopen thread ${threadId}: ${rErr.message}`);
+    else if (flipped?.length) {
+      reopened = true;
+      console.log(`[correlate] thread ${threadId} reopened on ${companyId}: ${sender} wrote into a closed conversation`);
+    }
+  }
   // A genuine human reply makes any waiting initiating draft (cold intro,
   // check-in, re-approach, reorder nudge) obsolete: the conversation is now
   // live, and live conversations are operator-written (2026-09-02). Runs even
@@ -383,6 +407,7 @@ async function correlateInbound(msg) {
     bounce,
     departure,
     thankyou_closed,
+    reopened,
     read_state,
     looks_like_order: looksLikeOrder(body_text || ''),
   };

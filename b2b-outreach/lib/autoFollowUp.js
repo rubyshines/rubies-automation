@@ -42,7 +42,7 @@
  */
 const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
-const { exhaustedDecision } = require('./cadence');
+const { exhaustedDecision, LADDER_TYPES } = require('./cadence');
 const { nextSendSlot, describeSlot } = require('./sendWindow');
 const { timezoneFromLocation } = require('./meetingTimezone');
 const { triageCompany } = require('./triage');
@@ -57,7 +57,7 @@ const { fetchAllPaginated } = require('../../shared/supabaseClient');
  * are asking once more, in fixed words. Widening this set is a decision, not a
  * config tweak — and anything added here must be a template, never a draft.
  */
-const AUTO_SEND_TYPES = new Set(['followup_1', 'followup_2']);
+const AUTO_SEND_TYPES = LADDER_TYPES;
 
 /**
  * Ceiling on automatic sends per calendar day, across all companies.

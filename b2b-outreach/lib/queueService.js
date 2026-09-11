@@ -22,7 +22,7 @@
  */
 const { assembleQueue, deferredSince, replyLandedAfter, humanAge } = require('./queue');
 const { buildContexts } = require('./queueContext');
-const { nextScheduledTouch } = require('./cadence');
+const { nextScheduledTouch, LADDER_TYPES } = require('./cadence');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
@@ -62,11 +62,55 @@ async function fetchCompanies(sb, { channel } = {}) {
   return data || [];
 }
 
+/**
+ * How long a due ladder rung may go unscheduled before it stops being machine
+ * work and becomes the operator's problem.
+ *
+ * A rung goes due at the UTC day boundary (businessDaysSince counts whole
+ * days) and the draft pass runs once a day in daily-sync-all, so every rung is
+ * due for up to half a day before the ladder drafts and schedules it. That
+ * half-day used to show in the queue as operator work, with a composer
+ * inviting a hand-written chase the engine was about to send itself
+ * (2026-09-10). One business day of grace covers the gap; a rung still
+ * unscheduled past that means the pass skipped it or did not run, which is
+ * exactly what the operator must see.
+ */
+const LADDER_GRACE_BUSINESS_DAYS = 1;
+
+/**
+ * Drop the rows the follow-up ladder is going to handle on its own. Pure.
+ *
+ * The operator's half of the rule mergePendingDraftEntries applies to
+ * scheduled drafts: a decision the machine has already taken is not queue
+ * work, but anything removed from an operator queue needs a condition under
+ * which it comes back. A rung past its grace returns badged `ladder_stuck`,
+ * its reason saying so, rather than presenting itself as fresh work. Rungs the
+ * ladder never takes — a company reachable only by contact form — are left in,
+ * because those are the operator's from the start.
+ *
+ * Applied to the operator surfaces only (panel, badge, console queue). The
+ * draft pass reads assembleQueue directly and must keep seeing every rung.
+ */
+function withoutLadderWork(queue) {
+  const out = [];
+  for (const e of queue || []) {
+    if (!LADDER_TYPES.has(e.message_type) || e.delivery !== 'email') { out.push(e); continue; }
+    const past = e.business_days_past_due ?? 0;
+    if (past < LADDER_GRACE_BUSINESS_DAYS) continue;
+    out.push({
+      ...e,
+      ladder_stuck: true,
+      reason: `${e.reason} — due ${past} business day${past === 1 ? '' : 's'} ago and the automatic follow-up has not scheduled it`,
+    });
+  }
+  return out;
+}
+
 /** Today's queue: fetch companies (optionally one channel), build contexts, assemble. */
 async function fetchOutreachQueue(sb, { channel } = {}) {
   const companies = await fetchCompanies(sb, { channel });
   const contexts = await buildContexts(sb, companies);
-  return assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
+  return withoutLadderWork(assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) }))));
 }
 
 /**
@@ -198,7 +242,7 @@ async function buildQueueEntries(sb, { channel, onCompanies } = {}) {
   const companies = await fetchCompanies(sb, { channel });
   if (onCompanies) onCompanies(companies);
   const contexts = await buildContexts(sb, companies);
-  const queue = assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
+  const queue = withoutLadderWork(assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) }))));
 
   let drafts = [];
   if (companies.length) {
@@ -1369,6 +1413,8 @@ module.exports = {
   attachDrafts,
   mergePendingDraftEntries,
   SCHEDULED_STALE_HOURS,
+  withoutLadderWork,
+  LADDER_GRACE_BUSINESS_DAYS,
   fetchOutreachQueue,
   fetchQueueWithDrafts,
   fetchQueueCount,

@@ -505,3 +505,70 @@ test('INITIATING_TYPES is exactly the approved five', () => {
   assert.deepEqual([...INITIATING_TYPES].sort(),
     ['community_checkin', 'intro_outreach', 'intro_pitch', 're_approach', 'reorder_nudge']);
 });
+
+// ── due ladder rungs are the ladder's work, not the operator's (2026-09-11) ─
+//
+// A rung goes due at the UTC day boundary and the draft pass runs once a day,
+// so every chase sat in the operator queue for half a day with a composer
+// inviting a hand-written version of an email the engine was about to send.
+// The other half of the rule that hides scheduled drafts: gone while the
+// ladder still has its turn, back badged stuck once that turn has passed.
+const { withoutLadderWork, LADDER_GRACE_BUSINESS_DAYS } = require('../../b2b-outreach/lib/queueService');
+const { followUpRung } = require('../../b2b-outreach/lib/cadence');
+
+const rung = (over = {}) => ({
+  company_id: 'org-c', company_name: 'Org C', channel: 'lgbtq_org', delivery: 'email',
+  tier: 4, message_type: 'followup_1', reason: 'no reply 13d after community_checkin',
+  thread_id: 567, business_days_past_due: 0, ...over,
+});
+
+test('a rung that went due today is hidden from the operator queue', () => {
+  assert.deepEqual(withoutLadderWork([rung()]), []);
+  assert.deepEqual(withoutLadderWork([rung({ message_type: 'followup_2', reason: 'no reply 13d after first follow-up' })]), []);
+});
+
+test('a rung the ladder has not scheduled a business day past due comes back, marked stuck', () => {
+  const out = withoutLadderWork([rung({ business_days_past_due: LADDER_GRACE_BUSINESS_DAYS })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].ladder_stuck, true);
+  assert.match(out[0].reason, /has not scheduled it/, 'it must not present itself as fresh work');
+  assert.equal(out[0].tier, 4, 'tier is untouched');
+});
+
+test('a rung the ladder never takes (contact-form delivery) stays in the queue from day one', () => {
+  const out = withoutLadderWork([rung({ delivery: 'form' })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].ladder_stuck, undefined);
+});
+
+test('everything that is not a ladder rung passes through untouched', () => {
+  const rows = [
+    { company_id: 'shop-a', tier: 1, message_type: null, reason: 'replied 2h ago — waiting on us', delivery: 'email' },
+    { company_id: 'aff-d', tier: 4, message_type: 'intro_outreach', reason: 'vetted prospect, never contacted', delivery: 'email' },
+  ];
+  assert.deepEqual(withoutLadderWork(rows), rows);
+  assert.deepEqual(withoutLadderWork([]), []);
+});
+
+// The field the rule reads comes from the cadence itself, so the two cannot
+// drift: 0 on the day the rung goes due, counting business days from there.
+test('followUpRung reports how many business days the ladder has had the rung', () => {
+  const company = { relationship_state: 'active' };
+  const ctx = {
+    lastOutboundType: 'community_checkin', lastOutboundSource: 'send_tool',
+    lastOutboundMessageAt: '2026-08-28T19:29:57Z', lastOutboundThreadId: 567, lastInboundAt: null,
+  };
+  // 9 business days: not due.
+  assert.equal(followUpRung(company, ctx, new Date('2026-09-10T23:00:00Z')), null);
+  // The UTC day boundary makes it 10: due, and the ladder's from this moment.
+  const dueToday = followUpRung(company, ctx, new Date('2026-09-11T00:30:00Z'));
+  assert.equal(dueToday.message_type, 'followup_1');
+  assert.equal(dueToday.business_days_past_due, 0);
+  // Over the weekend the count holds — nothing was supposed to happen.
+  assert.equal(followUpRung(company, ctx, new Date('2026-09-12T00:30:00Z')).business_days_past_due, 0);
+  assert.equal(followUpRung(company, ctx, new Date('2026-09-13T23:30:00Z')).business_days_past_due, 0);
+  // Monday counts from its UTC start: one business day later and still
+  // unscheduled, the rung is the operator's to see.
+  const nextDay = followUpRung(company, ctx, new Date('2026-09-14T00:30:00Z'));
+  assert.equal(nextDay.business_days_past_due, 1);
+});

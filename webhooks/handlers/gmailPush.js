@@ -234,7 +234,7 @@ async function handle(payload, gmailPush) {
         received_at: m.date,
       });
       if (r.matched && !r.duplicate) {
-        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.inbound_type ? ` (${r.inbound_type})` : ''}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}${r.read_state?.marked ? ' (marked read)' : ''}`);
+        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.inbound_type ? ` (${r.inbound_type})` : ''}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}${r.reopened ? ' (thread reopened)' : ''}${r.read_state?.marked ? ' (marked read)' : ''}`);
         // Detect at intake, not at reply time. The summary reads the new message
         // now and records any date they named for the next contact
         // (metadata.stated_next_touch), so whichever way Jamie closes the

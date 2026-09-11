@@ -56,6 +56,10 @@ function makeClient() {
         },
         insert(row) {
           state.inserts.push({ table, row });
+          // A redelivered message: UNIQUE(gmail_message_id) refuses the insert.
+          if (table === 'b2b_messages' && state.duplicateMessage) {
+            return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key' } });
+          }
           if (table === 'b2b_threads') {
             const created = { id: state.threads.length + 900, ...row };
             state.threads.push(created);
@@ -76,7 +80,19 @@ function makeClient() {
             in(col, vals) { rec.filters['in:' + col] = vals; return u; },
             is(col, val) { rec.filters['is:' + col] = val; return u; },
             select() { return u; },
-            then(resolve) { return resolve({ data: [], error: null }); },
+            then(resolve) {
+              // Thread updates act on the stub's threads and report the rows they
+              // hit, so a filter that misses (a thread no longer closed) returns
+              // nothing — the reopen rule reads that to know the flip happened.
+              if (table === 'b2b_threads' && rec.filters.id != null) {
+                const hit = state.threads.find(t => t.id === rec.filters.id
+                  && (rec.filters.status === undefined || t.status === rec.filters.status));
+                if (!hit) return resolve({ data: [], error: null });
+                Object.assign(hit, patch);
+                return resolve({ data: [{ id: hit.id }], error: null });
+              }
+              return resolve({ data: [], error: null });
+            },
           };
           return u;
         },
@@ -367,4 +383,61 @@ test('an RSVP in any language lands as a calendar notice when the intake read me
   assert.strictEqual(r.inbound_type, 'calendar_notice');
   const thread = state.inserts.find(i => i.table === 'b2b_threads');
   assert.strictEqual(thread.row.status, 'closed', 'a calendar notice opening a thread is born closed');
+});
+
+// ── a human reply reopens a closed thread (2026-09-11) ─────────────────────
+// Every other deferral already holds the rule that a reply arriving after it
+// was set always surfaces. Close did not: a partner's hand-off and the new
+// coordinator's reply landed on a closed thread, invisible to Tier 1, and the
+// read-state sweep then un-bolded them in Gmail because "closed" reads as
+// "nobody waiting".
+test('a human reply landing on a closed thread reopens it', async () => {
+  reset({
+    contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }],
+    threads: [{ id: 545, company_id: 'socirc', gmail_thread_id: 't1', status: 'closed' }],
+  });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.reopened, true);
+  const flip = state.updates.find(u => u.table === 'b2b_threads' && u.patch.status === 'open');
+  assert.ok(flip, 'expected the thread to be flipped open');
+  assert.strictEqual(flip.filters.id, 545);
+  // Race-safe: the flip only matches a thread that is still closed.
+  assert.strictEqual(flip.filters.status, 'closed');
+});
+
+test('a human reply on an open thread is not a reopen', async () => {
+  reset({
+    contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }],
+    threads: [{ id: 545, company_id: 'socirc', gmail_thread_id: 't1', status: 'open' }],
+  });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.reopened, false);
+  assert.strictEqual(state.updates.find(u => u.table === 'b2b_threads' && u.patch.status === 'open'), undefined);
+});
+
+test('machine mail on a closed thread leaves it closed', async () => {
+  reset({
+    contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }],
+    threads: [{ id: 545, company_id: 'socirc', gmail_thread_id: 't1', status: 'closed' }],
+  });
+  const r = await correlateInbound(MSG({ subject: 'Automatic reply: Pride Party', body_text: 'I am out of the office until Monday.' }));
+  assert.strictEqual(r.inbound_type, 'auto_reply');
+  assert.strictEqual(r.reopened, false);
+  assert.strictEqual(state.updates.find(u => u.table === 'b2b_threads' && u.patch.status === 'open'), undefined,
+    'an out-of-office says nothing about whether the conversation is live');
+});
+
+// The nightly bounce replay re-reads stored mail through this same function.
+// Reopening on a redelivery would undo a close the operator made AFTER reading
+// the reply — the exact opposite of what the rule is for.
+test('a redelivered reply does not reopen a thread closed since', async () => {
+  reset({
+    contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }],
+    threads: [{ id: 545, company_id: 'socirc', gmail_thread_id: 't1', status: 'closed' }],
+    duplicateMessage: true,
+  });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.duplicate, true);
+  assert.strictEqual(r.reopened, false);
+  assert.strictEqual(state.updates.find(u => u.table === 'b2b_threads' && u.patch.status === 'open'), undefined);
 });

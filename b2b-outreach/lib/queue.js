@@ -200,6 +200,9 @@ function computeQueueEntry(company, ctx, now = new Date()) {
       // Follow-ups carry the thread of the message they chase. Dropping it here
       // is how a chase becomes a brand-new email that refers to one.
       ...(due.thread_id ? { thread_id: due.thread_id } : {}),
+      // A ladder rung says how long the ladder has had it; the operator view
+      // hides the rung while that is still the ladder's turn (queueService).
+      ...(due.business_days_past_due != null ? { business_days_past_due: due.business_days_past_due } : {}),
       // post_call_followup lands at Tier 1, whose within-tier sort reads
       // waiting_since; meeting_id is what the panel's "no follow-up needed"
       // dismiss acts on.
