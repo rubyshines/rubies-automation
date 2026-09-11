@@ -45,6 +45,7 @@ function buildShippingAddress(a, firstName, lastName) {
   return {
     firstName: firstName || '',
     lastName: lastName || '',
+    company: a.company || '',
     address1: a.address1,
     address2: a.address2 || '',
     city: a.city,
@@ -76,6 +77,7 @@ function applyShippingAddressOverride(base, override) {
   const merged = { ...(base || {}) };
   if (override.first_name != null) merged.firstName = override.first_name;
   if (override.last_name != null)  merged.lastName  = override.last_name;
+  if (override.company != null)    merged.company   = override.company;
   if (override.address1 != null)   merged.address1  = override.address1;
   if (override.address2 != null)   merged.address2  = override.address2 || '';
   else if (override.address1 != null && override.address1 !== base?.address1) merged.address2 = '';
@@ -99,6 +101,7 @@ const SHIPPING_ADDRESS_OVERRIDE_SCHEMA = {
   properties: {
     first_name: { type: 'string', description: 'Recipient first name for the label. Copy verbatim from the customer, even if unusual.' },
     last_name: { type: 'string', description: 'Recipient last name for the label. Copy verbatim from the customer, even if unusual.' },
+    company: { type: 'string', description: 'Business name printed above the street on the shipping label. Set it whenever the destination is a store, an office or an organization — a courier delivering to a retail address needs the store name, and a package addressed only to a person can be refused at a business. Omit for a residential delivery.' },
     address1: { type: 'string' },
     address2: { type: 'string', description: 'Apartment, suite, unit, etc. Cleared when address1 changes and this is not supplied.' },
     city: { type: 'string' },

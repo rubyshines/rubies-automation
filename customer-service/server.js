@@ -36,6 +36,7 @@ const draftOrderTools = require('./lib/tools/draftOrders');
 const adminTools = require('./lib/tools/adminTools');
 const ltvTools = require('./lib/tools/ltv');
 const createOrderTools = require('./lib/tools/createOrder');
+const sampleKitTools = require('./lib/tools/sampleKit');
 const csAdvisorTools = require('./lib/tools/csAdvisorMcp');
 const advisorTesterTools = require('./lib/tools/advisorTester');
 const refundOrderTools = require('./lib/tools/refundOrder');
@@ -98,6 +99,7 @@ const allTools = [
   ...adminTools,
   ...ltvTools,
   ...createOrderTools,
+  ...sampleKitTools,
   ...csAdvisorTools,
   ...advisorTesterTools,
   ...refundOrderTools,

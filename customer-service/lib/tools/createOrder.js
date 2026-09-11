@@ -58,6 +58,7 @@ async function findOrCreateCustomer({ email, first_name, last_name, phone, addre
   if (phone) input.phone = phone;
   if (address) {
     input.addresses = [{
+      company: address.company || '',
       address1: address.address1 || '',
       address2: address.address2 || '',
       city: address.city || '',
@@ -206,7 +207,7 @@ async function handleCreateOrder({
 
   if (effectiveShippingAddress) {
     const a = effectiveShippingAddress;
-    md += `**Ship to:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}\n`;
+    md += `**Ship to:** ${[a.company, a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}\n`;
   }
   if (!normalizeCountryCode(shipCountry)) {
     md += `\n${unknownDestinationWarning(shippingTitle)}\n`;
@@ -434,3 +435,6 @@ const tools = [
 ];
 
 module.exports = tools;
+// Shared so the sample-kit tool resolves customers through the same path rather
+// than growing a second find-or-create with its own opinions.
+module.exports.findOrCreateCustomer = findOrCreateCustomer;

@@ -219,6 +219,27 @@ describe('applyShippingAddressOverride', () => {
     });
   });
 
+  // A package to a shop addressed only to a person can be refused at the door,
+  // so the business name is part of a retail address, not decoration.
+  it('carries a company name onto the label', () => {
+    const merged = applyShippingAddressOverride(base, { company: 'Forbidden Fruit' });
+    assert.equal(merged.company, 'Forbidden Fruit');
+    assert.equal(merged.address1, '480 Parramatta Rd', 'the rest of the address is untouched');
+  });
+
+  it('leaves company alone when the override does not mention it', () => {
+    // Unlike address2, a company survives an address1 change: a store that
+    // moves is still the same store.
+    const withCompany = { ...base, company: 'Forbidden Fruit' };
+    const merged = applyShippingAddressOverride(withCompany, { address1: '1 New St' });
+    assert.equal(merged.company, 'Forbidden Fruit');
+  });
+
+  it('clears a company when the override says to', () => {
+    const withCompany = { ...base, company: 'Forbidden Fruit' };
+    assert.equal(applyShippingAddressOverride(withCompany, { company: '' }).company, '');
+  });
+
   // The recipient name is part of the address: a PO box the post office only
   // releases against an exact name is not deliverable under the profile name.
   it('takes the recipient name verbatim, digits and all', () => {
