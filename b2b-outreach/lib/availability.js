@@ -55,6 +55,25 @@ function wallClockToUtc({ year, month, day, hour = 0, minute = 0 }, timeZone) {
   return new Date(ts);
 }
 
+/**
+ * Do two zones read the same on a clock at this instant?
+ *
+ * Comparing zone NAMES is not the same question, and getting it wrong is
+ * visible in customer-facing text: a Toronto partner is `America/Toronto`
+ * against our `America/New_York`, both Eastern, and the name test printed
+ * "9:00 AM ET (9:00 AM your time)" at them. What the reader cares about is
+ * whether the number differs, which is the offset at that instant. Pure.
+ */
+function sameWallClock(date, zoneA, zoneB) {
+  if (!zoneA || !zoneB) return false;
+  if (zoneA === zoneB) return true;
+  try {
+    return zoneOffsetMinutes(date, zoneA) === zoneOffsetMinutes(date, zoneB);
+  } catch (_) {
+    return false;
+  }
+}
+
 /** The calendar date + weekday in `timeZone` for an instant. Pure. */
 function zonedDateParts(date, timeZone) {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -174,49 +193,92 @@ function slotWithin(slot, date, windows) {
 }
 
 /**
- * The slots to offer first, best days first, at most `limit`, one per day.
+ * The times to offer, best first, one per day, at most `limit`.
  *
- * With no `within`: one per day that already holds something, the tightest
- * fit on that day. Days with nothing booked are never suggested — they are
- * the fallback the full grid shows.
+ * Two tiers, in Jamie's order (2026-09-11):
+ *   0. a slot sitting against something already booked that day — he stacks
+ *      calls rather than opening a second hole in a day, so these lead
+ *   1. otherwise the earliest slot in his day: 9am beats 2pm
+ * Inside tier 0 the tightest fit wins, then the sooner day. Inside tier 1 the
+ * earlier hour wins, then the sooner day. A day contributes at most one slot,
+ * so the list reads as a set of days to choose between rather than five
+ * variations on Tuesday.
  *
- * With `within` (the windows the other party offered): only slots inside
- * those windows, still ranked tightest-against-a-booking first, but an empty
- * day is allowed — their offer is the constraint, grouping is the tiebreak.
- * A best fit that ignores what they said they could do is not a fit
- * (Colage, 2026-09-09: 10:30 was offered against "9-10 or 1-2:30").
+ * `within` — the windows the other party offered — is a HARD constraint, not a
+ * preference. A day with no free slot inside their windows contributes
+ * nothing, so a time they have already said they cannot make is never offered.
+ * A best fit that ignores what they said they could do is not a fit (Colage,
+ * 2026-09-09: 10:30 offered against "9-10 or 1-2:30").
  *
- * When the other party's workday is known, a fit has to sit inside it; if
- * that leaves nothing (Germany, Australia), the filter is dropped rather than
- * returning an empty list. Pure.
+ * When their workday is known a fit has to sit inside it; if that leaves
+ * nothing (Germany, Australia), that filter is dropped rather than returning
+ * an empty list — an annotated awkward time beats no answer. Their WINDOWS are
+ * never dropped that way: an empty list is the true answer to "none of the
+ * times you gave me are free", and the caller says so rather than quietly
+ * offering something else.
+ *
+ * Days with nothing booked used to be skipped entirely, because this list sat
+ * beside a second list that covered them. It is now the only list of times the
+ * panel offers, so an empty day has to be able to reach it — that is what
+ * tier 1 is. Pure.
  */
-function pickBestFits(days, { limit = 3, respectTheirWorkday = true, within = null } = {}) {
+function pickBestFits(days, { limit = 5, respectTheirWorkday = true, within = null } = {}) {
   const windows = Array.isArray(within) && within.length ? within : null;
+  // scoreAgainstBlocks: 0/1/2 sit against a booking, 9 is an open stretch.
+  const abuts = slot => slot.score !== null && slot.score <= 2;
+
   const pick = (filterWorkday) => {
     const fits = [];
     for (const day of days) {
-      if (!windows && !day.busyBlocks?.length) continue;
       let top = null;
-      for (const slot of day.slots) {
-        if (slot.busy) continue;
-        if (windows ? !slotWithin(slot, day.date, windows) : slot.score > 2) continue;
-        if (filterWorkday && slot.outsideTheirWorkday) continue;
-        if (!top || slot.score < top.score) top = slot;
-      }
-      if (top) {
-        fits.push({
-          date: day.date, dayLabel: day.label,
-          start: top.start, end: top.end, label: top.label, theirLabel: top.theirLabel || null,
-          score: top.score, reason: top.reason, unsociableForThem: !!top.unsociableForThem,
-        });
-      }
+      // Slots are built in clock order, so the index IS the time of day — no
+      // zone arithmetic needed to know which of two slots is earlier.
+      day.slots.forEach((slot, order) => {
+        if (slot.busy) return;
+        if (windows && !slotWithin(slot, day.date, windows)) return;
+        if (filterWorkday && slot.outsideTheirWorkday) return;
+        const cand = { slot, order, tier: abuts(slot) ? 0 : 1 };
+        if (!top
+          || cand.tier < top.tier
+          || (cand.tier === top.tier && cand.slot.score < top.slot.score)
+          || (cand.tier === top.tier && cand.slot.score === top.slot.score && cand.order < top.order)) {
+          top = cand;
+        }
+      });
+      if (!top) continue;
+      fits.push({
+        date: day.date, dayLabel: day.label,
+        start: top.slot.start, end: top.slot.end, label: top.slot.label,
+        theirLabel: top.slot.theirLabel || null,
+        score: top.slot.score, reason: top.slot.reason,
+        // Which tier put it here, so the panel can say why without re-deriving
+        // the rule: 0 groups with a booking, 1 is first thing in the day.
+        tier: top.tier,
+        // Its place in the day, so "first thing" is a fact the panel can check
+        // rather than a guess from the label.
+        order: top.order,
+        unsociableForThem: !!top.slot.unsociableForThem,
+      });
     }
-    // Stable: equal scores keep date order, so the sooner day wins ties.
-    return fits.sort((a, b) => a.score - b.score).slice(0, limit);
+    return fits.sort(rankFits).slice(0, limit);
   };
+
   const strict = pick(respectTheirWorkday);
   return strict.length ? strict : pick(false);
 }
+
+/** The pecking order above, as a comparator. Pure. */
+function rankFits(a, b) {
+  if (a.tier !== b.tier) return a.tier - b.tier;
+  if (a.tier === 0) {
+    if (a.score !== b.score) return a.score - b.score;        // tightest against a booking
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;   // then the sooner day
+    return a.order - b.order;
+  }
+  if (a.order !== b.order) return a.order - b.order;          // 9am before 2pm
+  return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;      // then the sooner day
+}
+
 
 // ---------------------------------------------------------------------------
 // The slot engine (pure)
@@ -492,8 +554,10 @@ async function fetchAvailability({
 
 module.exports = {
   buildSlots,
+  sameWallClock,
   scoreAgainstBlocks,
   pickBestFits,
+  rankFits,
   slotWithin,
   checkSlotFree,
   fetchAvailability,

@@ -25,12 +25,21 @@ const threads = [
 
 test('a Tier-1 reply entry targets its thread, with the cc the contact kept on it', () => {
   const t = composeTarget({ entry: { tier: 1, thread_id: 659 }, threads, ourEmail: OUR });
-  assert.deepEqual(t, { thread_id: 659, subject: 'Would love your support for Atlanta Family Weekend', cc: 'asha@colage.org' });
+  assert.deepEqual(t, {
+    thread_id: 659,
+    subject: 'Would love your support for Atlanta Family Weekend',
+    // What the Subject box shows, and what the send path computes for a blank
+    // box — one helper, so a pre-filled box cannot send something different.
+    reply_subject: 'Re: Would love your support for Atlanta Family Weekend',
+    cc: 'asha@colage.org',
+  });
 });
 
 test('a thread with nobody else on it targets the thread and no cc', () => {
   const t = composeTarget({ entry: { tier: 3, thread_id: 586 }, threads, ourEmail: OUR });
-  assert.deepEqual(t, { thread_id: 586, subject: 'Our September call', cc: null });
+  assert.deepEqual(t, {
+    thread_id: 586, subject: 'Our September call', reply_subject: 'Re: Our September call', cc: null,
+  });
 });
 
 test('no entry, or an entry with no thread, is a fresh email: no target', () => {
@@ -40,7 +49,7 @@ test('no entry, or an entry with no thread, is a fresh email: no target', () => 
 
 test('an entry naming a thread the payload does not hold still threads, with no cc claimed', () => {
   const t = composeTarget({ entry: { tier: 1, thread_id: 999 }, threads, ourEmail: OUR });
-  assert.deepEqual(t, { thread_id: 999, subject: null, cc: null });
+  assert.deepEqual(t, { thread_id: 999, subject: null, reply_subject: null, cc: null });
 });
 
 test('machine mail never sets the audience: the anchor is the newest real message', () => {
@@ -92,4 +101,24 @@ test('mergeRecipients: undefined leaves a field alone, empty string clears it, t
   assert.deepEqual(mergeRecipients(base, { cc: '   ' }), { attachments: ['x'] });
   assert.deepEqual(mergeRecipients(null, { cc: 'a@b.co' }), { cc: 'a@b.co' });
   assert.deepEqual(base, { cc: 'asha@colage.org', attachments: ['x'] }, 'pure: the input is never mutated');
+});
+
+// The Subject box is pre-filled from this, so it has to produce exactly what
+// sendB2bEmail computes when the box is left blank — that equivalence is the
+// only reason pre-filling is safe.
+const { replySubject } = require('../../b2b-outreach/lib/replyCc');
+
+test('replySubject prefixes once, keeps an existing Re: whatever its case', () => {
+  assert.equal(replySubject('Our September call'), 'Re: Our September call');
+  assert.equal(replySubject('Re: Our September call'), 'Re: Our September call');
+  assert.equal(replySubject('RE: Our September call'), 'RE: Our September call');
+  assert.equal(replySubject('  Our September call  '), 'Re: Our September call');
+});
+
+test('replySubject has nothing to inherit for a brand-new email', () => {
+  // Null, not '': the send path treats a missing subject on a new thread as an
+  // error to refuse, and '' would sail past that check as a real subject.
+  assert.equal(replySubject(null), null);
+  assert.equal(replySubject(''), null);
+  assert.equal(replySubject('   '), null);
 });

@@ -26,7 +26,7 @@ const { nextScheduledTouch, LADDER_TYPES } = require('./cadence');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
-const { defaultReplyCc, computeReplyCc, pickReplyAnchor } = require('./replyCc');
+const { defaultReplyCc, computeReplyCc, pickReplyAnchor, replySubject } = require('./replyCc');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
@@ -1126,6 +1126,9 @@ function composeTarget({ entry, threads, ourEmail } = {}) {
   return {
     thread_id: threadId,
     subject: thread?.subject || null,
+    // What the Subject box shows. The send path computes the same string from
+    // the same helper, so a pre-filled box and a blank one send the same mail.
+    reply_subject: replySubject(thread?.subject),
     cc: thread ? computeReplyCc(pickReplyAnchor(thread.messages || []), ourEmail) : null,
   };
 }
@@ -1302,7 +1305,11 @@ async function fetchCompanyThreads(sb, companyId) {
   if (messagesRes.error) throw new Error(messagesRes.error.message);
   if (ordersRes.error) console.error(`[queueService] orders lookup failed: ${ordersRes.error.message}`);
 
-  const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
+  // reply_subject per thread: the subject a reply on it goes out with, so the
+  // composer's Subject box can show the real one instead of a promise to
+  // inherit it. Computed here, from the same helper the send path uses, so the
+  // panel never re-derives the "Re:" rule and the two cannot drift apart.
+  const byThread = new Map(threads.map(t => [t.id, { ...t, reply_subject: replySubject(t.subject), messages: [] }]));
   for (const m of messagesRes.data || []) byThread.get(m.thread_id)?.messages.push(m);
 
   // Logo: store-locator logo if the company has one, else the donation

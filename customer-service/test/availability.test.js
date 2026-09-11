@@ -257,7 +257,7 @@ test('the grid scores every free slot and names what it groups with', () => {
   assert.ok(grid.days[1].slots.every(s => s.score === 9 && s.reason === null));
 });
 
-test('bestFits: one per booked day, tightest first, empty days never suggested', () => {
+test('bestFits: slots against a booking lead, then the earliest hour of an open day', () => {
   const busy = [
     { start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' },
     { start: et('2026-09-11', 15), end: et('2026-09-11', 15, 30), summary: 'Uniting Pride' },
@@ -265,14 +265,36 @@ test('bestFits: one per booked day, tightest first, empty days never suggested',
     { start: et('2026-09-16', 9), end: et('2026-09-16', 10), summary: 'Dentist' },
   ];
   const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 6 });
-  assert.deepStrictEqual(grid.bestFits.map(f => [f.date, f.label, f.reason]), [
-    ['2026-09-10', '10:00 AM', 'right after Le JAG'],
-    ['2026-09-11', '3:30 PM', 'right after Uniting Pride'],
-    ['2026-09-15', '11:30 AM', 'right after P10 Qc'],
+  // Tier 0 (against a booking) in full before tier 1 (first thing) gets a look,
+  // and one slot per day throughout.
+  assert.deepStrictEqual(grid.bestFits.map(f => [f.date, f.label, f.tier, f.reason]), [
+    ['2026-09-10', '10:00 AM', 0, 'right after Le JAG'],
+    ['2026-09-11', '3:30 PM', 0, 'right after Uniting Pride'],
+    ['2026-09-15', '11:30 AM', 0, 'right after P10 Qc'],
+    ['2026-09-16', '10:00 AM', 0, 'right after Dentist'],
+    ['2026-09-14', '9:00 AM', 1, null],
   ]);
-  // Four booked days, three fits — and Mon 14 (empty) is not among them.
-  assert.ok(!grid.bestFits.some(f => f.date === '2026-09-14'));
-  assert.strictEqual(pickBestFits(grid.days, { limit: 10 }).length, 4);
+  // Mon 14 is empty, so it can only reach the list as a 9am — and does, now
+  // that this is the panel's only list of times rather than one of two.
+  const mon = grid.bestFits.find(f => f.date === '2026-09-14');
+  assert.strictEqual(mon.order, 0);
+  // Six business days in the window, every one of them offering something.
+  assert.strictEqual(pickBestFits(grid.days, { limit: 10 }).length, 6);
+});
+
+test('bestFits: their windows are a hard constraint, never relaxed', () => {
+  // Their offer: Thu 1-2:30 only. The tight slot against Thursday's own
+  // booking is 10:00, outside it, and must not be offered.
+  const busy = [{ start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' }];
+  const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 3 });
+  const within = [{ date: '2026-09-10', start: et('2026-09-10', 13), end: et('2026-09-10', 14, 30) }];
+  const fits = pickBestFits(grid.days, { within, respectTheirWorkday: false });
+  assert.deepStrictEqual(fits.map(f => f.label), ['1:00 PM']);
+  assert.ok(!fits.some(f => f.label === '10:00 AM'));
+  // A window nothing is free inside returns nothing at all, rather than
+  // quietly falling back to times they already said they cannot make.
+  const closed = [{ date: '2026-09-10', start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10) }];
+  assert.deepStrictEqual(pickBestFits(grid.days, { within: closed, respectTheirWorkday: false }), []);
 });
 
 test('bestFits respect their workday, and fall back when nothing survives it', () => {
@@ -281,13 +303,21 @@ test('bestFits respect their workday, and fall back when nothing survives it', (
   const busy = [{ start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' }];
   const wpg = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 1, theirTimeZone: 'America/Winnipeg' });
   assert.strictEqual(wpg.bestFits[0].label, '10:00 AM');
-  // A block late in the day for a Berlin partner: every free slot after it is
-  // outside their 9-5, and the filter is dropped rather than offering nothing.
+  // A block late in the day for a Berlin partner. The slots touching it are
+  // 10:30pm their time, so their workday outranks the stacking preference:
+  // 9:00 ET is 3pm in Berlin and wins on tier 1 instead.
   const late = [{ start: et('2026-09-10', 16), end: et('2026-09-10', 16, 30), summary: 'Natta' }];
   const ber = buildSlots({ now: new Date(et('2026-09-09', 9)), busy: late, days: 1, theirTimeZone: 'Europe/Berlin' });
-  assert.strictEqual(ber.bestFits.length, 1);
-  assert.strictEqual(ber.bestFits[0].label, '4:30 PM');
-  assert.strictEqual(ber.bestFits[0].unsociableForThem, true);
+  assert.strictEqual(ber.bestFits[0].label, '9:00 AM');
+  assert.strictEqual(ber.bestFits[0].tier, 1);
+  assert.strictEqual(ber.bestFits[0].unsociableForThem, false);
+
+  // Sydney: every 9-5 Eastern slot is the middle of their night, nothing
+  // survives the workday filter, and it is dropped rather than offering
+  // nothing at all.
+  const syd = buildSlots({ now: new Date(et('2026-09-09', 9)), busy: late, days: 1, theirTimeZone: 'Australia/Sydney' });
+  assert.ok(syd.bestFits.length >= 1);
+  assert.strictEqual(syd.bestFits[0].unsociableForThem, true);
 });
 
 test('today is returned read-only: its bookings and notes, no slots', () => {

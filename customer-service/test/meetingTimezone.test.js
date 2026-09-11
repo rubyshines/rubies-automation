@@ -114,6 +114,31 @@ test('the confirmation line drops the second zone when theirs is unknown', () =>
   assert.ok(!renderConfirmationLine({ start, theirTimeZone: 'Mars/Olympus' }).includes('your time'));
 });
 
+test('the confirmation line drops the second zone when their clock matches ours', () => {
+  const start = new Date('2026-08-25T18:00:00.000Z'); // 2pm ET
+  // The bug this fixes: America/Toronto and America/New_York are two names for
+  // one Eastern clock, so the old zone-NAME comparison wrote "2:00 PM ET (2:00
+  // PM your time)" to every Toronto partner.
+  const toronto = renderConfirmationLine({ start, theirTimeZone: 'America/Toronto' });
+  assert.match(toronto, /2:00 PM ET\.$/);
+  assert.ok(!toronto.includes('your time'));
+  // Same clock by a third name.
+  assert.ok(!renderConfirmationLine({ start, theirTimeZone: 'Canada/Eastern' }).includes('your time'));
+  // A zone that really does differ still says so — the habit exists because
+  // timezone confusion killed real meetings.
+  assert.match(renderConfirmationLine({ start, theirTimeZone: 'America/Chicago' }), /1:00 PM your time/);
+});
+
+test('the same-clock test is per instant, so a DST gap still counts as different', () => {
+  // Arizona does not observe DST. In August it reads as Pacific; in December
+  // it reads as Mountain. Both are a real difference from Eastern and both
+  // must be stated.
+  const summer = renderConfirmationLine({ start: new Date('2026-08-25T18:00:00.000Z'), theirTimeZone: 'America/Phoenix' });
+  const winter = renderConfirmationLine({ start: new Date('2026-12-15T19:00:00.000Z'), theirTimeZone: 'America/Phoenix' });
+  assert.match(summer, /11:00 AM your time/);
+  assert.match(winter, /12:00 PM your time/);
+});
+
 test('meeting title', () => {
   assert.strictEqual(meetingTitle('Uniting Pride'), 'RUBIES x Uniting Pride');
   assert.strictEqual(meetingTitle('  Spectrum  '), 'RUBIES x Spectrum');

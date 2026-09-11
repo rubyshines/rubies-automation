@@ -29,7 +29,7 @@ const {
   getCalendar, ORGANIZER_CALENDAR_ID, BUSINESS_TIMEZONE,
 } = require('../../shared/googleCalendarClient');
 const { sendB2bEmail, resolveDelivery, addressList, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
-const { fetchCalendarEvents, checkSlotFree, formatTimeInZone, formatDayInZone } = require('./availability');
+const { fetchCalendarEvents, checkSlotFree, formatTimeInZone, formatDayInZone, sameWallClock } = require('./availability');
 const { isValidTimeZone } = require('./meetingTimezone');
 const { greetingName, MAX_NO_SHOWS } = require('./messageTemplates');
 
@@ -112,9 +112,12 @@ function meetingTitle(companyName) {
  *
  * The date is ABSOLUTE, never "next Wednesday": a relative date is a stale fact
  * with a long fuse, and this text can sit in a pending draft for days before it
- * sends. Their local time is appended only when their zone actually differs —
+ * sends. Their local time is appended only when the CLOCK actually differs —
  * the both-zones habit exists because timezone confusion killed real meetings,
- * but for a Toronto org it prints the same number twice. Pure.
+ * but for a Toronto org it prints the same number twice. Comparing zone names
+ * is not that test: America/Toronto and America/New_York are different names
+ * for the same Eastern clock, and the name test wrote "9:00 AM ET (9:00 AM
+ * your time)" into a real partner's inbox. Pure.
  */
 function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null, moved = false }) {
   const d = new Date(start);
@@ -123,7 +126,7 @@ function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, t
   // A move says so: "sent an invite" for a call they already hold reads as a
   // second call. Same shape otherwise, so the send guard covers both.
   const verb = moved ? 'I moved our call to' : 'I just sent an invite for';
-  if (theirTimeZone && isValidTimeZone(theirTimeZone) && theirTimeZone !== businessTimeZone) {
+  if (theirTimeZone && isValidTimeZone(theirTimeZone) && !sameWallClock(d, theirTimeZone, businessTimeZone)) {
     return `Ok, ${verb} ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
   }
   return `Ok, ${verb} ${day} at ${ours} ET.`;
