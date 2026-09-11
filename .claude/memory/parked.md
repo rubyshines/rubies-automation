@@ -8,6 +8,30 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Commitments in the daily sync digest
+- Parked: 2026-09-11
+- Domains: b2b_sales, tech
+- Type: build (small)
+- Notes: The digest's On Me section should become the commitments list — what Jamie owes (overdue first) and a waiting-on-them fold — so the day starts with it without opening the dashboard. Jamie: not yet, but eventually. Data is `b2b-outreach/lib/commitments.js` `listCommitments`.
+
+## CS tickets as a commitment source
+- Parked: 2026-09-11
+- Domains: cs, b2b_sales
+- Type: idea
+- Notes: The commitments table is not B2B-specific in shape (company optional). CS keeps its own On Me and follow-up logic for now; fold tickets in only if Jamie finds himself wanting one list. Seed of the supervisor's first question ("what does Jamie owe, what is he waiting on").
+
+## Chase aged waiting-on-them commitments, and a quiet "gave up" close
+- Parked: 2026-09-11
+- Domains: b2b_sales, community
+- Type: idea
+- Notes: A their-item open for N days is an honest cadence condition (surface the company with an operator-written nudge, not an AI one); decide after watching the To do fold for a few weeks. Related: a third close for theirs besides done/delete — "gave up" — so the recap and the October check-in know they never came through (Blue Mountain's agreement may simply never be signed).
+
+## Commitment extraction refinements
+- Parked: 2026-09-11
+- Domains: b2b_sales, tech
+- Type: idea
+- Notes: (1) Due dates from meeting Next Steps — the parse is deterministic and carries none; a narrow Sonnet pass over the parsed lines could attach them ("for the Oct 18 event"). (2) Pass the advisor's `open_commitments` on a just-sent draft to the summariser as a hint if extraction turns out to miss our own promises. (3) Post-call template pre-fill from the call summary was rejected on purpose (Sonnet text into a partner email; Jamie writes those) — revisit only with a human-in-the-loop design.
+
 ## Address-hold resolver should seed a care@ confirmation outreach when its rules fail
 - Parked: 2026-09-09
 - Last touched: 2026-09-09
