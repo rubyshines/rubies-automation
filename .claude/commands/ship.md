@@ -89,7 +89,9 @@ gets buried. **The close-out sweep is a check you run and act on. The report is 
 **`Worth knowing`** — at most three lines, appended under the block, and only when something clears this bar:
 - A step **failed or is still in doubt** (merge didn't land, Railway hasn't picked it up, a test was skipped).
 - **Scope was parked instead of shipped** — one line naming what, so it isn't a surprise later.
-- **A judgment call was made on Jamie's behalf** that he might reasonably have decided differently.
+- **A judgment call departed from the default** in a way Jamie might reasonably have decided differently.
+  Following the default is not a judgment call and is never reported — deciding *not* to write memory is the
+  default, not a decision.
 - **Customer-facing behavior changed** in a way he'd want to watch over the next few days.
 
 If nothing clears the bar, the section does not appear. Do not invent an entry to fill it, and do not soften a
@@ -103,6 +105,8 @@ real one into the block.
 - Memory or parked writes that Jamie already approved during the sweep.
 - Anything another session is doing.
 - A recap of the work itself. He was there for it.
+- Anything Jamie already asked about and got an answer to earlier in the session. Saying it twice is bloat
+  even when it was worth saying once.
 
 **Write it for a founder, not an engineer.** Plain English, no jargon: "shipped," not "squash-merged"; "the
 change is live," not "Railway redeployed from main"; say what it *does*, not which files moved. If a line needs
@@ -110,6 +114,11 @@ Jamie to know git to parse it, rewrite the line.
 
 Only failures break this contract. A blocked merge, a conflict, or a failed deploy gets as much detail as it
 takes to fix — that is news, and it is the one thing the brevity rule is protecting space for.
+
+**This discipline governs every message that ends a piece of work, not only a clean `/ship`.** When the ship
+stops early — a blocked merge, a conflict, a precondition that failed — report the blocker and the one command
+that clears it, and hold everything else to the same bar. A ship that didn't finish is the *most* important
+time to stay short, because the next thing Jamie has to do is the whole point of the message.
 
 ## Notes
 - The branch-protection hooks (`block-main-checkout-git.js`) block direct commits/merges on the **main
