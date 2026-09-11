@@ -24,23 +24,115 @@
  */
 
 const { getSheetsClient } = require('../../shared/googleSheetsClient');
+const { resolveSurveyColumns } = require('./surveyColumns');
 
 const SHEET_ID = '1IKaX5lKarqCdsqK766NpUCvwQb7fC4RcWG71VliWHiU';
 const TAB = 'Form Responses 1';
-const RANGE = `'${TAB}'!A1:J`;
+// Wide enough that a question added tomorrow is read rather than truncated. The
+// old A1:J stopped exactly at the last question that existed when it was written,
+// so the three questions added on 2026-09-11 were invisible to this reader.
+const RANGE = `'${TAB}'!A1:AZ`;
 
-const COL = {
-  timestamp: 0,
-  submitter_email: 1,
-  name: 2,
-  website: 3,
-  contact_name: 4,
-  contact_email: 5,
-  description: 6,
-  program_url: 7,
-  raw_address: 8,
-  size_range: 9,
+const looksLikeEmail = (v) => v.includes('@') && v.includes('.');
+const looksLikeUrl = (v) => /^(https?:\/\/|www\.)/i.test(v) || /\.[a-z]{2,}(\/|$)/i.test(v);
+
+/**
+ * How each field is found. `match` keys on the fragment that carries the
+ * meaning, so a reworded, re-punctuated or typo-fixed question still resolves;
+ * `verify` checks the resolved column actually holds that kind of value, which
+ * is what stops a rewording drifting onto the wrong column. See surveyColumns.js.
+ *
+ * Only the fields the ingest genuinely cannot work without are `required`. A
+ * question that has not been asked yet, or was retired, must not break the read.
+ */
+const FIELDS = {
+  timestamp: {
+    label: 'submission time', required: true,
+    match: (h) => h === 'timestamp' || h.startsWith('timestamp'),
+    verify: (v) => !Number.isNaN(Date.parse(v)),
+  },
+  submitter_email: {
+    label: 'submitter address', required: true,
+    match: (h) => h === 'email address' || /^email address/.test(h),
+    verify: looksLikeEmail,
+  },
+  name: {
+    label: 'organisation name', required: true,
+    match: (h) => /name of (your|the) organi/.test(h),
+  },
+  website: {
+    label: 'organisation website', required: true,
+    // "website of you organization" (sic) — the typo is on the live form, which
+    // is exactly why this keys on `website` and not the sentence.
+    match: (h) => /website/.test(h) && /organi/.test(h),
+    verify: looksLikeUrl,
+  },
+  contact_name: {
+    label: 'primary contact name', required: true,
+    match: (h) => /name and title/.test(h),
+  },
+  contact_email: {
+    label: 'primary contact address', required: true,
+    match: (h) => /email address of the primary/.test(h),
+    verify: looksLikeEmail,
+  },
+  description: {
+    label: 'programme write-up', required: true,
+    match: (h) => /describe the program/.test(h),
+  },
+  program_url: {
+    label: 'programme page link',
+    match: (h) => /include a link to the program/.test(h),
+    verify: (v) => looksLikeUrl(v),
+  },
+  raw_address: {
+    label: 'returns address', required: true,
+    match: (h) => /address info/.test(h) || (/address/.test(h) && /return/.test(h)),
+  },
+  size_range: {
+    label: 'size ranges accepted', required: true,
+    match: (h) => /size range/.test(h),
+  },
+  // Added 2026-09-11. Optional by design: every partner on file predates them,
+  // so a blank is the normal case and must never fail the read.
+  distribution: {
+    label: 'how people get items',
+    match: (h) => /how do people get/.test(h),
+  },
+  makes_purchases: {
+    label: 'buys gear occasionally',
+    match: (h) => /occasional purchases/.test(h),
+  },
+  affiliate_interest: {
+    label: 'affiliate interest',
+    match: (h) => /affiliate program/.test(h),
+  },
 };
+
+/**
+ * The programme type a multi-select answer implies. PURE.
+ *
+ * Keyed on meaning, not on the option strings: the form's options are operator
+ * text and will be reworded, and an org can pick "Other" and type their own
+ * sentence. A tick nobody recognises yields `unknown` rather than a guess, and
+ * the raw answer is kept on the row either way.
+ *
+ * Collapse rule when several are ticked: HIGHEST STANDING CAPACITY WINS. Orgs
+ * routinely do two of these (hands gear out on request AND runs a closet event
+ * each October), and a type is one value — so it reports the most open door
+ * they have, and the line beside it carries the rest.
+ */
+function programTypeFromDistribution(answer) {
+  if (!answer) return null;
+  const a = String(answer).toLowerCase();
+  const visits = /(visit|drop[ -]?in|walk[ -]?in|open hours|come to|in person|on site|our space|closet)/.test(a);
+  const onRequest = /(ask|request|appointment|post it|mail|ship|staff|counsell?or|case ?worker|privately|order form)/.test(a);
+  const events = /(event|pop[ -]?up|drive|tabl|pride|fair|market|camp)/.test(a);
+  if (visits) return 'standing_closet';
+  if (onRequest) return 'by_request';
+  if (events) return 'events';
+  return 'unknown';
+}
 
 /**
  * Wrap a bare submitted address in the "RUBIES Returns / c/o ORG / ..." block
@@ -82,6 +174,12 @@ async function readSurveyRows({ refresh = false } = {}) {
   const rows = res.data.values || [];
   if (rows.length === 0) return [];
 
+  // Resolved per read, against this sheet's actual headers, rather than baked in
+  // as positions. Throws loudly if a required question cannot be found or the
+  // column it matched holds the wrong kind of value.
+  const { index: COL, unmapped } = resolveSurveyColumns(rows[0], FIELDS, rows.slice(1));
+  const at = (r, field) => (COL[field] === undefined ? null : (r[COL[field]] || '').trim() || null);
+
   const out = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
@@ -91,16 +189,22 @@ async function readSurveyRows({ refresh = false } = {}) {
     out.push({
       sheet_row: i + 1, // 1-indexed sheet row (header is row 1)
       timestamp: (r[COL.timestamp] || '').trim(),
-      submitter_email: (r[COL.submitter_email] || '').trim() || null,
+      submitter_email: at(r, 'submitter_email'),
       name,
-      website: (r[COL.website] || '').trim() || null,
-      contact_name: (r[COL.contact_name] || '').trim() || null,
-      contact_email: (r[COL.contact_email] || '').trim() || null,
-      description: (r[COL.description] || '').trim() || null,
-      program_url: (r[COL.program_url] || '').trim() || null,
+      website: at(r, 'website'),
+      contact_name: at(r, 'contact_name'),
+      contact_email: at(r, 'contact_email'),
+      description: at(r, 'description'),
+      program_url: at(r, 'program_url'),
       raw_address: rawAddress,
       mailing_address: buildMailingAddress(name, rawAddress),
-      size_range: (r[COL.size_range] || '').trim() || null,
+      size_range: at(r, 'size_range'),
+      distribution: at(r, 'distribution'),
+      makes_purchases: at(r, 'makes_purchases'),
+      affiliate_interest: at(r, 'affiliate_interest'),
+      // Derived, not stored on the row: the programme type the ticks imply.
+      program_type: programTypeFromDistribution(at(r, 'distribution')),
+      unmapped_columns: unmapped.map(u => u.header),
     });
   }
   _surveyCache = { at: now, rows: out };
@@ -143,4 +247,5 @@ function ensureRubiesReturnsPrefix(mailingAddress) {
   return ['RUBIES Returns', ...lines].join('\n');
 }
 
-module.exports = { readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, invalidateSurveyCache, SHEET_ID, TAB };
+module.exports = {
+  programTypeFromDistribution, FIELDS, readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, invalidateSurveyCache, SHEET_ID, TAB };

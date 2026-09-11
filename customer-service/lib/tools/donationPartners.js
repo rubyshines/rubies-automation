@@ -556,6 +556,12 @@ async function handleListSubmissions({ status } = {}) {
   };
 
   const lines = [`## Donation Partner Submissions (${tagged.length} total — ${counts.blank} not reviewed, ${counts.in} in, ${counts.out} out)\n`];
+  // A question added to the form that no reader knows about would otherwise be
+  // invisible until somebody wondered where the answers went.
+  const unmapped = tagged[0]?.unmapped_columns || [];
+  if (unmapped.length) {
+    lines.push(`⚠ ${unmapped.length} question(s) on the form are not read by the ingest: ${unmapped.map(h => `"${String(h).trim()}"`).join(', ')}\n`);
+  }
   lines.push(`Source: Form Responses 1 tab. Status: **in** = active partner, **out** = soft-deleted partner, **blank** = not yet reviewed.\n`);
   for (const r of filtered) {
     const tag = r.status ? `[${r.status}]` : '[ ]';
@@ -563,6 +569,11 @@ async function handleListSubmissions({ status } = {}) {
     lines.push(`    website: ${r.website || '—'}`);
     lines.push(`    sizes: ${r.size_range || '—'} → ${formatSizeAcceptance(parseSizeAcceptance(r.size_range)) || '— none'}`);
     lines.push(`    contact: ${r.contact_name || '—'} <${r.contact_email || '—'}>`);
+    // The three questions added 2026-09-11. Only shown when answered, so the
+    // 24 submissions that predate them do not each grow three "—" lines.
+    if (r.distribution) lines.push(`    distributes: ${r.distribution}${r.program_type ? ` → ${r.program_type}` : ''}`);
+    if (r.makes_purchases) lines.push(`    buys gear: ${r.makes_purchases}`);
+    if (r.affiliate_interest) lines.push(`    affiliate interest: ${r.affiliate_interest}  (recorded only — the programme does not exist and is never offered)`);
     if (r.matched_partner_name) {
       lines.push(`    matched DB partner #${r.matched_partner_id} "${r.matched_partner_name}" via ${r.matched_via}`);
     }
@@ -616,7 +627,7 @@ async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, ma
   // picks a bad logo (white-on-white, favicon, etc.) — operator pastes a
   // better URL in the same call. Same for tweaks to the mailing block or
   // description before the row hits the DB.
-  return handleCreate({
+  const created = await handleCreate({
     name: row.name,
     mailing_address: mailing_address || row.mailing_address,
     description: description || row.description,
@@ -630,6 +641,30 @@ async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, ma
     _previewHeading: `## Preview — ingest from survey row ${row.sheet_row} (NOT YET SAVED)`,
     _confirmHint: `To save, call \`donation_partner_create_from_survey\` again with \`{ name: "${row.name}", confirmed: true }\` (include \`logo_url\` / \`mailing_address\` / \`description_short\` overrides if you want to change anything in this preview — the short description regenerates on confirm unless you pass the previewed text explicitly).`,
   });
+
+  // The form asks three questions the DONATION registry has no column for and
+  // the outreach side wants: how they distribute (which is the programme
+  // profile, self-classified at intake), whether they buy gear, and whether
+  // they would want an affiliate programme. Applied only on a real save, never
+  // on a preview, and fail-soft in both directions: a company the outreach book
+  // has never heard of is a note, not a failed ingest, and an error here must
+  // not lose a partner that was just created successfully.
+  if (confirmed === true && !created.isError) {
+    let note;
+    try {
+      const { applySurveyAnswers } = require('../../../b2b-outreach/lib/surveyAnswers');
+      const r = await applySurveyAnswers(supabase, row);
+      note = r.applied
+        ? `\n\nAlso recorded on the outreach book (**${r.company_name}**): ${r.changes.join('; ')}.`
+        : `\n\n_Survey answers not applied to the outreach book: ${r.reason}._`;
+    } catch (e) {
+      note = `\n\n_Partner saved. Survey answers could NOT be applied to the outreach book: ${e.message}_`;
+    }
+    const last = created.content?.[created.content.length - 1];
+    if (last && typeof last.text === 'string') last.text += note;
+  }
+
+  return created;
 }
 
 // ---------------------------------------------------------------------------

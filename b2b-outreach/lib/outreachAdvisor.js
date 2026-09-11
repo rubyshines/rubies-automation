@@ -366,6 +366,19 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   } else if (company.relationship_type === 'lgbtq_org') {
     lines.push(`Their own programme: not on record. We have not read what they run, which is NOT the same as them running nothing — do not assert either way.`);
   }
+  // A budget signal they gave us themselves, on the donation onboarding form.
+  // An org that buys is a different conversation from one that only receives.
+  //
+  // Their affiliate answer is deliberately NOT rendered here, and must not be
+  // added: the affiliate programme does not exist and must never be offered
+  // (2026-08-13). There is nothing a draft could do with that answer except
+  // promise something we cannot deliver, so it stays operator-only.
+  const surveyFacts = readMetadata(company.metadata).onboarding;
+  if (surveyFacts && typeof surveyFacts.buys_gear === 'boolean') {
+    lines.push(surveyFacts.buys_gear
+      ? `They told us they make occasional purchases of gender-affirming gear${surveyFacts.answered_at ? ` (donation onboarding form, ${String(surveyFacts.answered_at).slice(0, 10)})` : ''} — they have some budget, so a purchase is a real option to raise, not an imposition.`
+      : `They told us they do NOT make occasional purchases of gender-affirming gear${surveyFacts.answered_at ? ` (donation onboarding form, ${String(surveyFacts.answered_at).slice(0, 10)})` : ''} — do not pitch them a paid order; donations and referrals are the useful conversation.`);
+  }
   // Rendered separately from Programs, and labelled as observation rather than
   // relationship. "Programs" means what this org is IN with us; these are notes
   // read off their own website by an automated pass, about an org we may never

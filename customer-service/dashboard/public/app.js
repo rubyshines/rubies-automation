@@ -6855,7 +6855,34 @@ function outreachProgramHtml(c, entry) {
     <span class="badge badge-muted outreach-program-type">${esc(OUTREACH_PROGRAM_LABELS[p.type])}</span>
     ${p.line ? `<span class="outreach-program-line">${esc(p.line)}</span>` : ''}
     ${provenance ? `<span class="outreach-program-hint">${esc(provenance)}</span>` : ''}
+    ${outreachOnboardingHtml(c)}
   </div>`;
+}
+
+/**
+ * The two other things the donation onboarding form asks: do they buy, and
+ * would they want an affiliate programme. Both sit on the programme line
+ * because they answer the same question the operator is asking before a call —
+ * what kind of org is this.
+ *
+ * The affiliate chip is operator-only by design. The programme does not exist
+ * and is never offered (2026-08-13), so this is a note to Jamie about a list to
+ * act on later, not something to raise on the call. It says "asked" rather than
+ * "member" for that reason, and the advisor is not given it at all.
+ */
+function outreachOnboardingHtml(c) {
+  const o = c && c.metadata && typeof c.metadata === 'object' ? c.metadata.onboarding : null;
+  if (!o) return '';
+  const bits = [];
+  if (typeof o.buys_gear === 'boolean') {
+    bits.push(o.buys_gear
+      ? '<span class="badge badge-muted" title="They told us on the onboarding form that they make occasional purchases of gender-affirming gear.">buys gear</span>'
+      : '<span class="badge badge-muted" title="They told us on the onboarding form that they do not make purchases. Donations and referrals are the useful conversation.">donations only</span>');
+  }
+  if (o.affiliate_yes) {
+    bits.push('<span class="badge badge-muted" title="They ticked yes to hearing about an affiliate programme. It does not exist yet and is never offered on a call — this is a list to act on when it is built.">affiliate: asked to hear more</span>');
+  }
+  return bits.join(' ');
 }
 
 /**
