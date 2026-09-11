@@ -97,6 +97,20 @@ gets buried. **The close-out sweep is a check you run and act on. The report is 
 If nothing clears the bar, the section does not appear. Do not invent an entry to fill it, and do not soften a
 real one into the block.
 
+**`Next steps`** — at most three lines, and only for things **Jamie himself has to do**. One action per line,
+shortest form that works: if it's a command, give the exact command and nothing else; if it's a decision, state
+the choice in one sentence. No rationale, no alternatives, no "you may want to consider."
+
+The test is "would this be undone or unfinished if Jamie did nothing?" If yes, it's a next step. If no, it
+isn't:
+- Work **I** will do next is not a next step. Do it, or park it.
+- Optional ideas, someday-improvements, and things worth thinking about are not next steps. They go to
+  `parked.md` or nowhere.
+- Scope that got parked belongs in `Worth knowing`, not here — it's context, not an action.
+
+Most clean ships have no next step: the work is live and there is nothing to do. The section is absent then.
+Never pad it to make a ship feel more complete than it is.
+
 **Never report** (all of this is routine, and success is assumed):
 - Worktrees — created, removed, still open, belonging to other sessions. If it's open, assume it was handled.
 - Previews, ngrok domains, ports, servers stopped or restarted.
