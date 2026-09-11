@@ -96,6 +96,8 @@ Jamie context-switches constantly as a solo founder. The biggest source of techn
 4. Is it runnable locally or deployed?
 5. What breaks if we stop here?
 
+The five questions are a check you run and act on, not a report you print. Answer them silently, fix or park what they turn up, and surface only what is left unfinished. A close-out that prints five headings of "yes" is noise that buries the result and stops the session from actually closing.
+
 If anything is "no" — either finish it now, or explicitly park it in `parked.md` with specific resume instructions. Never leave invisible incomplete state. A comment in code saying "TODO: wire this up" is not a park — it's invisible.
 
 **When Jamie says "let's move on":** Surface what's unfinished in one sentence, park it with context, then move. Don't silently carry incomplete state into the next topic.
