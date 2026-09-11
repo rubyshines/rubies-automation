@@ -96,11 +96,18 @@ function deriveInboundCandidates(messages, known) {
 // The domain guess ("Lejag", "Bluemountainclinic") is a poor display name and
 // a worse company id, while the message itself almost always states the real
 // one — in the signature, the body, or both. One Haiku call per new domain
-// pulls {org_name, country}; Haiku deliberately (narrow structured extraction,
-// and the operator reviews the name in the strip's editable field before it
-// becomes a record — a miss costs an edit, never a wrong send). Cached per
-// process: candidates are few and a domain's answer doesn't change.
-const ENRICH_CACHE = new Map(); // domain → {org_name, country} | false (tried, failed)
+// pulls {org_name, country, city, region}; Haiku deliberately (narrow
+// structured extraction, and the operator reviews the name in the strip's
+// editable field before it becomes a record — a miss costs an edit, never a
+// wrong send). Cached per process: candidates are few and a domain's answer
+// doesn't change.
+//
+// City and region ride along on the call the strip already makes, so where the
+// sender signs off with an address the company is placed the moment it is
+// created rather than sitting as a bare country until the background scrape
+// lands. They are the weaker source by design: enrichOrgs' geocode of the
+// address the org publishes on its own site overwrites them.
+const ENRICH_CACHE = new Map(); // domain → {org_name, country, city, region} | false
 
 function buildEnrichPrompt(c) {
   return [
@@ -115,13 +122,23 @@ function buildEnrichPrompt(c) {
     '--- END ---',
     '',
     'Reply with ONLY a JSON object, no explanation:',
-    '{"org_name": "the organisation\'s proper name as they would write it", "country": "country they are in, or null if the message does not say or imply one", "pitch": true or false}',
+    '{"org_name": "the organisation\'s proper name as they would write it", "country": "country they are in, or null if the message does not say or imply one", "city": "the city they are in, or null", "region": "the state or province they are in, spelled out, or null", "pitch": true or false}',
     'If the sender is a company/store, org_name is the company/store name. Use the message\'s own wording — do not invent or expand names beyond what is stated or clearly implied by the domain.',
+    'city and region come ONLY from an address or location the message itself states, usually in a signature block. NEVER derive them from the organisation\'s name, its web domain, a phone area code, or your own knowledge of the organisation. If the message states no location, both are null — that is a normal and useful answer.',
     'pitch is true when the sender is selling a product or service TO the brand (software, marketing, agencies, cold sales pitches, marketplace notifications) rather than a store wanting to stock its products or a community organisation wanting to partner. When genuinely unsure, use false.',
   ].join('\n');
 }
 
-/** Parse the model's reply. Returns {org_name, country} or null. Pure. */
+/** A nullable free-text field off the model. '', 'null' and junk → null. Pure. */
+function enrichString(value, max = 80) {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  if (!v || v.toLowerCase() === 'null' || v.length > max) return null;
+  return v;
+}
+
+/** Parse the model's reply. Returns {org_name, country, city, region, pitch}
+ * or null. Pure. */
 function parseEnrichment(text) {
   const m = String(text || '').match(/\{[\s\S]*\}/);
   if (!m) return null;
@@ -129,11 +146,15 @@ function parseEnrichment(text) {
   try { parsed = JSON.parse(m[0]); } catch { return null; }
   const name = typeof parsed.org_name === 'string' ? parsed.org_name.trim() : '';
   if (name.length < 2 || name.length > 80) return null;
-  const country = typeof parsed.country === 'string' && parsed.country.trim() && parsed.country.trim().toLowerCase() !== 'null'
-    ? parsed.country.trim() : null;
   // Anything but literal true reads as false — a spam guess must fail toward
   // "show it normally", never toward hiding a real org.
-  return { org_name: name, country, pitch: parsed.pitch === true };
+  return {
+    org_name: name,
+    country: enrichString(parsed.country),
+    city: enrichString(parsed.city),
+    region: enrichString(parsed.region),
+    pitch: parsed.pitch === true,
+  };
 }
 
 async function enrichCandidate(c) {
@@ -166,6 +187,8 @@ async function enrichCandidates(candidates) {
     if (!e) { c.name_source = 'domain'; return; }
     c.inferred_name = e.org_name;
     c.country = e.country;
+    c.city = e.city;
+    c.region = e.region;
     c.pitch = e.pitch;
     c.name_source = 'ai';
   }));
@@ -256,13 +279,68 @@ async function fetchInboundCandidates(sb, { days = DEFAULT_WINDOW_DAYS } = {}) {
   return enrichCandidates(candidates);
 }
 
+// ── Admit ───────────────────────────────────────────────────────────────────
+// Split into what the operator is waiting on and what they are not. The fast
+// path is the company, the contact, and the Gmail threads: without the threads
+// the row would land in the queue claiming nobody has ever written to us,
+// which is the opposite of why it is being admitted. Everything after that —
+// the relationship summary, the location scrape — changes nothing about how
+// the row reads in the queue, so it runs after the response goes out.
+//
+// The click used to wait on all of it (tens of seconds: Gmail, a Sonnet
+// summary), with no response until it finished, which reads as a dead button.
+
+/**
+ * The half of admitting nobody is waiting on: a relationship summary, and the
+ * location enrichment that turns a bare country into a city and a state. Both
+ * fail soft and both are repaired by a later pass, so neither may fail the
+ * admit that scheduled them.
+ *
+ * Exported and awaitable so it can be tested and re-run by hand; the endpoint
+ * reaches it through `startAdmitFinish`.
+ */
+async function finishAdmittedCompany(sb, companyId) {
+  const out = { summary: false, enrich_status: null };
+  try {
+    const { refreshCompanySummary } = require('./relationshipSummary');
+    await refreshCompanySummary(sb, companyId, { force: true });
+    out.summary = true;
+  } catch (err) {
+    console.warn(`[inboundTriage] summary failed for ${companyId}: ${err.message}`);
+  }
+  try {
+    const { enrichCompany, fetchTargets } = require('../../b2b-discovery/enrichOrgs');
+    const [row] = await fetchTargets(sb, { companyId, anyChannel: true });
+    // The row is gone, or the fetch found nothing to work with. Not an error:
+    // enrichment is a best effort on a company that already exists.
+    if (row) out.enrich_status = (await enrichCompany(sb, row)).status;
+  } catch (err) {
+    console.warn(`[inboundTriage] enrichment failed for ${companyId}: ${err.message}`);
+  } finally {
+    // A one-off scrape must not leave a Chromium process alive in the
+    // dashboard server. The batch CLI closes its own at the end of the run.
+    try { await require('../../b2b-discovery/lib/scraper').closePuppeteer(); } catch (_) { /* never launched */ }
+  }
+  return out;
+}
+
+/** Kick `finishAdmittedCompany` in the background. Returns 'started'. */
+function startAdmitFinish(sb, companyId) {
+  finishAdmittedCompany(sb, companyId)
+    .catch(err => console.error(`[inboundTriage] finish failed for ${companyId}: ${err.message}`));
+  return 'started';
+}
+
 /**
  * Admit one candidate: company row + contact, then pull their Gmail thread(s)
  * in so the queue reads "replied — waiting on us" rather than offering a cold
  * intro to someone who wrote to US. No draft is generated — the Tier-1 flow
  * drafts the reply with the thread in context when the operator opens it.
+ *
+ * Returns with `background: 'started'` once the summary and the location
+ * scrape are under way; the client re-polls the company after they land.
  */
-async function admitInboundSender(sb, { domain, name, email, contact_name = null, channel = 'lgbtq_org', country = null } = {}) {
+async function admitInboundSender(sb, { domain, name, email, contact_name = null, channel = 'lgbtq_org', country = null, city = null, region = null } = {}) {
   if (!domain) throw new Error('domain is required');
   if (!email) throw new Error('email is required');
   const { addProspect } = require('./addProspect');
@@ -273,6 +351,8 @@ async function admitInboundSender(sb, { domain, name, email, contact_name = null
     email,
     contact_name,
     country,
+    city,
+    region,
     source: 'inbound_email',
     draft: false,
   });
@@ -284,13 +364,17 @@ async function admitInboundSender(sb, { domain, name, email, contact_name = null
     const { discoverCompanyThreads } = require('./manualSendReconcile');
     discovered = await discoverCompanyThreads(sb, { companyId: res.id, emails: [email], force: true });
   } catch (err) {
-    return { ...res, warning: `admitted, but thread import failed (${err.message}) — the nightly sweep will pick it up` };
+    return {
+      ...res,
+      background: startAdmitFinish(sb, res.id),
+      warning: `admitted, but thread import failed (${err.message}) — the nightly sweep will pick it up`,
+    };
   }
-  try {
-    const { refreshCompanySummary } = require('./relationshipSummary');
-    await refreshCompanySummary(sb, res.id, { force: true });
-  } catch (_) { /* summary refreshes on open */ }
-  return { ...res, threads_discovered: discovered?.discovered ?? 0 };
+  return {
+    ...res,
+    threads_discovered: discovered?.discovered ?? 0,
+    background: startAdmitFinish(sb, res.id),
+  };
 }
 
 /**
@@ -329,6 +413,7 @@ async function dismissInboundSender(sb, { domain, name = null, reason = null } =
 }
 
 module.exports = {
+  finishAdmittedCompany,
   deriveInboundCandidates,
   applyOrderHistory,
   enrichCandidates,

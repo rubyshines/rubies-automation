@@ -245,10 +245,10 @@ async function handleInbound(input = {}) {
       const res = await lib.admitInboundSender(sb, {
         domain: input.domain, name: input.name, email: input.email,
         contact_name: input.contact_name, channel: input.channel || 'lgbtq_org',
-        country: input.country || null,
+        country: input.country || null, city: input.city || null, region: input.region || null,
       });
       if (res.warning) return text(`**${res.id}** — ${res.warning}`);
-      return text(`**${res.id}** admitted (${res.threads_discovered} thread${res.threads_discovered === 1 ? '' : 's'} imported from Gmail). If they were waiting on a reply, they are now in the queue at Tier 1.`);
+      return text(`**${res.id}** admitted (${res.threads_discovered} thread${res.threads_discovered === 1 ? '' : 's'} imported from Gmail). If they were waiting on a reply, they are now in the queue at Tier 1. Their relationship summary and a scrape of their site for a city and state are running in the background — re-read the company in a minute for those.`);
     }
 
     if (action === 'ignore') {
@@ -260,8 +260,10 @@ async function handleInbound(input = {}) {
 
     const rows = await lib.fetchInboundCandidates(sb);
     if (!rows.length) return text('No unmatched org/retailer inbound — everything that wrote in is already on the books.');
-    const lines = rows.map(c =>
-      `${c.channel === 'wholesale' ? 'retailer' : 'org'} · **${c.inferred_name}** (${c.domain}) — ${c.sender_name || c.sender_email}, ${c.message_count} message${c.message_count === 1 ? '' : 's'}, latest ${c.last_seen.slice(0, 10)}: "${c.subject || ''}"`);
+    const lines = rows.map(c => {
+      const place = [c.city, c.region, c.country].filter(Boolean).join(', ');
+      return `${c.channel === 'wholesale' ? 'retailer' : 'org'} · **${c.inferred_name}** (${c.domain})${place ? ` · ${place}` : ''} — ${c.sender_name || c.sender_email}, ${c.message_count} message${c.message_count === 1 ? '' : 's'}, latest ${c.last_seen.slice(0, 10)}: "${c.subject || ''}"`;
+    });
     return text(`New inbound — wrote to us, matches no company (${rows.length}):\n${lines.join('\n')}\n\nAdmit with action:'add' (domain + name + email), dismiss with action:'ignore'.`);
   } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
@@ -874,6 +876,8 @@ module.exports = [
         contact_name: { type: 'string', description: "add: the sender's name, if the email signs one." },
         channel: { type: 'string', description: "add: 'lgbtq_org' (default) | 'wholesale'." },
         country: { type: 'string', description: "add: country if known — the list's AI extraction usually fills it; it drives the partner discount tier." },
+        city: { type: 'string', description: "add: city if the message states one — the list's AI extraction fills it where the signature has an address. A background scrape of their own site corrects it either way." },
+        region: { type: 'string', description: 'add: state or province if the message states one, spelled out.' },
         reason: { type: 'string', description: 'ignore: why (recorded on the stub row).' },
       },
     },
