@@ -13,14 +13,33 @@ function stubSb(companies) {
   };
 }
 
-test('yes / no / unanswered are three different answers', () => {
-  assert.equal(isYes('Yes, get in touch'), true);
-  assert.equal(isYes('Maybe, but not right now'), true, 'maybe is interest, not a refusal');
-  assert.equal(isYes('No thanks'), false);
-  // Unanswered must never read as "no": every partner on file predates the
-  // question, and a blank is silence, not a decline.
+// Both questions are multiple choice Yes / No on the live form (confirmed
+// 2026-09-13), so these two are the answers that will actually arrive.
+test('the live Yes / No options parse exactly', () => {
+  assert.equal(isYes('Yes'), true);
+  assert.equal(isYes('No'), false);
+});
+
+test('unanswered is never a no', () => {
+  // Every partner on file predates both questions, and a blank is silence, not
+  // a decline. A false would tell the advisor "do not pitch them a paid order".
   assert.equal(isYes(null), null);
   assert.equal(isYes(''), null);
+});
+
+// The parser stays tolerant of free text: the purchases question was free text
+// until 2026-09-13, a question can be changed back, and "Other" can be added to
+// either at any time. Nothing downstream should care which shape it is.
+test('free-text answers still resolve, and ambiguity stays ambiguous', () => {
+  assert.equal(isYes('Yes, get in touch'), true);
+  assert.equal(isYes('Maybe, but not right now'), true, 'maybe is interest, not a refusal');
+  assert.equal(isYes('Occasionally'), true, 'the word is in the question itself');
+  assert.equal(isYes('Sometimes, when we have funding'), true);
+  assert.equal(isYes('No thanks'), false);
+  assert.equal(isYes("No, we don't have the budget"), false);
+  // Guessing here is not symmetric: a wrong false suppresses a real sales
+  // conversation, so anything genuinely unclear says nothing at all.
+  assert.equal(isYes('it depends'), null);
 });
 
 test('their ticks become the line, in their own words', () => {
