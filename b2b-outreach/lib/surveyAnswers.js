@@ -32,29 +32,62 @@
  * not carry it at all. When the programme is built, this is the ready list.
  */
 const { normalizeDomain } = require('../sync/syncB2bCompanyState');
-const { programTypeFromDistribution } = require('../../customer-service/lib/donationPartnerSurvey');
+const { programTypeFromDistribution, parseDistribution } = require('../../customer-service/lib/donationPartnerSurvey');
 const { setProgramProfile, normalizeName } = require('./programProfile');
 
-/** Did they answer yes? Pure. Null when unanswered, so "no" and "not asked" differ. */
+/**
+ * Did they answer yes? THREE-STATE and pure: true, false, or null for
+ * "they answered, but not in a way that is clearly either".
+ *
+ * The affiliate question is multiple choice (Yes / No) and parses cleanly. The
+ * purchases question is FREE TEXT, so the answers will be sentences: the word
+ * "occasionally" is in the question itself, and "sometimes", "rarely" and "only
+ * when we have funding" are all natural replies that a naive yes-match would
+ * read as a no.
+ *
+ * Getting that wrong is not symmetric. A false tells the advisor "do not pitch
+ * them a paid order", so misreading "sometimes" as no would silently suppress a
+ * real sales conversation. Anything genuinely ambiguous returns null, the
+ * advisor says nothing, and the raw answer stays on the record for a human.
+ */
 function isYes(answer) {
   if (!answer) return null;
-  return /^\s*(yes|yep|yeah|sure|definitely|absolutely|interested|maybe)/i.test(String(answer));
+  const a = String(answer).toLowerCase().trim();
+
+  // Negation first: "no, we don't have the budget" opens with a positive-
+  // looking clause in some phrasings, and a clear no must win.
+  if (/^(no\b|nope|never|not (at|really|currently)|unfortunately)/.test(a)
+    || /\b(we (do not|don't|cannot|can't)|no budget|not able to|no funds?)\b/.test(a)) return false;
+
+  if (/^(yes|yep|yeah|sure|definitely|absolutely|interested|maybe|occasionally|sometimes|rarely|we do|we have|we would|we'd|on occasion|from time to time)/.test(a)
+    || /\b(occasionally|sometimes|we purchase|we buy|we order|when we have (the )?(funding|budget)|a few times)\b/.test(a)) return true;
+
+  return null;
 }
 
 /**
  * Their ticks, as the line the panel shows. PURE.
  *
- * Their own words, lightly joined — no model, and nothing added. A multi-select
- * answer arrives comma-joined from Google Forms, which is already a sentence
- * once the first letter is left alone and the separators are made readable.
+ * Their own words, lightly joined — no model, nothing added. Built from the
+ * PARSED options rather than by splitting the raw answer on commas: Google
+ * Forms joins checkbox selections with ", " and one of the options contains a
+ * comma of its own, so a naive split turns two ticks into three fragments.
  */
 function lineFromDistribution(answer) {
-  if (!answer) return null;
-  const parts = String(answer).split(/\s*,\s*/).map(p => p.trim()).filter(Boolean);
+  const { selected, other } = parseDistribution(answer);
+  // `ours` marks text WE wrote (the form's options), which may be recased to
+  // read as one sentence. The org's own free text never is: it may open with a
+  // proper noun, and lowercasing "Rural Pride runs ours" is a visible error in
+  // something presented as their words.
+  const parts = [
+    ...selected.map(o => ({ text: o.text, ours: true })),
+    ...(other ? [{ text: other, ours: false }] : []),
+  ];
   if (!parts.length) return null;
+  const clause = (p, first) => (first || !p.ours ? p.text : p.text.replace(/^./, c => c.toLowerCase()));
   const joined = parts.length === 1
-    ? parts[0]
-    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1].replace(/^./, c => c.toLowerCase())}`;
+    ? parts[0].text
+    : `${[clause(parts[0], true), ...parts.slice(1, -1).map(p => clause(p))].join(', ')} and ${clause(parts[parts.length - 1])}`;
   const line = joined.replace(/\.$/, '');
   // The panel shows one line; a long "Other" answer is truncated rather than
   // rejected, because refusing to record a real answer is the worse failure.

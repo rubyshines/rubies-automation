@@ -24,15 +24,21 @@ test('yes / no / unanswered are three different answers', () => {
 });
 
 test('their ticks become the line, in their own words', () => {
+  const CLOSET = 'We have a closet they visit during open hours';
+  const EVENTS = 'We take items to events';
+  assert.equal(lineFromDistribution(CLOSET), CLOSET);
   assert.equal(
-    lineFromDistribution('They visit us during our open hours'),
-    'They visit us during our open hours',
-  );
-  assert.equal(
-    lineFromDistribution('They visit us during our open hours, We take items to events'),
-    'They visit us during our open hours and we take items to events',
+    lineFromDistribution(`${CLOSET}, ${EVENTS}`),
+    'We have a closet they visit during open hours and we take items to events',
   );
   assert.equal(lineFromDistribution(null), null);
+});
+
+test('an Other answer keeps the capitalisation the org typed', () => {
+  // Matching is case-insensitive; showing the result must not be. Lowercasing
+  // their words to make the match easier is a small lie about what they wrote.
+  const line = lineFromDistribution('We take items to events, Rural clients get theirs by post');
+  assert.match(line, /Rural clients get theirs by post/);
 });
 
 test('a long Other answer is truncated, never dropped', () => {

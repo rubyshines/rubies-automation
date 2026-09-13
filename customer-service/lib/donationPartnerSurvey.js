@@ -110,27 +110,93 @@ const FIELDS = {
 };
 
 /**
+ * The options on "How do people get gender affirming items from you?" as they
+ * read on the live form (2026-09-11), each with the programme type it implies.
+ *
+ * Pinned deliberately. The house rule for anything parsed out of a Google Form
+ * is to key on the meaning and pin the current option strings in a test, so an
+ * edit fails loudly at build rather than silently at ingest — see the test.
+ *
+ * Order here is the form's order, which is also the collapse order: most open
+ * door first. The first selected option decides the type.
+ */
+const DISTRIBUTION_OPTIONS = [
+  { text: 'We have a closet they visit during open hours', type: 'standing_closet' },
+  { text: 'They ask us, and we hand it over or mail it', type: 'by_request' },
+  { text: 'Our staff pass items on privately', type: 'by_request' },
+  { text: 'We take items to events', type: 'events' },
+];
+
+/** Collapse whitespace and case so a re-typed option still matches. Pure. */
+const flatten = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/**
+ * Split a checkbox answer into the options that were ticked. PURE.
+ *
+ * NOT by splitting on commas, which is the obvious approach and is wrong here:
+ * Google Forms joins checkbox selections with ", " and the second option
+ * CONTAINS a comma ("They ask us, and we hand it over or mail it"). Splitting
+ * naively turns two ticks into three fragments and mangles the sentence.
+ *
+ * So the known options are matched against the answer and removed; whatever
+ * survives is free text the operator typed as "Other" (or a reworded option
+ * this list has not caught up with), and it is kept rather than discarded.
+ */
+function parseDistribution(answer) {
+  const raw = String(answer || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return { selected: [], other: null };
+  // Matched case-insensitively but removed from the ORIGINAL string, so an
+  // "Other" answer keeps the capitalisation the org typed. Lowercasing their
+  // words to make matching easier and then showing the result is a small lie
+  // about what they wrote.
+  let rest = raw;
+  const selected = [];
+  for (const opt of DISTRIBUTION_OPTIONS) {
+    const at = flatten(rest).indexOf(flatten(opt.text));
+    if (at < 0) continue;
+    selected.push(opt);
+    const re = new RegExp(opt.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'i');
+    rest = rest.replace(re, ' ');
+  }
+  // Whatever is left once the known options are gone: strip the separators
+  // they were joined with, and keep anything of substance.
+  const other = rest.replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return { selected, other: other.length > 2 ? other : null };
+}
+
+/**
  * The programme type a multi-select answer implies. PURE.
  *
- * Keyed on meaning, not on the option strings: the form's options are operator
- * text and will be reworded, and an org can pick "Other" and type their own
- * sentence. A tick nobody recognises yields `unknown` rather than a guess, and
- * the raw answer is kept on the row either way.
+ * Exact first, keywords second. A ticked option is an exact, certain answer;
+ * the keyword pass exists for "Other" free text and for an option reworded
+ * before this file catches up, so a rewording degrades to a good guess rather
+ * than to nothing. An answer neither recognises is `unknown`, never a guess,
+ * and the raw text is kept on the row either way.
  *
  * Collapse rule when several are ticked: HIGHEST STANDING CAPACITY WINS. Orgs
- * routinely do two of these (hands gear out on request AND runs a closet event
- * each October), and a type is one value — so it reports the most open door
- * they have, and the line beside it carries the rest.
+ * routinely do two (hands gear out on request AND runs a closet event each
+ * October), and a type is one value, so it reports the most open door they
+ * have and the line beside it carries the rest.
  */
+const TYPE_RANK = { standing_closet: 0, by_request: 1, events: 2 };
+
+function typeFromKeywords(text) {
+  const a = String(text || '').toLowerCase();
+  if (/(visit|drop[ -]?in|walk[ -]?in|open hours|come to|in person|on site|our space|closet)/.test(a)) return 'standing_closet';
+  if (/(ask|request|appointment|hand it over|mail|post it|ship|staff|counsell?or|case ?worker|privately|order form)/.test(a)) return 'by_request';
+  if (/(event|pop[ -]?up|drive|tabl|pride|fair|market|camp)/.test(a)) return 'events';
+  return null;
+}
+
 function programTypeFromDistribution(answer) {
   if (!answer) return null;
-  const a = String(answer).toLowerCase();
-  const visits = /(visit|drop[ -]?in|walk[ -]?in|open hours|come to|in person|on site|our space|closet)/.test(a);
-  const onRequest = /(ask|request|appointment|post it|mail|ship|staff|counsell?or|case ?worker|privately|order form)/.test(a);
-  const events = /(event|pop[ -]?up|drive|tabl|pride|fair|market|camp)/.test(a);
-  if (visits) return 'standing_closet';
-  if (onRequest) return 'by_request';
-  if (events) return 'events';
+  const { selected, other } = parseDistribution(answer);
+  // BOTH halves count. An answer can tick a known option AND add free text, and
+  // reading only the ticks would ignore an "Other" that describes a wider door
+  // than anything ticked ("we take items to events" + "…and folks drop in on
+  // Fridays" is a closet, not an events-only org).
+  const types = [...selected.map(o => o.type), typeFromKeywords(other)].filter(Boolean);
+  if (types.length) return types.sort((a, b) => TYPE_RANK[a] - TYPE_RANK[b])[0];
   return 'unknown';
 }
 
@@ -248,4 +314,4 @@ function ensureRubiesReturnsPrefix(mailingAddress) {
 }
 
 module.exports = {
-  programTypeFromDistribution, FIELDS, readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, invalidateSurveyCache, SHEET_ID, TAB };
+  programTypeFromDistribution, parseDistribution, DISTRIBUTION_OPTIONS, FIELDS, readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, invalidateSurveyCache, SHEET_ID, TAB };

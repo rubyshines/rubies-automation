@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { resolveSurveyColumns, normalizeHeader } = require('../lib/surveyColumns');
-const { FIELDS, programTypeFromDistribution } = require('../lib/donationPartnerSurvey');
+const { FIELDS, programTypeFromDistribution, parseDistribution, DISTRIBUTION_OPTIONS } = require('../lib/donationPartnerSurvey');
 
 // The live sheet, 2026-09-11. Pinned so a rewording that this resolver CANNOT
 // follow fails here at build rather than silently at ingest — the existing house
@@ -126,16 +126,16 @@ test('the distribution answer maps on meaning, not on the option strings', () =>
   assert.equal(programTypeFromDistribution('we bring them to Pride every June'), 'events');
 });
 
-test('several ticks collapse to the most open door they have', () => {
-  // Orgs routinely do two: hands gear out on request AND runs a closet event
-  // each October. A type is one value, so it reports the widest access.
+test('free text alongside a tick still counts toward the type', () => {
+  // Reading only the ticks would ignore an Other describing a wider door than
+  // anything ticked, which is the case most worth getting right.
   assert.equal(
-    programTypeFromDistribution('They ask us and we post it, We take items to events'),
-    'by_request',
+    programTypeFromDistribution('We take items to events, We also let folks drop in on Fridays'),
+    'standing_closet',
   );
   assert.equal(
-    programTypeFromDistribution('We take items to events, They visit us during our open hours'),
-    'standing_closet',
+    programTypeFromDistribution('We take items to events, Sometimes at Pride too'),
+    'events',
   );
 });
 
@@ -143,4 +143,60 @@ test('an unrecognised answer is unknown, never a guess', () => {
   assert.equal(programTypeFromDistribution('it varies a lot honestly'), 'unknown');
   assert.equal(programTypeFromDistribution(null), null, 'unanswered is not the same as unrecognised');
   assert.equal(programTypeFromDistribution(''), null);
+});
+
+// ---------------------------------------------------------------------------
+// The live form, read from forms.gle/mVWRwz1YqTnTHML8A on 2026-09-13
+// ---------------------------------------------------------------------------
+
+// Pinned so an edit to the wording fails HERE, at build, rather than silently
+// at ingest. The keyword fallback in programTypeFromDistribution means a
+// reworded option still degrades to a good guess, but this test is what tells
+// somebody it happened.
+const LIVE_OPTIONS = [
+  'We have a closet they visit during open hours',
+  'They ask us, and we hand it over or mail it',
+  'Our staff pass items on privately',
+  'We take items to events',
+];
+
+test('the pinned options still match the live form', () => {
+  assert.deepEqual(DISTRIBUTION_OPTIONS.map(o => o.text), LIVE_OPTIONS);
+  assert.deepEqual(DISTRIBUTION_OPTIONS.map(o => o.type),
+    ['standing_closet', 'by_request', 'by_request', 'events']);
+});
+
+// Google Forms joins checkbox selections with ", " and option 2 CONTAINS a
+// comma. Splitting the answer on commas turns two ticks into three fragments,
+// which is what the first version of the line renderer did.
+test('an option containing a comma survives being joined with other ticks', () => {
+  const answer = `${LIVE_OPTIONS[1]}, ${LIVE_OPTIONS[3]}`;
+  const { selected, other } = parseDistribution(answer);
+  assert.deepEqual(selected.map(o => o.text), [LIVE_OPTIONS[1], LIVE_OPTIONS[3]]);
+  assert.equal(other, null, 'nothing should be left over from two clean ticks');
+});
+
+test('every combination of the live options resolves to the most open door', () => {
+  const t = (...i) => programTypeFromDistribution(i.map(n => LIVE_OPTIONS[n]).join(', '));
+  assert.equal(t(0), 'standing_closet');
+  assert.equal(t(1), 'by_request');
+  assert.equal(t(2), 'by_request');
+  assert.equal(t(3), 'events');
+  assert.equal(t(1, 3), 'by_request');
+  assert.equal(t(3, 2), 'by_request');
+  assert.equal(t(0, 3), 'standing_closet');
+  assert.equal(t(0, 1, 2, 3), 'standing_closet');
+});
+
+test('free text alongside the ticks is kept, not discarded', () => {
+  const { selected, other } = parseDistribution(`${LIVE_OPTIONS[3]}, we also post to rural clients`);
+  assert.deepEqual(selected.map(o => o.text), [LIVE_OPTIONS[3]]);
+  assert.equal(other, 'we also post to rural clients');
+});
+
+test('a reworded option falls back to keywords rather than to nothing', () => {
+  assert.equal(programTypeFromDistribution('We run a closet folks visit when we are open'), 'standing_closet');
+  assert.equal(programTypeFromDistribution('People ask and we mail it out'), 'by_request');
+  assert.equal(parseDistribution('We run a closet folks visit when we are open').selected.length, 0,
+    'no exact option matched, so the keyword pass is what answered');
 });
