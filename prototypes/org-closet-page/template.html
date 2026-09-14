@@ -262,7 +262,7 @@
         <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way to the closet</span></div>
         <div class="stat"><b id="hero-people">0</b><span>free pairs requested this month</span></div>
       </div>
-      <p class="note">Filled by sponsors and by 25% of every order made with the code. When it is full it ships to <span class="org-name">Uniting Pride</span>, and RUBIES doubles it.</p>
+      <p class="note">RUBIES matches every dollar. $8 puts a pair in the closet. Filled by sponsors and by 25% of every order made with the code, and shipped to <span class="org-name">Uniting Pride</span> when full.</p>
     </div>
   </header>
 
@@ -297,7 +297,7 @@
             <legend>How would you like it?</legend>
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
-            <p class="fine" style="margin:2px 0 0 26px">Picking up stretches the closet's funds about three times further. Choose shipping if getting there is hard.</p>
+            <p class="fine" style="margin:2px 0 0 26px">Picking up costs the closet half as much as shipping. Choose shipping if getting there is hard.</p>
           </fieldset>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
@@ -319,7 +319,7 @@
     <div class="sec-head">
       <div class="eyebrow">For the closet</div>
       <h2>Sponsor a pair for someone who asked</h2>
-      <p>These are the sizes the closet needs most. Sponsor a pair at the closet's price, half of retail. RUBIES doubles every pair that goes into the closet's box. A pair shipped to someone's door costs the closet $8 more for delivery.</p>
+      <p>These are the sizes the closet needs most. RUBIES matches every dollar. $8 puts a pair in the closet. $16 delivers a pair to someone's door.</p>
     </div>
     <div class="registry-grid">
       <div>
@@ -333,9 +333,9 @@
           <div class="eyebrow">The closet's next box</div>
           <div class="big"><span class="amount">$0</span> <small>raised of $300</small></div>
           <div class="bar side-bar"><span></span></div>
-          <div class="box-full" id="box-full">Full. This box is on its way to <span class="org-name">Uniting Pride</span>, doubled by RUBIES.</div>
+          <div class="box-full" id="box-full">Full. About 37 pairs are on their way to <span class="org-name">Uniting Pride</span>.</div>
           <ul class="ontheway" id="ontheway"></ul>
-          <p class="note">Ships when it reaches $300, or after six months, whichever comes first.</p>
+          <p class="note">$300 raised, matched by RUBIES, is a box of about 37 pairs. It ships when full, or after six months, whichever comes first.</p>
         </div>
       </aside>
     </div>
@@ -357,10 +357,10 @@
       </div>
       <div class="col">
         <h3>For the closet</h3>
-        <p>Sponsors, community orders and the org's own budget all fill one box. At $300 it ships to the closet, doubled by RUBIES.</p>
+        <p>Sponsors, community orders and the org's own budget fill one box. RUBIES matches every dollar. At $300 raised the box ships, about 37 pairs.</p>
         <ul>
-          <li>A free pair picked up at the closet costs the closet $8, because RUBIES doubles the box</li>
-          <li>A free pair shipped to a door costs the closet $24, the pair plus delivery</li>
+          <li>A free pair picked up at the closet costs the closet $8</li>
+          <li>A free pair shipped to a door costs the closet $16, delivery included</li>
           <li>Returned and exchanged RUBIES items still arrive as donations, as today</li>
         </ul>
       </div>
@@ -378,7 +378,7 @@
 
   <footer>
     <div class="tag">Every girl deserves to shine.</div>
-    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Prototype page for partner conversations. Products and prices are real; the closet, sponsors and progress shown are examples.</p>
+    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Prototype page for partner conversations. Products and prices are real; the closet, sponsors and progress shown are examples. Sponsor amounts are what the giver pays; RUBIES matches each one.</p>
   </footer>
 </div>
 
@@ -386,7 +386,7 @@
 
 <script>
 (function () {
-  var BOX = 300;
+  var BOX = 300; // dollars raised, the minimum that reaches RUBIES before a box ships; matched, it is $600 of product
   var IMG = {{IMG_JSON}};
 
   // Real products, retail from the catalog, closet price = half of retail, rounded to the dollar.
@@ -399,7 +399,7 @@
     { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',      retail: 48, sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
   ];
   var byKey = {};
-  PRODUCTS.forEach(function (p) { p.closet = Math.round(p.retail / 2); byKey[p.key] = p; });
+  PRODUCTS.forEach(function (p) { p.closet = Math.round(p.retail / 2); p.give = Math.round(p.retail / 4); byKey[p.key] = p; }); // give = what a sponsor pays per pair in the closet; RUBIES matches it
 
   // The registry is GENERATED from a size mix the org gives once. Nobody at the org maintains it.
   var TARGET = [
@@ -432,12 +432,12 @@
   function money(n) { return '$' + Math.round(n); }
   function ledger() {
     var sum = state.orderCredit + state.gifts;
-    Object.keys(state.sponsored).forEach(function (k) { sum += state.sponsored[k] * byKey[k.split('|')[0]].closet; });
+    Object.keys(state.sponsored).forEach(function (k) { sum += state.sponsored[k] * byKey[k.split('|')[0]].give; });
     return sum;
   }
   function pairsOnTheWay() {
-    // dollars buy product at the closet price, then RUBIES doubles it; shown in AJ-pair equivalents
-    return Math.floor(ledger() / byKey.aj.closet) * 2;
+    // every $8 raised is a pair in the closet once RUBIES matches it; shown in AJ-pair equivalents
+    return Math.floor(ledger() / byKey.aj.give);
   }
 
   function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
@@ -490,8 +490,8 @@
         '<div class="what"><b>' + p.name + ' <span style="color:var(--violet)">' + t.size + '</span></b>' +
           '<span>' + (left === 0 ? 'Covered. Thank you!' : '<span class="count">' + left + ' still needed</span> &middot; ' + got + ' sponsored') + '</span></div>' +
         '<div class="act">' +
-          '<button type="button" class="btn btn-ghost btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one &middot; ' + money(p.closet)) + '</button>' +
-          '<small>' + money(p.closet) + ' puts two in the closet</small>' +
+          '<button type="button" class="btn btn-ghost btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one &middot; ' + money(p.give)) + '</button>' +
+          '<small>' + money(p.give) + ', matched by RUBIES</small>' +
         '</div>';
       host.appendChild(el);
     });
@@ -501,7 +501,7 @@
         state.sponsored[k] = (state.sponsored[k] || 0) + 1;
         save();
         var p = byKey[k.split('|')[0]];
-        toast('Thank you! Two ' + p.name.replace(/No-Tuck |Shaping /g, '').toLowerCase() + ' in ' + k.split('|')[1] + ' are heading to ' + possessive(state.org) + ' closet.');
+        toast('Thank you! RUBIES matched it. A pair of ' + p.name.replace(/No-Tuck |Shaping /g, '').toLowerCase() + ' in ' + k.split('|')[1] + ' is heading to ' + possessive(state.org) + ' closet.');
         renderRegistry(); renderProgress();
       });
     });
@@ -510,10 +510,10 @@
   function renderChips() {
     var host = document.getElementById('chips');
     [10, 25, 50, 100].forEach(function (amt) {
-      var pairs = Math.floor(amt / byKey.aj.closet) * 2;
+      var pairs = Math.floor(amt / byKey.aj.give);
       var c = document.createElement('button');
       c.type = 'button'; c.className = 'chip';
-      c.innerHTML = money(amt) + '<small>' + (pairs >= 2 ? 'about ' + pairs + ' pairs in the closet, or ' + Math.floor(amt / 24) + ' delivered' : 'toward the next pair') + '</small>';
+      c.innerHTML = money(amt) + '<small>' + (pairs >= 1 ? pairs + (pairs === 1 ? ' pair' : ' pairs') + ' in the closet, or ' + Math.floor(amt / (byKey.aj.give * 2)) + ' delivered' : 'toward the next pair') + '</small>';
       c.addEventListener('click', function () {
         state.gifts += amt; save();
         toast('Thank you! ' + money(amt) + ' toward ' + possessive(state.org) + ' next box.');
@@ -543,7 +543,7 @@
     Object.keys(state.sponsored).forEach(function (k) {
       var n = state.sponsored[k]; if (!n) return;
       var p = byKey[k.split('|')[0]];
-      rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.closet });
+      rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.give });
     });
     if (state.orders) rows.push({ label: state.orders + ' community orders with the code, 25% of each', amt: state.orderCredit });
     if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
