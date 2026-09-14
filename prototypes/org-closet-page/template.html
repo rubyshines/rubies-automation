@@ -77,6 +77,8 @@
   .way > p { color: var(--ink-2); }
   .code { font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em; color: var(--magenta); background: var(--tint); border-radius: 14px; padding: 12px 20px; width: fit-content; }
   .fine { font-size: 14.5px; color: var(--ink-2); }
+  .code-row { display: grid; gap: 6px; }
+  .way .code { font-size: 26px; padding: 8px 16px; }
 
   .form { display: grid; gap: 14px; }
   .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
@@ -205,8 +207,8 @@
       <div class="way">
         <h3>If you can, buy one</h3>
         <p>Shop at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a> with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
-        <div class="code" id="code-display">UPRIDE15</div>
-        <p class="fine">Enter it at checkout. No account needed.</p>
+        <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com/discount/UPRIDE15?redirect=/collections/all" target="_blank" rel="noopener">Shop with 15% off applied</a>
+        <div class="code-row"><span class="fine">Or use the code at checkout:</span><div class="code" id="code-display">UPRIDE15</div></div>
       </div>
       <div class="rule"></div>
       <div class="way" id="apply">
@@ -394,6 +396,7 @@
     document.title = state.org + ' x RUBIES Virtual Closet';
     document.getElementById('org-name-title').textContent = state.org;
     document.getElementById('code-display').textContent = state.code;
+    document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.code) + '?redirect=/collections/all';
     Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
     ['logo-top', 'logo-foot'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
     document.getElementById('hero-main').src = IMG['the-aj-shaping-underwear'];
