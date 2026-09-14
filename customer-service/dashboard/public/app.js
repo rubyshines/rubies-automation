@@ -8267,6 +8267,15 @@ function outreachHeaderHtml(entry) {
     </div>`;
 }
 
+// The company's next booked call that has not started yet — the same test the
+// server applies (status booked, starts in the future) when it decides that a
+// picked slot moves a call rather than booking another.
+function upcomingBookedCall(meetings, now = Date.now()) {
+  return (meetings || [])
+    .filter(m => m.status === 'booked' && new Date(m.starts_at).getTime() > now)
+    .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at))[0] || null;
+}
+
 // Every control that acts on the draft or the company, in the CS draft card's
 // two-row shape: one primary, then ghosts with dividers. Rebuilt in place when
 // the company context lands (see loadOutreachContext) — the first version left
@@ -8284,9 +8293,17 @@ function outreachActionsHtml(entry, draft) {
       ? `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`
       : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`;
   const isPostCall = entry.message_type === 'post_call_followup';
+  // Say what the schedule panel will do BEFORE it opens. With an upcoming
+  // booked call, a picked slot moves that call (server rule, see
+  // apiB2bScheduleMeeting) — a button still reading "Schedule" left it unclear
+  // whether it would book a second one.
+  const booked = upcomingBookedCall(outreachHistory?.meetings);
   const draftGhosts = [
-    `<button class="btn btn-ghost" onclick="openSchedulePanel()"
-      title="See when you are free across all your calendars, or book a call.">Schedule</button>`,
+    booked
+      ? `<button class="btn btn-ghost" onclick="openSchedulePanel()"
+          title="A call is booked for ${esc(fmtDateTimeET(booked.starts_at))}. Picking a new time moves that call (the invite updates in place); nothing new is created.">Move call</button>`
+      : `<button class="btn btn-ghost" onclick="openSchedulePanel()"
+          title="See when you are free across all your calendars, or book a call.">Schedule</button>`,
     draft ? `<button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
       title="Sends the real email to you only. Nothing is recorded against the company.">Test send</button>` : '',
     draft ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>` : '',
