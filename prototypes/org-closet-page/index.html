@@ -37,13 +37,12 @@
   .logo { display: inline-block; line-height: 0; }
   .logo img { height: 34px; width: auto; display: block; }
 
-  .top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0 6px; }
-  .top .soft { font-size: 15px; font-weight: 700; }
 
   /* hero */
-  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 26px 0 54px; }
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 44px 0 54px; }
+  .h1-logo { display: inline-block; line-height: 0; vertical-align: -0.06em; }
+  .h1-logo img { height: 0.82em; width: auto; display: inline-block; }
   .hero-copy { display: grid; gap: 20px; }
-  .place { font-weight: 700; font-size: 16px; color: var(--ink-2); }
   .lede { font-size: 20px; color: var(--ink-2); max-width: 36ch; }
   .doors { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn {
@@ -77,7 +76,6 @@
   .way > p { color: var(--ink-2); }
   .code { font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em; color: var(--magenta); background: var(--tint); border-radius: 14px; padding: 12px 20px; width: fit-content; }
   .fine { font-size: 14.5px; color: var(--ink-2); }
-  .inline-logo img { height: 1em; vertical-align: -0.12em; }
 
   .form { display: grid; gap: 14px; }
   .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
@@ -179,15 +177,9 @@
 </style>
 
 <div class="wrap">
-  <div class="top">
-    <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a>
-    <span class="soft">Virtual Closet</span>
-  </div>
-
   <header class="hero">
     <div class="hero-copy">
-      <p class="place" id="org-city">Champaign-Urbana, Illinois</p>
-      <h1><span id="org-name-title">Uniting Pride</span><span class="x">×</span>RUBIES<span class="sub">Virtual Closet</span></h1>
+      <h1><a class="h1-logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a><span class="x">×</span><span id="org-name-title">Uniting Pride</span><span class="sub">Virtual Closet</span></h1>
       <p class="lede">Gender-affirming underwear and swimwear, free for anyone in our community who needs it. Stocked by the community, matched by RUBIES.</p>
       <div class="doors">
         <a class="btn btn-fill" href="#need">Buy a pair, 15% off</a>
@@ -211,7 +203,7 @@
     <div class="ways">
       <div class="way">
         <h3>If you can, buy one</h3>
-        <p>Shop at <a class="inline-logo" href="https://rubyshines.com" target="_blank" rel="noopener"><img id="logo-inline" alt="RUBIES"></a> with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
+        <p>Shop at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a> with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
         <div class="code" id="code-display">UPRIDE15</div>
         <p class="fine">Enter it at checkout. No account needed.</p>
       </div>
@@ -300,7 +292,6 @@
 
 <div class="panel" id="panel" hidden>
   <label>Org <input id="in-org"></label>
-  <label>City <input id="in-city"></label>
   <label>Code <input id="in-code"></label>
   <label>Sizes the closet offers <input id="in-sizes" placeholder="XS, S, M, L, 1X, 2X, 3X, 4X"></label>
   <label>Items per request <input id="in-max" type="number" min="1" max="6"></label>
@@ -401,14 +392,12 @@
   function renderOrg() {
     document.title = state.org + ' x RUBIES Virtual Closet';
     document.getElementById('org-name-title').textContent = state.org;
-    document.getElementById('org-city').textContent = state.city;
     document.getElementById('code-display').textContent = state.code;
     Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
-    ['logo-top', 'logo-inline', 'logo-foot'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
+    ['logo-top', 'logo-foot'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
     document.getElementById('hero-main').src = IMG['the-aj-shaping-underwear'];
     document.getElementById('hero-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
     document.getElementById('in-org').value = state.org;
-    document.getElementById('in-city').value = state.city;
     document.getElementById('in-code').value = state.code;
     document.getElementById('in-sizes').value = state.sizes.join(', ');
     document.getElementById('in-max').value = state.maxItems;
@@ -591,7 +580,6 @@
   document.getElementById('p-close').addEventListener('click', function () { togglePanel(false); });
   document.getElementById('p-apply').addEventListener('click', function () {
     state.org = document.getElementById('in-org').value.trim() || 'Your Org';
-    state.city = document.getElementById('in-city').value.trim();
     state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
     state.sizes = parseSizes(document.getElementById('in-sizes').value);
     state.maxItems = Math.min(6, Math.max(1, parseInt(document.getElementById('in-max').value, 10) || 2));
