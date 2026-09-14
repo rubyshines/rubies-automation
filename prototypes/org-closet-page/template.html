@@ -1,19 +1,20 @@
-<title>Uniting Pride's Closet</title>
+<title>Uniting Pride x RUBIES Virtual Closet</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap">
 <style>
   :root {
-    --ground: #FFFDF9;
+    --ground: #FFFCF7;
     --paper: #FFFFFF;
-    --tint: #F1EEFF;
-    --ink: #221D3D;
-    --ink-2: #5D5779;
-    --rule: #E6E1F0;
-    --violet: #4B3BFF;
-    --violet-2: #3527D6;
-    --pink: #FF4FA3;
-    --yellow: #FFD23F;
-    --green: #1E9E6A;
-    --green-bg: #EAF8F1;
+    --tint: #FDEBFF;
+    --ink: #2A1B3D;
+    --ink-2: #6B5C7E;
+    --rule: #ECE4F1;
+    --magenta: #D400DB;
+    --magenta-2: #B000B8;
+    --magenta-raw: #FB00FF;
+    --orange: #FFAA42;
+    --lime: #B3FE00;
+    --green: #2E9E5B;
+    --green-bg: #EEFBE0;
   }
   * { box-sizing: border-box; }
   body {
@@ -23,18 +24,21 @@
     font-size: 17px;
     line-height: 1.55;
   }
-  a { color: var(--violet); }
-  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.08; text-wrap: balance; }
-  h1 { font-size: clamp(40px, 6vw, 64px); font-weight: 700; letter-spacing: -0.01em; }
+  a { color: var(--magenta); }
+  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.06; text-wrap: balance; }
+  h1 { font-size: clamp(38px, 5.6vw, 60px); font-weight: 700; letter-spacing: -0.01em; }
+  h1 .sub { display: block; font-weight: 500; font-size: 0.55em; color: var(--ink-2); margin-top: 6px; letter-spacing: 0; }
+  h1 .x { color: var(--magenta); font-weight: 500; padding: 0 0.08em; }
   h2 { font-size: clamp(28px, 3.6vw, 38px); font-weight: 600; }
   h3 { font-size: 22px; font-weight: 600; }
   p { margin: 0; }
   .soft { color: var(--ink-2); }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .logo { display: inline-block; line-height: 0; }
+  .logo img { height: 34px; width: auto; display: block; }
 
-  .top { display: flex; justify-content: space-between; align-items: baseline; padding: 22px 0 6px; }
-  .brand { font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 22px; letter-spacing: 0.08em; color: var(--ink); text-decoration: none; }
-  .top .soft { font-size: 15px; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0 6px; }
+  .top .soft { font-size: 15px; font-weight: 700; }
 
   /* hero */
   .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 26px 0 54px; }
@@ -44,38 +48,23 @@
   .doors { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn {
     font: inherit; font-weight: 800; font-size: 16px; padding: 14px 22px; border-radius: 999px; border: 2px solid transparent;
-    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 10px;
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; color: var(--ink);
   }
-  .btn:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
-  .btn-violet { background: var(--violet); color: #fff; }
-  .btn-violet:hover { background: var(--violet-2); }
-  .btn-pink { background: var(--pink); color: #fff; }
-  .btn-pink:hover { filter: brightness(0.94); }
-  .btn-line { background: transparent; color: var(--ink); border-color: var(--ink); }
+  .btn:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
+  .btn-fill { background: var(--magenta); color: #fff; }
+  .btn-fill:hover { background: var(--magenta-2); }
+  .btn-sun { background: var(--orange); color: var(--ink); }
+  .btn-sun:hover { filter: brightness(0.96); }
+  .btn-line { background: transparent; border-color: var(--ink); }
   .btn-line:hover { background: var(--tint); }
   .btn-small { font-size: 15px; padding: 9px 16px; }
 
   .hero-art { position: relative; aspect-ratio: 1 / 1; max-width: 460px; justify-self: end; width: 100%; }
-  .hero-art .blob {
-    position: absolute; inset: 6% 4% 4% 6%;
-    background: var(--violet);
-    border-radius: 58% 42% 55% 45% / 48% 56% 44% 52%;
-  }
-  .hero-art img.main {
-    position: absolute; left: 10%; top: 6%; width: 74%; aspect-ratio: 1 / 1; object-fit: cover;
-    border-radius: 46% 54% 50% 50% / 52% 46% 54% 48%;
-  }
-  .hero-art img.second {
-    position: absolute; right: 0; bottom: 0; width: 44%; aspect-ratio: 1 / 1; object-fit: cover;
-    border-radius: 50%; border: 6px solid var(--ground);
-  }
-  .hero-art .tag {
-    position: absolute; left: 0; bottom: 14%; background: var(--yellow); color: var(--ink);
-    font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 17px; padding: 8px 14px; border-radius: 999px;
-    transform: rotate(-4deg);
-  }
+  .hero-art .blob { position: absolute; inset: 6% 4% 4% 6%; background: var(--magenta-raw); opacity: 0.92; border-radius: 58% 42% 55% 45% / 48% 56% 44% 52%; }
+  .hero-art img.main { position: absolute; left: 10%; top: 6%; width: 74%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 46% 54% 50% 50% / 52% 46% 54% 48%; }
+  .hero-art img.second { position: absolute; right: 0; bottom: 0; width: 44%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 50%; border: 6px solid var(--ground); }
+  .hero-art .tag { position: absolute; left: 0; bottom: 14%; background: var(--lime); color: var(--ink); font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 17px; padding: 8px 14px; border-radius: 999px; transform: rotate(-4deg); }
 
-  /* sections */
   section { padding: 54px 0; border-top: 1px solid var(--rule); }
   .head { display: grid; gap: 10px; margin-bottom: 30px; }
   .head p { font-size: 18px; color: var(--ink-2); max-width: 60ch; }
@@ -86,138 +75,124 @@
   .way { display: grid; gap: 16px; align-content: start; }
   .way h3 { font-size: 24px; }
   .way > p { color: var(--ink-2); }
-  .code-row { display: grid; gap: 12px; }
-  .code {
-    font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em; color: var(--violet);
-    background: var(--tint); border-radius: 14px; padding: 12px 20px; width: fit-content;
-  }
+  .code { font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em; color: var(--magenta); background: var(--tint); border-radius: 14px; padding: 12px 20px; width: fit-content; }
   .fine { font-size: 14.5px; color: var(--ink-2); }
+  .inline-logo img { height: 1em; vertical-align: -0.12em; }
 
   .form { display: grid; gap: 14px; }
   .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
-  .form select, .form input[type="email"] {
-    font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper);
-  }
-  .form select:focus, .form input:focus { outline: 3px solid var(--tint); border-color: var(--violet); }
+  .form select, .form input[type="email"] { font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper); width: 100%; }
+  .form select:focus, .form input:focus { outline: 3px solid var(--tint); border-color: var(--magenta); }
   .form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
   .form legend { font-size: 14.5px; font-weight: 700; color: var(--ink-2); padding: 0; margin-bottom: 4px; }
   .form .radio { display: flex; gap: 10px; align-items: center; font-weight: 600; color: var(--ink); font-size: 16px; }
-  .form .radio input { width: 18px; height: 18px; accent-color: var(--violet); }
+  .form .radio input { width: 18px; height: 18px; accent-color: var(--magenta); }
   .form .btn { width: fit-content; }
+  .items { display: grid; gap: 10px; }
+  .item { display: grid; grid-template-columns: 1.6fr 1fr auto; gap: 10px; align-items: end; }
+  .item .remove { font: inherit; font-size: 13px; font-weight: 700; color: var(--ink-2); background: none; border: 0; cursor: pointer; padding: 10px 4px; }
+  .item .remove:hover { color: var(--magenta); }
+  .add-item { font: inherit; font-size: 14.5px; font-weight: 800; color: var(--magenta); background: none; border: 0; cursor: pointer; padding: 0; width: fit-content; }
+  .add-item:disabled { color: var(--ink-2); cursor: default; }
   .sent { background: var(--green-bg); border-left: 4px solid var(--green); padding: 14px 18px; display: grid; gap: 6px; }
-  .sent b { color: #0F5C3D; }
+  .sent b { color: #1F6B3E; }
 
   .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 18px; margin-top: 44px; }
-  .product { display: grid; gap: 6px; align-content: start; }
+  .product { display: grid; gap: 6px; align-content: start; text-decoration: none; color: inherit; }
   .product img { width: 100%; aspect-ratio: 1 / 1.05; object-fit: cover; display: block; border-radius: 16px; background: #F4F1EC; }
+  .product:hover img { outline: 3px solid var(--magenta); outline-offset: 2px; }
   .product .name { font-weight: 800; font-size: 14.5px; line-height: 1.3; margin-top: 4px; }
   .product .for { font-size: 13.5px; color: var(--ink-2); }
   .product .price { font-weight: 800; font-size: 15px; }
   .product .price s { color: var(--ink-2); font-weight: 600; margin-right: 6px; }
-  .product .sizes { font-size: 12.5px; color: var(--ink-2); }
 
   /* sponsor */
   .sponsor { display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 40px; align-items: start; }
-  .needs { display: grid; }
-  .need {
-    display: grid; grid-template-columns: 56px 1fr auto; gap: 16px; align-items: center;
-    padding: 14px 0; border-bottom: 1px solid var(--rule);
-  }
-  .need:first-child { border-top: 1px solid var(--rule); }
-  .need img { width: 56px; height: 56px; object-fit: cover; border-radius: 12px; background: #F4F1EC; }
-  .need .what { display: grid; gap: 2px; }
-  .need .what b { font-size: 16px; }
-  .need .what b em { font-style: normal; color: var(--violet); }
-  .need .what span { font-size: 14px; color: var(--ink-2); }
-  .need .act { display: grid; gap: 3px; justify-items: end; }
-  .need .act small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
-  .need.covered { opacity: 0.55; }
-  .need.covered .btn { background: var(--tint); color: var(--ink-2); border-color: transparent; cursor: default; }
-  .gifts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
-  .gifts > span { font-weight: 700; font-size: 15px; color: var(--ink-2); }
-  .gift { font: inherit; font-weight: 800; font-size: 16px; padding: 10px 16px; border-radius: 999px; border: 2px solid var(--rule); background: var(--paper); cursor: pointer; text-align: left; }
-  .gift:hover, .gift:focus-visible { border-color: var(--pink); outline: none; }
-  .gift small { display: block; font-weight: 600; font-size: 12px; color: var(--ink-2); }
+  .asks { display: grid; }
+  .ask { display: grid; grid-template-columns: 56px 1fr auto; gap: 16px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  .ask:first-child { border-top: 1px solid var(--rule); }
+  .ask img { width: 56px; height: 56px; object-fit: cover; border-radius: 12px; background: #F4F1EC; }
+  .ask .what { display: grid; gap: 2px; }
+  .ask .what b { font-size: 16px; }
+  .ask .what b em { font-style: normal; color: var(--magenta); }
+  .ask .what span { font-size: 14px; color: var(--ink-2); }
+  .ask .act { display: grid; gap: 3px; justify-items: end; }
+  .ask .act small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+  .ask.covered { opacity: 0.55; }
+  .ask.covered .btn { background: var(--tint); color: var(--ink-2); border-color: transparent; cursor: default; }
+  .stock-head { margin: 34px 0 6px; display: grid; gap: 4px; }
+  .stock-head p { font-size: 15px; color: var(--ink-2); }
+  .gifts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 30px; }
+  .gifts-head { margin: 34px 0 10px; font-weight: 700; color: var(--ink-2); font-size: 15px; }
+  .gift { font: inherit; font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 22px; padding: 14px 10px; border-radius: 14px; border: 2px solid var(--rule); background: var(--paper); cursor: pointer; text-align: center; color: var(--ink); }
+  .gift:hover, .gift:focus-visible { border-color: var(--magenta); outline: none; }
 
-  .box {
-    position: sticky; top: 18px;
-    background: var(--paper); border-radius: 26px; padding: 26px;
-    box-shadow: 0 18px 50px rgba(75, 59, 255, 0.10), 0 1px 0 var(--rule);
-    display: grid; gap: 16px;
-  }
+  .box { position: sticky; top: 18px; background: var(--paper); border-radius: 26px; padding: 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 16px; }
   .box h3 { font-size: 24px; }
   .box .amount { font-family: "Fredoka", sans-serif; font-size: 48px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
   .box .amount small { font-size: 18px; color: var(--ink-2); font-weight: 600; margin-left: 4px; }
   .bar { height: 16px; border-radius: 999px; background: var(--tint); overflow: hidden; position: relative; }
-  .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--violet), var(--pink)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
-  .bar.full > span { background: var(--green); }
-  .box .full-note { display: none; background: var(--green-bg); border-left: 4px solid var(--green); padding: 12px 14px; font-weight: 700; color: #0F5C3D; }
-  .box .full-note.show { display: block; }
+  .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--magenta), var(--orange)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+  .shipped-note { display: none; background: var(--green-bg); border-left: 4px solid var(--green); padding: 12px 14px; font-weight: 700; color: #1F6B3E; }
+  .shipped-note.show { display: block; }
   .ledger { display: grid; margin: 0; padding: 0; }
   .ledger li { list-style: none; display: flex; justify-content: space-between; gap: 12px; font-size: 15px; padding: 9px 0; border-bottom: 1px dashed var(--rule); }
   .ledger li:last-child { border-bottom: 0; font-weight: 800; }
   .ledger b { font-variant-numeric: tabular-nums; }
   .box .fine { font-size: 14px; }
 
-  /* how it works */
   .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
-  .how .col { display: grid; gap: 12px; align-content: start; padding-top: 18px; border-top: 3px solid var(--violet); }
-  .how .col:nth-child(2) { border-top-color: var(--pink); }
-  .how .col:nth-child(3) { border-top-color: var(--yellow); }
+  .how .col { display: grid; gap: 10px; align-content: start; padding-top: 18px; border-top: 3px solid var(--magenta); }
+  .how .col:nth-child(2) { border-top-color: var(--orange); }
+  .how .col:nth-child(3) { border-top-color: var(--lime); }
   .how p { color: var(--ink-2); font-size: 16px; }
-  .how ul { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: 16px; display: grid; gap: 8px; }
 
-  footer { padding: 40px 0 70px; display: grid; gap: 10px; color: var(--ink-2); font-size: 15px; border-top: 1px solid var(--rule); }
-  footer .line { font-family: "Fredoka", sans-serif; font-size: 22px; font-weight: 600; color: var(--ink); }
+  footer { padding: 40px 0 70px; display: grid; gap: 14px; color: var(--ink-2); font-size: 15px; border-top: 1px solid var(--rule); }
+  footer .logo img { height: 26px; }
 
-  .toast {
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
-    background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 14px; font-size: 15px; font-weight: 600;
-    opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .25s ease; max-width: min(92vw, 560px); text-align: center;
-  }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 14px; font-size: 15px; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .25s ease; max-width: min(92vw, 560px); text-align: center; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-  /* presenter panel: hidden, opened with a keypress */
-  .panel {
-    position: fixed; right: 18px; bottom: 18px; z-index: 20; width: min(92vw, 360px);
-    background: var(--ink); color: #fff; border-radius: 16px; padding: 16px; display: grid; gap: 10px; font-size: 14px;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.3);
-  }
+  .panel { position: fixed; right: 18px; bottom: 18px; z-index: 20; width: min(92vw, 380px); max-height: 90vh; overflow: auto; background: var(--ink); color: #fff; border-radius: 16px; padding: 16px; display: grid; gap: 10px; font-size: 14px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
   .panel label { display: grid; gap: 4px; }
-  .panel input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); background: #1B1730; color: #fff; }
+  .panel input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); background: #1B1230; color: #fff; }
   .panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .panel button { font: inherit; font-weight: 700; padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer; background: var(--yellow); color: var(--ink); }
+  .panel button { font: inherit; font-weight: 700; padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer; background: var(--lime); color: var(--ink); }
   .panel button.quiet { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+  .panel .hint { font-size: 12px; opacity: 0.75; }
 
   @media (max-width: 880px) {
     .hero { grid-template-columns: 1fr; gap: 28px; }
-    .hero-art { justify-self: start; max-width: 380px; }
+    .hero-art { justify-self: start; max-width: 360px; }
     .ways { grid-template-columns: 1fr; gap: 36px; }
     .ways .rule { display: none; }
     .sponsor { grid-template-columns: 1fr; }
     .box { position: static; }
     .how { grid-template-columns: 1fr; gap: 28px; }
+    .gifts { grid-template-columns: repeat(2, 1fr); }
+    .item { grid-template-columns: 1fr 1fr; }
+    .item .remove { grid-column: 1 / -1; justify-self: start; padding: 0; }
+    .ask { grid-template-columns: 48px 1fr; }
+    .ask .act { grid-column: 2; justify-items: start; }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .bar > span, .toast { transition: none; }
-  }
+  @media (prefers-reduced-motion: reduce) { .bar > span, .toast { transition: none; } }
 </style>
 
 <div class="wrap">
   <div class="top">
-    <a class="brand" href="#" aria-label="RUBIES">RUBIES</a>
-    <span class="soft">Partner closets</span>
+    <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a>
+    <span class="soft">Virtual Closet</span>
   </div>
 
   <header class="hero">
     <div class="hero-copy">
       <p class="place" id="org-city">Champaign-Urbana, Illinois</p>
-      <h1><span id="org-name-title">Uniting Pride</span>'s Closet</h1>
-      <p class="lede">Free no-tuck underwear and swimwear for anyone in our community who needs it, through <span id="closet-name">Uniting Pride's Up and Away closet</span>. Stocked by the community, matched by RUBIES.</p>
+      <h1><span id="org-name-title">Uniting Pride</span><span class="x">×</span>RUBIES<span class="sub">Virtual Closet</span></h1>
+      <p class="lede">Gender-affirming underwear and swimwear, free for anyone in our community who needs it. Stocked by the community, matched by RUBIES.</p>
       <div class="doors">
-        <a class="btn btn-violet" href="#need">Buy a pair, 15% off</a>
+        <a class="btn btn-fill" href="#need">Buy a pair, 15% off</a>
         <a class="btn btn-line" href="#apply">Apply for a free pair</a>
-        <a class="btn btn-pink" href="#sponsor">Sponsor the closet</a>
+        <a class="btn btn-sun" href="#sponsor">Sponsor someone's pair</a>
       </div>
     </div>
     <div class="hero-art" aria-hidden="true">
@@ -236,23 +211,17 @@
     <div class="ways">
       <div class="way">
         <h3>If you can, buy one</h3>
-        <p>Order at rubyshines.com with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
-        <div class="code-row">
-          <div class="code" id="code-display">UPRIDE15</div>
-          <p class="fine">Enter it at checkout. No account needed. Free exchanges if the size is not right.</p>
-        </div>
+        <p>Shop at <a class="inline-logo" href="https://rubyshines.com" target="_blank" rel="noopener"><img id="logo-inline" alt="RUBIES"></a> with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
+        <div class="code" id="code-display">UPRIDE15</div>
+        <p class="fine">Enter it at checkout. No account needed.</p>
       </div>
       <div class="rule"></div>
       <div class="way" id="apply">
         <h3>If money is tight, apply for a free pair</h3>
         <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, usually within a day or two, and RUBIES sends it. Nobody at the closet sees your order.</p>
         <form id="apply-form" class="form">
-          <label>Style
-            <select id="ap-style"></select>
-          </label>
-          <label>Size
-            <select id="ap-size"></select>
-          </label>
+          <div class="items" id="items"></div>
+          <button type="button" class="add-item" id="add-item">+ Add another item</button>
           <fieldset>
             <legend>How would you like it?</legend>
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
@@ -262,12 +231,12 @@
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
           </label>
-          <button type="submit" class="btn btn-violet">Send my request</button>
-          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Free pairs are final, so please check the size guide on rubyshines.com first. It takes two minutes.</p>
+          <button type="submit" class="btn btn-fill">Send my request</button>
+          <p class="fine" id="apply-fine"></p>
         </form>
         <div class="sent" id="apply-done" hidden>
           <b>Request sent</b>
-          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order your pair in your size.</p>
+          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order in your size.</p>
         </div>
       </div>
     </div>
@@ -276,63 +245,54 @@
 
   <section id="sponsor">
     <div class="head">
-      <h2>Sponsor a pair for someone who asked</h2>
-      <p>These are the sizes the closet needs most. RUBIES matches every dollar, so each item costs half its price. $16 puts a pair of underwear in the closet. Delivered to someone's door, $28.</p>
+      <h2>Sponsor someone's pair</h2>
+      <p>People in our community have asked. Cover one and RUBIES matches it, so a pair costs half its price.</p>
     </div>
     <div class="sponsor">
       <div>
-        <div class="needs" id="registry"></div>
-        <div class="gifts" id="gifts"><span>Or chip in:</span></div>
+        <div class="asks" id="asks"></div>
+        <div class="stock-head">
+          <h3>Or stock the closet</h3>
+          <p>Sizes <span class="org-name">Uniting Pride</span> keeps on hand for walk-ins.</p>
+        </div>
+        <div class="asks" id="stock"></div>
+        <p class="gifts-head">Or chip in toward the closet's next box</p>
+        <div class="gifts" id="gifts"></div>
       </div>
       <aside class="box" aria-live="polite">
-        <h3>The closet's next box</h3>
+        <h3 id="box-title">The closet's next box</h3>
         <div class="amount"><span class="amount-num">$0</span><small>raised of $300</small></div>
         <div class="bar"><span></span></div>
-        <div class="full-note" id="box-full">Full. About 18 pairs, or the mix the closet chooses, are on their way to <span class="org-name">Uniting Pride</span>.</div>
+        <div class="shipped-note" id="shipped-note"></div>
         <ul class="ledger" id="ledger"></ul>
-        <p class="fine">$300 raised, matched by RUBIES, is $600 of product, about 18 pairs of underwear or a mix. It ships when full, or after six months, whichever comes first.</p>
+        <p class="fine">$300 raised, matched by RUBIES, is $600 of product for the closet. Every dollar over that starts the next box.</p>
       </aside>
     </div>
   </section>
 
   <section id="how">
     <div class="head">
-      <h2>Three sides, one box</h2>
+      <h2>How it works</h2>
     </div>
     <div class="how">
       <div class="col">
-        <h3>For your community</h3>
-        <p>Those who can buy get 15% off, and 25% of their order goes to the closet. Those who cannot apply for a free pair, and the closet approves it.</p>
-        <ul>
-          <li>Buying comes with free exchanges. Free pairs are final, so check the size guide first.</li>
-          <li>Nobody is asked who they are buying for.</li>
-        </ul>
+        <h3>Community</h3>
+        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair, and <span class="org-name">Uniting Pride</span> approves it.</p>
       </div>
       <div class="col">
-        <h3>For the closet</h3>
-        <p>Sponsors, community orders and the org's own budget fill one box. RUBIES matches every dollar. At $300 raised the box ships, $600 of product.</p>
-        <ul>
-          <li>A free pair picked up at the closet costs the closet $16.</li>
-          <li>A free pair shipped to a door costs the closet $28, delivery included.</li>
-          <li>Returned and exchanged RUBIES items still arrive as donations, as today.</li>
-        </ul>
+        <h3>Closet</h3>
+        <p>RUBIES matches every dollar. At $300 a box ships, $600 of product, in the sizes <span class="org-name">Uniting Pride</span> chooses.</p>
       </div>
       <div class="col">
-        <h3>For the team</h3>
-        <p>Nothing to log, count or update. This page runs on RUBIES data.</p>
-        <ul>
-          <li>Share this link with your community.</li>
-          <li>Approve free-pair requests from an email, one click, or set a monthly auto-approve.</li>
-          <li>Tell us the sizes when the box is ready.</li>
-        </ul>
+        <h3>Team</h3>
+        <p>Share the link. Approve requests from an email. Tell us the sizes when the box is ready. Nothing to maintain.</p>
       </div>
     </div>
   </section>
 
   <footer>
-    <p class="line">Every girl deserves to shine.</p>
-    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Sponsor amounts are half of each item's price, and RUBIES matches them.</p>
-    <p>Questions about the closet? Ask <span class="org-name">Uniting Pride</span>. Questions about an order? care@rubyshines.com.</p>
+    <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-foot" alt="RUBIES"></a>
+    <p><span class="org-name">Uniting Pride</span> × RUBIES Virtual Closet. Questions about the closet? Ask <span class="org-name">Uniting Pride</span>. Questions about an order? <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a>.</p>
   </footer>
 </div>
 
@@ -340,9 +300,12 @@
 
 <div class="panel" id="panel" hidden>
   <label>Org <input id="in-org"></label>
-  <label>Closet name <input id="in-closet"></label>
   <label>City <input id="in-city"></label>
   <label>Code <input id="in-code"></label>
+  <label>Sizes the closet offers <input id="in-sizes" placeholder="XS, S, M, L, 1X, 2X, 3X, 4X"></label>
+  <label>Items per request <input id="in-max" type="number" min="1" max="6"></label>
+  <label>Sizes kept for walk-ins <input id="in-stock" placeholder="aj S 3, aj M 4, aj L 4"></label>
+  <span class="hint">Product keys: aj, charlie, sassy, brooke, ava, ruby</span>
   <div class="row">
     <button type="button" id="p-apply">Apply</button>
     <button type="button" class="quiet" id="p-reset">Reset progress</button>
@@ -353,11 +316,12 @@
 
 <script>
 (function () {
-  var BOX = 300;  // dollars raised, the minimum that reaches RUBIES before a box ships; matched, it is $600 of product at retail
-  var SHIP = 12;  // delivery charge on a pair shipped to a door
+  var BOX = 300;  // dollars raised per box, the minimum that reaches RUBIES before one ships; matched, $600 of product
+  var SHIP = 12;  // delivery on a pair shipped to a door
   var IMG = {{IMG_JSON}};
+  var STORE = 'https://rubyshines.com/products/';
 
-  // Real products, adult store prices. give = half of retail, what a sponsor pays; RUBIES matches it to the full item.
+  // Real products, adult store prices. give = half of retail; RUBIES matches it to the full item.
   var PRODUCTS = [
     { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',             retail: 32, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
     { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage', retail: 33, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
@@ -369,97 +333,156 @@
   var byKey = {};
   PRODUCTS.forEach(function (p) { p.give = Math.round(p.retail / 2); byKey[p.key] = p; });
 
-  // Generated from a size mix the org gives once. Nobody at the org maintains it.
-  var TARGET = [
-    { key: 'aj', size: 'S',  need: 3 },
-    { key: 'aj', size: 'M',  need: 4 },
-    { key: 'aj', size: 'L',  need: 4 },
-    { key: 'aj', size: '1X', need: 2 },
-    { key: 'aj', size: '2X', need: 2 },
-    { key: 'brooke', size: 'M', need: 1 },
-    { key: 'ruby', size: 'M',  need: 1 },
-    { key: 'ruby', size: 'L',  need: 1 }
-  ];
-
   var DEFAULTS = {
-    org: 'Uniting Pride', closet: 'Up and Away', city: 'Champaign-Urbana, Illinois', code: 'UPRIDE15',
-    orders: 4, orderCredit: 32, sponsored: { 'aj|M': 2, 'aj|L': 1 }, gifts: 0, requests: 3
+    org: 'Uniting Pride', city: 'Champaign-Urbana, Illinois', code: 'UPRIDE15',
+    sizes: ['XS','S','M','L','1X','2X','3X','4X'],   // sizes the closet offers; set by the org
+    maxItems: 2,                                        // items per request; set by the org
+    stock: [ { key: 'aj', size: 'S', need: 3 }, { key: 'aj', size: 'M', need: 4 }, { key: 'aj', size: 'L', need: 4 } ],  // walk-in sizes; set by the org
+    stocked: {},
+    // open requests from community members, anonymous. Seeded so the page has people on it.
+    asks: [
+      { id: 1, items: [ { key: 'aj', size: 'M' } ], how: 'pickup', covered: false },
+      { id: 2, items: [ { key: 'aj', size: '1X' }, { key: 'brooke', size: '1X' } ], how: 'ship', covered: false },
+      { id: 3, items: [ { key: 'ruby', size: 'S' } ], how: 'pickup', covered: true },
+      { id: 4, items: [ { key: 'sassy', size: 'L' } ], how: 'pickup', covered: false }
+    ],
+    orders: 4, orderCredit: 32, gifts: 0, nextId: 5
   };
   var state = load();
   readLink();
 
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function load() {
-    try {
-      var raw = localStorage.getItem('closet-page-v2');
-      if (raw) { var s = JSON.parse(raw); return Object.assign({}, DEFAULTS, s, { sponsored: Object.assign({}, s.sponsored || {}) }); }
-    } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULTS));
+    try { var raw = localStorage.getItem('closet-page-v3'); if (raw) return Object.assign(clone(DEFAULTS), JSON.parse(raw)); } catch (e) {}
+    return clone(DEFAULTS);
   }
-  function save() { try { localStorage.setItem('closet-page-v2', JSON.stringify(state)); } catch (e) {} }
+  function save() { try { localStorage.setItem('closet-page-v3', JSON.stringify(state)); } catch (e) {} }
   function readLink() {
     try {
       var q = new URLSearchParams(location.search);
-      ['org', 'closet', 'city', 'code'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
+      ['org', 'city', 'code'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
       if (q.has('code')) state.code = state.code.toUpperCase();
-      if (q.has('reset')) { var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code }; state = Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), keep); }
+      if (q.has('sizes')) state.sizes = parseSizes(q.get('sizes'));
+      if (q.has('items')) state.maxItems = Math.max(1, parseInt(q.get('items'), 10) || 2);
+      if (q.has('reset')) resetProgress();
       save();
     } catch (e) {}
   }
+  function resetProgress() {
+    var keep = { org: state.org, city: state.city, code: state.code, sizes: state.sizes, maxItems: state.maxItems, stock: state.stock };
+    state = Object.assign(clone(DEFAULTS), keep);
+  }
+  function parseSizes(str) {
+    var all = {}; PRODUCTS.forEach(function (p) { p.sizes.forEach(function (s) { all[s.toUpperCase()] = s; }); });
+    var out = []; String(str).split(/[,\s]+/).forEach(function (s) { var k = s.trim().toUpperCase(); if (all[k] && out.indexOf(all[k]) < 0) out.push(all[k]); });
+    return out.length ? out : clone(DEFAULTS.sizes);
+  }
+  function parseStock(str) {
+    var out = [];
+    String(str).split(',').forEach(function (part) {
+      var m = part.trim().match(/^(\w+)\s+(\S+)\s+(\d+)$/i);
+      if (m && byKey[m[1].toLowerCase()]) out.push({ key: m[1].toLowerCase(), size: m[2].toUpperCase(), need: parseInt(m[3], 10) });
+    });
+    return out;
+  }
+  function offered(p) { return p.sizes.filter(function (s) { return state.sizes.indexOf(s) >= 0; }); }
 
   function money(n) { return '$' + Math.round(n); }
   function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
   function shortName(p) { return p.name.replace(/No-Tuck |Shaping /g, ''); }
+  function askCost(a) { var c = 0; a.items.forEach(function (it) { c += byKey[it.key].give; }); if (a.how === 'ship') c += SHIP; return c; }
   function ledger() {
     var sum = state.orderCredit + state.gifts;
-    Object.keys(state.sponsored).forEach(function (k) { sum += state.sponsored[k] * byKey[k.split('|')[0]].give; });
+    state.asks.forEach(function (a) { if (a.covered) sum += askCost(a); });
+    Object.keys(state.stocked).forEach(function (k) { sum += state.stocked[k] * byKey[k.split('|')[0]].give; });
     return sum;
   }
 
   function renderOrg() {
-    document.title = possessive(state.org) + ' Closet';
+    document.title = state.org + ' x RUBIES Virtual Closet';
     document.getElementById('org-name-title').textContent = state.org;
     document.getElementById('org-city').textContent = state.city;
-    document.getElementById('closet-name').textContent = state.closet ? possessive(state.org) + ' ' + state.closet + ' closet' : possessive(state.org) + ' closet';
     document.getElementById('code-display').textContent = state.code;
     Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
-    document.getElementById('in-org').value = state.org;
-    document.getElementById('in-closet').value = state.closet;
-    document.getElementById('in-city').value = state.city;
-    document.getElementById('in-code').value = state.code;
+    ['logo-top', 'logo-inline', 'logo-foot'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
     document.getElementById('hero-main').src = IMG['the-aj-shaping-underwear'];
     document.getElementById('hero-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
+    document.getElementById('in-org').value = state.org;
+    document.getElementById('in-city').value = state.city;
+    document.getElementById('in-code').value = state.code;
+    document.getElementById('in-sizes').value = state.sizes.join(', ');
+    document.getElementById('in-max').value = state.maxItems;
+    document.getElementById('in-stock').value = state.stock.map(function (s) { return s.key + ' ' + s.size + ' ' + s.need; }).join(', ');
+    document.getElementById('apply-fine').textContent = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. Please check the size guide first.';
   }
 
   function renderProducts() {
     var host = document.getElementById('products');
     host.innerHTML = '';
     PRODUCTS.forEach(function (p) {
-      var el = document.createElement('article');
-      el.className = 'product';
+      var szs = offered(p); if (!szs.length) return;
+      var el = document.createElement('a');
+      el.className = 'product'; el.href = STORE + p.img; el.target = '_blank'; el.rel = 'noopener';
       el.innerHTML =
         '<img alt="" src="' + IMG[p.img] + '">' +
         '<div class="name">' + p.name + '</div>' +
         '<div class="for">' + p.for + '</div>' +
-        '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.85) + ' with the code</div>' +
-        '<div class="sizes">' + p.sizes[0] + ' to ' + p.sizes[p.sizes.length - 1] + '</div>';
+        '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.85) + ' with the code</div>';
       host.appendChild(el);
     });
   }
 
-  function renderRegistry() {
-    var host = document.getElementById('registry');
+  function askLabel(a) {
+    return a.items.map(function (it) { return shortName(byKey[it.key]) + ' <em>' + it.size + '</em>'; }).join(' and ');
+  }
+  function renderAsks() {
+    var host = document.getElementById('asks');
     host.innerHTML = '';
-    TARGET.forEach(function (t) {
-      var p = byKey[t.key];
+    var open = state.asks.filter(function (a) { return !a.covered; });
+    var shown = open.concat(state.asks.filter(function (a) { return a.covered; }).slice(-1));
+    if (!shown.length) {
+      var empty = document.createElement('p'); empty.className = 'soft'; empty.textContent = 'Nobody is waiting right now. Stock the closet or chip in below.';
+      host.appendChild(empty); return;
+    }
+    shown.forEach(function (a) {
+      var first = byKey[a.items[0].key];
+      var el = document.createElement('div');
+      el.className = 'ask' + (a.covered ? ' covered' : '');
+      el.innerHTML =
+        '<img alt="" src="' + IMG[first.img] + '">' +
+        '<div class="what"><b>Someone asked for ' + askLabel(a) + '</b>' +
+          '<span>' + (a.how === 'ship' ? 'Shipped to their door' : 'Picked up at the closet') + (a.covered ? '. Covered, thank you.' : '') + '</span></div>' +
+        '<div class="act">' +
+          '<button type="button" class="btn btn-line btn-small" data-id="' + a.id + '" ' + (a.covered ? 'disabled' : '') + '>' + (a.covered ? 'Covered' : 'Cover it, ' + money(askCost(a))) + '</button>' +
+          '<small>' + (a.how === 'ship' ? 'half price plus delivery, RUBIES matches the rest' : 'half its price, RUBIES matches the rest') + '</small>' +
+        '</div>';
+      host.appendChild(el);
+    });
+    Array.prototype.forEach.call(host.querySelectorAll('button[data-id]'), function (b) {
+      b.addEventListener('click', function () {
+        var a = state.asks.filter(function (x) { return String(x.id) === b.getAttribute('data-id'); })[0];
+        if (!a) return;
+        a.covered = true; save();
+        toast('Thank you. RUBIES matched it, and their ' + (a.items.length > 1 ? 'items are' : 'pair is') + ' on the way.');
+        renderAsks(); renderProgress();
+      });
+    });
+  }
+
+  function renderStock() {
+    var host = document.getElementById('stock');
+    host.innerHTML = '';
+    state.stock.forEach(function (t) {
+      var p = byKey[t.key]; if (!p) return;
       var k = t.key + '|' + t.size;
-      var got = state.sponsored[k] || 0;
+      var got = state.stocked[k] || 0;
       var left = Math.max(0, t.need - got);
       var el = document.createElement('div');
-      el.className = 'need' + (left === 0 ? ' covered' : '');
+      el.className = 'ask' + (left === 0 ? ' covered' : '');
       el.innerHTML =
         '<img alt="" src="' + IMG[p.img] + '">' +
-        '<div class="what"><b>' + p.name + ' <em>' + t.size + '</em></b>' +
-          '<span>' + (left === 0 ? 'Covered. Thank you.' : left + ' still needed' + (got ? ', ' + got + ' sponsored' : '')) + '</span></div>' +
+        '<div class="what"><b>' + shortName(p) + ' <em>' + t.size + '</em></b>' +
+          '<span>' + (left === 0 ? 'Covered. Thank you.' : left + ' still needed') + '</span></div>' +
         '<div class="act">' +
           '<button type="button" class="btn btn-line btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one, ' + money(p.give)) + '</button>' +
           '<small>half its price, RUBIES matches the rest</small>' +
@@ -469,27 +492,21 @@
     Array.prototype.forEach.call(host.querySelectorAll('button[data-k]'), function (b) {
       b.addEventListener('click', function () {
         var k = b.getAttribute('data-k');
-        state.sponsored[k] = (state.sponsored[k] || 0) + 1;
-        save();
-        var p = byKey[k.split('|')[0]];
-        toast('Thank you. RUBIES matched it: a ' + shortName(p).toLowerCase() + ' in ' + k.split('|')[1] + ' is going to ' + possessive(state.org) + ' closet.');
-        renderRegistry(); renderProgress();
+        state.stocked[k] = (state.stocked[k] || 0) + 1; save();
+        toast('Thank you. RUBIES matched it: a ' + shortName(byKey[k.split('|')[0]]).toLowerCase() + ' in ' + k.split('|')[1] + ' is going to the closet.');
+        renderStock(); renderProgress();
       });
     });
   }
 
   function renderGifts() {
-    var host = document.getElementById('gifts');
+    var host = document.getElementById('gifts'); host.innerHTML = '';
     [10, 25, 50, 100].forEach(function (amt) {
-      var pairs = Math.floor(amt / byKey.aj.give);
-      var delivered = Math.floor(amt / (byKey.aj.give + SHIP));
       var c = document.createElement('button');
-      c.type = 'button'; c.className = 'gift';
-      var line = pairs >= 1 ? pairs + (pairs === 1 ? ' pair' : ' pairs') + ' in the closet' + (delivered >= 1 ? ', or ' + delivered + ' delivered' : '') : 'toward the next pair';
-      c.innerHTML = money(amt) + '<small>' + line + '</small>';
+      c.type = 'button'; c.className = 'gift'; c.textContent = money(amt);
       c.addEventListener('click', function () {
         state.gifts += amt; save();
-        toast('Thank you. ' + money(amt) + ', matched by RUBIES, toward ' + possessive(state.org) + ' next box.');
+        toast('Thank you. ' + money(amt) + ', matched by RUBIES, toward ' + possessive(state.org) + ' closet.');
         renderProgress();
       });
       host.appendChild(c);
@@ -498,62 +515,69 @@
 
   function renderProgress() {
     var total = ledger();
-    var pct = Math.min(100, Math.round(total / BOX * 100));
-    var full = total >= BOX;
-    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(Math.min(total, BOX)); });
-    document.getElementById('hero-tag').textContent = full ? 'The box is full' : money(total) + ' raised so far';
-    Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) {
-      bar.classList.toggle('full', full);
-      bar.firstElementChild.style.width = pct + '%';
-    });
-    document.getElementById('box-full').classList.toggle('show', full);
+    var boxes = Math.floor(total / BOX);
+    var rem = total - boxes * BOX;
+    var pct = Math.round(rem / BOX * 100);
+    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(rem); });
+    document.getElementById('box-title').textContent = boxes ? 'Box ' + (boxes + 1) : "The closet's next box";
+    document.getElementById('hero-tag').textContent = money(total) + ' raised so far';
+    Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; });
+    var note = document.getElementById('shipped-note');
+    note.classList.toggle('show', boxes > 0);
+    note.innerHTML = boxes === 1 ? 'Box 1 is full and on its way to ' + state.org + '.' : boxes + ' boxes full and on their way to ' + state.org + '.';
 
-    var list = document.getElementById('ledger');
-    list.innerHTML = '';
+    var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
-    Object.keys(state.sponsored).forEach(function (k) {
-      var n = state.sponsored[k]; if (!n) return;
-      var p = byKey[k.split('|')[0]];
-      rows.push({ label: n + ' × ' + shortName(p) + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.give });
-    });
+    var covered = state.asks.filter(function (a) { return a.covered; });
+    if (covered.length) rows.push({ label: covered.length + (covered.length === 1 ? ' request' : ' requests') + ' covered by sponsors', amt: covered.reduce(function (s, a) { return s + askCost(a); }, 0) });
+    var stockAmt = 0, stockN = 0; Object.keys(state.stocked).forEach(function (k) { stockN += state.stocked[k]; stockAmt += state.stocked[k] * byKey[k.split('|')[0]].give; });
+    if (stockN) rows.push({ label: stockN + (stockN === 1 ? ' item' : ' items') + ' sponsored for the closet', amt: stockAmt });
     if (state.orders) rows.push({ label: state.orders + ' community orders with the code, 25% of each', amt: state.orderCredit });
-    if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
-    rows.forEach(function (r) {
-      var li = document.createElement('li');
-      li.innerHTML = '<span>' + r.label + '</span><b>' + money(r.amt) + '</b>';
-      list.appendChild(li);
-    });
-    var li = document.createElement('li');
-    li.innerHTML = '<span>Raised so far</span><b>' + money(total) + '</b>';
-    list.appendChild(li);
+    if (state.gifts) rows.push({ label: 'Gifts toward the closet', amt: state.gifts });
+    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + money(r.amt) + '</b>'; list.appendChild(li); });
+    var li = document.createElement('li'); li.innerHTML = '<span>Raised so far</span><b>' + money(total) + '</b>'; list.appendChild(li);
   }
 
   var toastTimer;
   function toast(msg) {
-    var t = document.getElementById('toast');
-    t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3400);
+    var t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3400);
   }
 
-  // apply form
-  (function () {
-    var style = document.getElementById('ap-style');
-    var size = document.getElementById('ap-size');
-    PRODUCTS.forEach(function (p) { var o = document.createElement('option'); o.value = p.key; o.textContent = p.name; style.appendChild(o); });
-    function fillSizes() {
-      size.innerHTML = '';
-      byKey[style.value].sizes.forEach(function (sz) { var o = document.createElement('option'); o.value = sz; o.textContent = sz; size.appendChild(o); });
-    }
+  // apply form: one or more items, capped by the org's setting
+  var itemsHost = document.getElementById('items');
+  var addBtn = document.getElementById('add-item');
+  function itemRow() {
+    var row = document.createElement('div'); row.className = 'item';
+    var style = document.createElement('select'); var size = document.createElement('select');
+    PRODUCTS.forEach(function (p) { if (!offered(p).length) return; var o = document.createElement('option'); o.value = p.key; o.textContent = p.name; style.appendChild(o); });
+    function fillSizes() { size.innerHTML = ''; offered(byKey[style.value]).forEach(function (sz) { var o = document.createElement('option'); o.value = sz; o.textContent = sz; size.appendChild(o); }); }
     style.addEventListener('change', fillSizes); fillSizes();
-    document.getElementById('apply-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      state.requests = (state.requests || 0) + 1; save();
-      document.getElementById('apply-form').hidden = true;
-      document.getElementById('apply-done').hidden = false;
-      toast('Request sent to ' + state.org + '.');
-    });
-  })();
+    var l1 = document.createElement('label'); l1.textContent = 'Style'; l1.appendChild(style);
+    var l2 = document.createElement('label'); l2.textContent = 'Size'; l2.appendChild(size);
+    var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'remove'; rm.textContent = 'Remove';
+    rm.addEventListener('click', function () { row.remove(); syncAdd(); });
+    row.appendChild(l1); row.appendChild(l2); row.appendChild(rm);
+    return row;
+  }
+  function syncAdd() {
+    var n = itemsHost.children.length;
+    addBtn.disabled = n >= state.maxItems;
+    addBtn.textContent = n >= state.maxItems ? 'That is the most per request' : '+ Add another item';
+    Array.prototype.forEach.call(itemsHost.querySelectorAll('.remove'), function (b) { b.style.visibility = n > 1 ? 'visible' : 'hidden'; });
+  }
+  function resetForm() { itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd(); document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true; }
+  addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
+  document.getElementById('apply-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, size: sel[1].value }; });
+    var how = document.querySelector('input[name="how"]:checked').value;
+    state.asks.push({ id: state.nextId++, items: items, how: how, covered: false }); save();
+    document.getElementById('apply-form').hidden = true;
+    document.getElementById('apply-done').hidden = false;
+    toast('Request sent to ' + state.org + '.');
+    renderAsks();
+  });
 
   // presenter panel: press "e" with nothing focused, or add ?panel to the link
   var panel = document.getElementById('panel');
@@ -567,26 +591,20 @@
   document.getElementById('p-close').addEventListener('click', function () { togglePanel(false); });
   document.getElementById('p-apply').addEventListener('click', function () {
     state.org = document.getElementById('in-org').value.trim() || 'Your Org';
-    state.closet = document.getElementById('in-closet').value.trim();
     state.city = document.getElementById('in-city').value.trim();
     state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
-    save(); renderOrg(); renderRegistry(); renderProgress();
-    togglePanel(false);
+    state.sizes = parseSizes(document.getElementById('in-sizes').value);
+    state.maxItems = Math.min(6, Math.max(1, parseInt(document.getElementById('in-max').value, 10) || 2));
+    var st = parseStock(document.getElementById('in-stock').value); if (st.length) state.stock = st;
+    save(); renderAll(); resetForm(); togglePanel(false);
   });
-  document.getElementById('p-reset').addEventListener('click', function () {
-    var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code };
-    state = Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), keep);
-    save(); renderRegistry(); renderProgress();
-    document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
-  });
+  document.getElementById('p-reset').addEventListener('click', function () { resetProgress(); save(); renderAll(); resetForm(); });
   document.getElementById('p-fill').addEventListener('click', function () {
-    var gap = BOX - ledger();
-    if (gap > 0) { state.gifts += gap; save(); }
-    renderProgress();
-    document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    togglePanel(false);
+    var total = ledger(); var gap = BOX - (total % BOX); if (gap > 0 && gap < BOX) { state.gifts += gap; } else if (gap === BOX) { state.gifts += BOX; } save();
+    renderProgress(); document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' }); togglePanel(false);
   });
 
-  renderOrg(); renderProducts(); renderRegistry(); renderGifts(); renderProgress();
+  function renderAll() { renderOrg(); renderProducts(); renderAsks(); renderStock(); renderGifts(); renderProgress(); }
+  renderAll(); resetForm();
 })();
 </script>
