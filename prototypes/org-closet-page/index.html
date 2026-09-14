@@ -262,7 +262,7 @@
         <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way to the closet</span></div>
         <div class="stat"><b id="hero-people">0</b><span>free pairs requested this month</span></div>
       </div>
-      <p class="note">Filled by sponsors and by every pair bought with the code. When it is full it ships to <span class="org-name">Uniting Pride</span>, and RUBIES doubles it.</p>
+      <p class="note">Filled by sponsors and by 25% of every order made with the code. When it is full it ships to <span class="org-name">Uniting Pride</span>, and RUBIES doubles it.</p>
     </div>
   </header>
 
@@ -270,7 +270,7 @@
     <div class="sec-head">
       <div class="eyebrow">For you</div>
       <h2>Need a pair? Two ways to get one.</h2>
-      <p>If you can buy one, please do: your order sends a pair to the closet for someone who cannot. If money is tight right now, apply and the closet will cover it.</p>
+      <p>If you can buy one, please do: a quarter of what you pay goes to the closet for someone who cannot. If money is tight right now, apply and the closet will cover it.</p>
     </div>
     <div class="two-ways">
       <div class="way way-buy">
@@ -278,7 +278,7 @@
         <div class="code-card">
           <div class="code" id="code-display">UPRIDE15</div>
           <div>
-            <p><b>15% off</b> at rubyshines.com, and <b>one pair to the closet for every pair you buy</b>.</p>
+            <p><b>15% off</b> at rubyshines.com, and <b>25% of your order goes to the closet</b>.</p>
             <p class="fine">Enter it at checkout. No account needed. Free exchanges if the size is not right.</p>
           </div>
         </div>
@@ -302,7 +302,7 @@
             <input type="email" id="ap-email" placeholder="you@example.com" required>
           </label>
           <button type="submit" class="btn btn-primary">Send my request</button>
-          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Not sure about size? The closet keeps a run of sizes to try on.</p>
+          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Not sure about size? The size guide on rubyshines.com takes two minutes, and exchanges are free.</p>
         </form>
         <div class="apply-done" id="apply-done" hidden>
           <b>Request sent.</b>
@@ -348,9 +348,8 @@
     <div class="how">
       <div class="col">
         <h3>For your community</h3>
-        <p>Those who can buy get 15% off, and each pair they buy sends one to the closet. Those who cannot apply for a free pair, and the closet approves it.</p>
+        <p>Those who can buy get 15% off, and 25% of their order goes to the closet. Those who cannot apply for a free pair, and the closet approves it.</p>
         <ul>
-          <li>Sizes to try on at the closet</li>
           <li>Free exchanges if the size is off</li>
           <li>Nobody is asked who they are buying for</li>
         </ul>
@@ -545,7 +544,7 @@
       var p = byKey[k.split('|')[0]];
       rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.closet });
     });
-    if (state.orders) rows.push({ label: state.orders + ' community orders with the code (a pair per two orders)', amt: state.orderCredit });
+    if (state.orders) rows.push({ label: state.orders + ' community orders with the code, 25% of each', amt: state.orderCredit });
     if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
     rows.forEach(function (r) {
       var li = document.createElement('li');
