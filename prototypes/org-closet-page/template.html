@@ -209,6 +209,7 @@
         <p>Shop at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a> with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
         <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com/discount/UPRIDE15?redirect=/collections/all" target="_blank" rel="noopener">Shop with 15% off applied</a>
         <div class="code-row"><span class="fine">Or use the code at checkout:</span><div class="code" id="code-display">UPRIDE15</div></div>
+        <p class="fine">Not sure which style or size? <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">Compare styles</a> or open the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a>.</p>
       </div>
       <div class="rule"></div>
       <div class="way" id="apply">
@@ -406,7 +407,7 @@
     document.getElementById('in-sizes').value = state.sizes.join(', ');
     document.getElementById('in-max').value = state.maxItems;
     document.getElementById('in-stock').value = state.stock.map(function (s) { return s.key + ' ' + s.size + ' ' + s.need; }).join(', ');
-    document.getElementById('apply-fine').textContent = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. Please check the size guide first.';
+    document.getElementById('apply-fine').innerHTML = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. Please <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">compare styles</a> and check the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a> first.';
   }
 
   function renderProducts() {
