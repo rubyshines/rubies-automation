@@ -3,203 +3,172 @@
 <style>
   :root {
     --ground: #FFFDF9;
-    --surface: #FFFFFF;
-    --tint: #F3F0FF;
-    --pink-tint: #FFF0F7;
+    --paper: #FFFFFF;
+    --tint: #F1EEFF;
     --ink: #221D3D;
-    --ink-soft: #5D5779;
-    --line: #E4DFF0;
+    --ink-2: #5D5779;
+    --rule: #E6E1F0;
     --violet: #4B3BFF;
-    --violet-deep: #3527D6;
+    --violet-2: #3527D6;
     --pink: #FF4FA3;
     --yellow: #FFD23F;
-    --ok: #1E9E6A;
-    --shadow: 0 8px 28px rgba(34, 29, 61, 0.08);
+    --green: #1E9E6A;
+    --green-bg: #EAF8F1;
   }
   * { box-sizing: border-box; }
   body {
     background: var(--ground);
     color: var(--ink);
     font-family: "Nunito Sans", "Segoe UI", system-ui, sans-serif;
-    font-size: 16px;
+    font-size: 17px;
     line-height: 1.55;
   }
   a { color: var(--violet); }
-  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.1; text-wrap: balance; }
-  h1 { font-size: clamp(36px, 5.5vw, 58px); font-weight: 700; }
-  h2 { font-size: clamp(26px, 3.4vw, 34px); font-weight: 600; }
-  h3 { font-size: 20px; font-weight: 600; }
+  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.08; text-wrap: balance; }
+  h1 { font-size: clamp(40px, 6vw, 64px); font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(28px, 3.6vw, 38px); font-weight: 600; }
+  h3 { font-size: 22px; font-weight: 600; }
   p { margin: 0; }
+  .soft { color: var(--ink-2); }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-  .eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--pink); }
 
-  /* demo bar */
-  .demo-bar {
-    background: var(--ink); color: #fff; font-size: 13px;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
-    padding: 8px 24px;
-  }
-  .demo-bar b { color: var(--yellow); }
-  .demo-bar button {
-    background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35);
-    border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer;
-  }
-  .demo-bar button:hover, .demo-bar button:focus-visible { border-color: #fff; outline: none; }
-  .demo-panel {
-    background: #2E2850; color: #fff; padding: 14px 24px;
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end;
-    font-size: 13px;
-  }
-  .demo-panel label { display: grid; gap: 4px; }
-  .demo-panel input {
-    font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3);
-    background: #1B1730; color: #fff;
-  }
-  .demo-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .demo-panel button {
-    font: inherit; font-weight: 700; padding: 8px 14px; border-radius: 8px; border: 0; cursor: pointer;
-    background: var(--yellow); color: var(--ink);
-  }
-  .demo-panel button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+  .top { display: flex; justify-content: space-between; align-items: baseline; padding: 22px 0 6px; }
+  .brand { font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 22px; letter-spacing: 0.08em; color: var(--ink); text-decoration: none; }
+  .top .soft { font-size: 15px; }
 
-  /* header */
-  .site-top { display: flex; justify-content: space-between; align-items: center; padding: 18px 0 8px; }
-  .brand { font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 22px; letter-spacing: 0.06em; color: var(--ink); text-decoration: none; }
-  .brand small { display: block; font-family: "Nunito Sans", sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; color: var(--ink-soft); }
-  .powered { font-size: 13px; color: var(--ink-soft); }
-
-  .hero {
-    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: center;
-    padding: 28px 0 40px;
-  }
-  .hero-copy { display: grid; gap: 18px; }
-  .hero p.lede { font-size: 19px; color: var(--ink-soft); max-width: 34ch; }
-  .org-mark {
-    display: inline-flex; align-items: center; gap: 12px; padding: 8px 14px 8px 8px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: 999px; width: fit-content;
-    font-weight: 700; font-size: 14px;
-  }
-  .org-mark .dot {
-    width: 34px; height: 34px; border-radius: 50%;
-    background: conic-gradient(var(--pink), var(--yellow), var(--violet), var(--pink));
-    display: grid; place-items: center; color: #fff; font-family: "Fredoka", sans-serif; font-size: 16px;
-  }
-  .fork { display: flex; gap: 12px; flex-wrap: wrap; }
+  /* hero */
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 26px 0 54px; }
+  .hero-copy { display: grid; gap: 20px; }
+  .place { font-weight: 700; font-size: 16px; color: var(--ink-2); }
+  .lede { font-size: 20px; color: var(--ink-2); max-width: 36ch; }
+  .doors { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn {
     font: inherit; font-weight: 800; font-size: 16px; padding: 14px 22px; border-radius: 999px; border: 2px solid transparent;
-    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; transition: transform .12s ease, box-shadow .12s ease;
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 10px;
   }
   .btn:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
-  .btn-primary { background: var(--violet); color: #fff; }
-  .btn-primary:hover { background: var(--violet-deep); }
+  .btn-violet { background: var(--violet); color: #fff; }
+  .btn-violet:hover { background: var(--violet-2); }
   .btn-pink { background: var(--pink); color: #fff; }
-  .btn-pink:hover { filter: brightness(0.95); }
-  .btn-ghost { background: var(--surface); color: var(--ink); border-color: var(--line); }
-  .btn-ghost:hover { border-color: var(--violet); }
-  .btn-small { font-size: 14px; padding: 9px 16px; }
+  .btn-pink:hover { filter: brightness(0.94); }
+  .btn-line { background: transparent; color: var(--ink); border-color: var(--ink); }
+  .btn-line:hover { background: var(--tint); }
+  .btn-small { font-size: 15px; padding: 9px 16px; }
 
-  .hero-card {
-    background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 22px; box-shadow: var(--shadow);
-    display: grid; gap: 14px;
+  .hero-art { position: relative; aspect-ratio: 1 / 1; max-width: 460px; justify-self: end; width: 100%; }
+  .hero-art .blob {
+    position: absolute; inset: 6% 4% 4% 6%;
+    background: var(--violet);
+    border-radius: 58% 42% 55% 45% / 48% 56% 44% 52%;
   }
-  .hero-card .big { font-family: "Fredoka", sans-serif; font-size: 44px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-  .hero-card .big small { font-size: 18px; color: var(--ink-soft); font-weight: 600; }
-  .bar { height: 14px; border-radius: 999px; background: var(--tint); overflow: hidden; position: relative; }
-  .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--violet), var(--pink)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
-  .bar.full > span { background: linear-gradient(90deg, var(--ok), var(--yellow)); }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .stat { background: var(--tint); border-radius: 14px; padding: 12px 14px; display: grid; gap: 2px; }
-  .stat b { font-size: 22px; font-family: "Fredoka", sans-serif; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat span { font-size: 13px; color: var(--ink-soft); }
-  .hero-card .note { font-size: 13.5px; color: var(--ink-soft); }
+  .hero-art img.main {
+    position: absolute; left: 10%; top: 6%; width: 74%; aspect-ratio: 1 / 1; object-fit: cover;
+    border-radius: 46% 54% 50% 50% / 52% 46% 54% 48%;
+  }
+  .hero-art img.second {
+    position: absolute; right: 0; bottom: 0; width: 44%; aspect-ratio: 1 / 1; object-fit: cover;
+    border-radius: 50%; border: 6px solid var(--ground);
+  }
+  .hero-art .tag {
+    position: absolute; left: 0; bottom: 14%; background: var(--yellow); color: var(--ink);
+    font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 17px; padding: 8px 14px; border-radius: 999px;
+    transform: rotate(-4deg);
+  }
 
   /* sections */
-  section { padding: 44px 0; border-top: 1px solid var(--line); }
-  .sec-head { display: grid; gap: 8px; margin-bottom: 26px; max-width: 62ch; }
-  .sec-head p { color: var(--ink-soft); font-size: 17px; }
+  section { padding: 54px 0; border-top: 1px solid var(--rule); }
+  .head { display: grid; gap: 10px; margin-bottom: 30px; }
+  .head p { font-size: 18px; color: var(--ink-2); max-width: 60ch; }
 
-  .code-card {
-    display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center;
-    background: var(--tint); border-radius: 22px; padding: 24px 26px; margin-bottom: 26px;
-  }
+  /* two ways */
+  .ways { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0 40px; align-items: start; }
+  .ways .rule { background: var(--rule); align-self: stretch; }
+  .way { display: grid; gap: 16px; align-content: start; }
+  .way h3 { font-size: 24px; }
+  .way > p { color: var(--ink-2); }
+  .code-row { display: grid; gap: 12px; }
   .code {
-    font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em;
-    background: var(--surface); border: 2px dashed var(--violet); border-radius: 14px; padding: 12px 20px; color: var(--violet);
+    font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em; color: var(--violet);
+    background: var(--tint); border-radius: 14px; padding: 12px 20px; width: fit-content;
   }
-  .code-card p { color: var(--ink); font-size: 16px; }
-  .code-card .fine { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+  .fine { font-size: 14.5px; color: var(--ink-2); }
 
-  .two-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-  .way { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 22px; display: grid; gap: 14px; align-content: start; }
-  .way-buy { border-top: 4px solid var(--violet); }
-  .way-apply { border-top: 4px solid var(--yellow); }
-  .way .code-card { margin-bottom: 0; grid-template-columns: 1fr; padding: 18px 20px; }
-  .way .code { font-size: 28px; width: fit-content; }
-  .way-lede { color: var(--ink-soft); font-size: 15px; }
-  .apply-form { display: grid; gap: 12px; }
-  .apply-form label { display: grid; gap: 4px; font-size: 13.5px; font-weight: 700; color: var(--ink-soft); }
-  .apply-form select, .apply-form input[type="email"] { font: inherit; font-size: 15px; color: var(--ink); padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); }
-  .apply-form select:focus, .apply-form input:focus { outline: 3px solid var(--tint); border-color: var(--violet); }
-  .apply-form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
-  .apply-form legend { font-size: 13.5px; font-weight: 700; color: var(--ink-soft); padding: 0; margin-bottom: 4px; }
-  .apply-form .radio { display: flex; gap: 8px; align-items: center; font-weight: 600; color: var(--ink); font-size: 15px; }
-  .apply-form .btn { justify-content: center; width: fit-content; }
-  .apply-form .fine, .apply-done p { font-size: 13.5px; color: var(--ink-soft); }
-  .apply-done { background: #EAF8F1; border: 1px solid #BFE8D3; border-radius: 16px; padding: 16px 18px; display: grid; gap: 6px; }
-  .apply-done b { color: #0F5C3D; }
-  .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
-  .product { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
-  .product img { width: 100%; aspect-ratio: 1 / 1.05; object-fit: cover; display: block; background: #F6F3EE; }
-  .product .body { padding: 12px 14px 14px; display: grid; gap: 4px; align-content: start; }
-  .product .name { font-weight: 800; font-size: 14px; line-height: 1.25; }
-  .product .for { font-size: 13px; color: var(--ink-soft); }
-  .product .price { font-weight: 800; font-size: 15px; margin-top: 4px; }
-  .product .price s { color: var(--ink-soft); font-weight: 600; margin-right: 6px; }
-  .product .sizes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .product .sizes span { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--tint); color: var(--ink-soft); }
+  .form { display: grid; gap: 14px; }
+  .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
+  .form select, .form input[type="email"] {
+    font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper);
+  }
+  .form select:focus, .form input:focus { outline: 3px solid var(--tint); border-color: var(--violet); }
+  .form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+  .form legend { font-size: 14.5px; font-weight: 700; color: var(--ink-2); padding: 0; margin-bottom: 4px; }
+  .form .radio { display: flex; gap: 10px; align-items: center; font-weight: 600; color: var(--ink); font-size: 16px; }
+  .form .radio input { width: 18px; height: 18px; accent-color: var(--violet); }
+  .form .btn { width: fit-content; }
+  .sent { background: var(--green-bg); border-left: 4px solid var(--green); padding: 14px 18px; display: grid; gap: 6px; }
+  .sent b { color: #0F5C3D; }
 
-  /* registry */
-  .registry-grid { display: grid; grid-template-columns: 1.4fr 0.9fr; gap: 28px; align-items: start; }
-  .registry { display: grid; gap: 10px; }
+  .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 18px; margin-top: 44px; }
+  .product { display: grid; gap: 6px; align-content: start; }
+  .product img { width: 100%; aspect-ratio: 1 / 1.05; object-fit: cover; display: block; border-radius: 16px; background: #F4F1EC; }
+  .product .name { font-weight: 800; font-size: 14.5px; line-height: 1.3; margin-top: 4px; }
+  .product .for { font-size: 13.5px; color: var(--ink-2); }
+  .product .price { font-weight: 800; font-size: 15px; }
+  .product .price s { color: var(--ink-2); font-weight: 600; margin-right: 6px; }
+  .product .sizes { font-size: 12.5px; color: var(--ink-2); }
+
+  /* sponsor */
+  .sponsor { display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 40px; align-items: start; }
+  .needs { display: grid; }
   .need {
-    display: grid; grid-template-columns: 64px 1fr auto; gap: 16px; align-items: center;
-    background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
-    transition: opacity .3s ease;
+    display: grid; grid-template-columns: 56px 1fr auto; gap: 16px; align-items: center;
+    padding: 14px 0; border-bottom: 1px solid var(--rule);
   }
-  .need img { width: 64px; height: 64px; object-fit: cover; border-radius: 12px; background: #F6F3EE; }
+  .need:first-child { border-top: 1px solid var(--rule); }
+  .need img { width: 56px; height: 56px; object-fit: cover; border-radius: 12px; background: #F4F1EC; }
   .need .what { display: grid; gap: 2px; }
-  .need .what b { font-size: 15px; }
-  .need .what span { font-size: 13.5px; color: var(--ink-soft); }
-  .need .count { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 15px; color: var(--violet); }
-  .need .act { display: grid; gap: 4px; justify-items: end; }
-  .need .act small { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
-  .need.done { opacity: 0.55; }
-  .need.done .btn { background: var(--tint); color: var(--ink-soft); border-color: transparent; cursor: default; }
-  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
-  .chip { font: inherit; font-weight: 800; padding: 10px 16px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); cursor: pointer; }
-  .chip:hover, .chip:focus-visible { border-color: var(--pink); outline: none; }
-  .chip small { display: block; font-weight: 600; font-size: 11.5px; color: var(--ink-soft); }
-  .aside { display: grid; gap: 14px; position: sticky; top: 16px; }
-  .aside .hero-card { box-shadow: none; }
-  .ontheway { display: grid; gap: 8px; }
-  .ontheway li { list-style: none; display: flex; justify-content: space-between; gap: 12px; font-size: 14.5px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
-  .ontheway li:last-child { border-bottom: 0; }
-  .ontheway b { font-variant-numeric: tabular-nums; }
-  .box-full { display: none; background: #EAF8F1; border: 1px solid #BFE8D3; color: #0F5C3D; border-radius: 16px; padding: 14px 16px; font-weight: 700; }
-  .box-full.show { display: block; }
+  .need .what b { font-size: 16px; }
+  .need .what b em { font-style: normal; color: var(--violet); }
+  .need .what span { font-size: 14px; color: var(--ink-2); }
+  .need .act { display: grid; gap: 3px; justify-items: end; }
+  .need .act small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+  .need.covered { opacity: 0.55; }
+  .need.covered .btn { background: var(--tint); color: var(--ink-2); border-color: transparent; cursor: default; }
+  .gifts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
+  .gifts > span { font-weight: 700; font-size: 15px; color: var(--ink-2); }
+  .gift { font: inherit; font-weight: 800; font-size: 16px; padding: 10px 16px; border-radius: 999px; border: 2px solid var(--rule); background: var(--paper); cursor: pointer; text-align: left; }
+  .gift:hover, .gift:focus-visible { border-color: var(--pink); outline: none; }
+  .gift small { display: block; font-weight: 600; font-size: 12px; color: var(--ink-2); }
+
+  .box {
+    position: sticky; top: 18px;
+    background: var(--paper); border-radius: 26px; padding: 26px;
+    box-shadow: 0 18px 50px rgba(75, 59, 255, 0.10), 0 1px 0 var(--rule);
+    display: grid; gap: 16px;
+  }
+  .box h3 { font-size: 24px; }
+  .box .amount { font-family: "Fredoka", sans-serif; font-size: 48px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .box .amount small { font-size: 18px; color: var(--ink-2); font-weight: 600; margin-left: 4px; }
+  .bar { height: 16px; border-radius: 999px; background: var(--tint); overflow: hidden; position: relative; }
+  .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--violet), var(--pink)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+  .bar.full > span { background: var(--green); }
+  .box .full-note { display: none; background: var(--green-bg); border-left: 4px solid var(--green); padding: 12px 14px; font-weight: 700; color: #0F5C3D; }
+  .box .full-note.show { display: block; }
+  .ledger { display: grid; margin: 0; padding: 0; }
+  .ledger li { list-style: none; display: flex; justify-content: space-between; gap: 12px; font-size: 15px; padding: 9px 0; border-bottom: 1px dashed var(--rule); }
+  .ledger li:last-child { border-bottom: 0; font-weight: 800; }
+  .ledger b { font-variant-numeric: tabular-nums; }
+  .box .fine { font-size: 14px; }
 
   /* how it works */
-  .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  .how .col { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; display: grid; gap: 10px; align-content: start; }
-  .how .col:nth-child(1) { border-top: 4px solid var(--violet); }
-  .how .col:nth-child(2) { border-top: 4px solid var(--pink); }
-  .how .col:nth-child(3) { border-top: 4px solid var(--yellow); }
-  .how .col p { color: var(--ink-soft); font-size: 15px; }
-  .how ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 15px; display: grid; gap: 6px; }
-  .how ul li::marker { color: var(--ink); }
+  .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+  .how .col { display: grid; gap: 12px; align-content: start; padding-top: 18px; border-top: 3px solid var(--violet); }
+  .how .col:nth-child(2) { border-top-color: var(--pink); }
+  .how .col:nth-child(3) { border-top-color: var(--yellow); }
+  .how p { color: var(--ink-2); font-size: 16px; }
+  .how ul { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: 16px; display: grid; gap: 8px; }
 
-  footer { padding: 34px 0 60px; color: var(--ink-soft); font-size: 14px; display: grid; gap: 8px; }
-  footer .tag { font-family: "Fredoka", sans-serif; font-size: 20px; font-weight: 600; color: var(--ink); }
+  footer { padding: 40px 0 70px; display: grid; gap: 10px; color: var(--ink-2); font-size: 15px; border-top: 1px solid var(--rule); }
+  footer .line { font-family: "Fredoka", sans-serif; font-size: 22px; font-weight: 600; color: var(--ink); }
 
   .toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
@@ -208,85 +177,76 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-  @media (max-width: 860px) {
-    .hero { grid-template-columns: 1fr; }
-    .registry-grid { grid-template-columns: 1fr; }
-    .aside { position: static; }
-    .how { grid-template-columns: 1fr; }
-    .code-card { grid-template-columns: 1fr; }
-    .two-ways { grid-template-columns: 1fr; }
+  /* presenter panel: hidden, opened with a keypress */
+  .panel {
+    position: fixed; right: 18px; bottom: 18px; z-index: 20; width: min(92vw, 360px);
+    background: var(--ink); color: #fff; border-radius: 16px; padding: 16px; display: grid; gap: 10px; font-size: 14px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+  }
+  .panel label { display: grid; gap: 4px; }
+  .panel input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); background: #1B1730; color: #fff; }
+  .panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .panel button { font: inherit; font-weight: 700; padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer; background: var(--yellow); color: var(--ink); }
+  .panel button.quiet { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+
+  @media (max-width: 880px) {
+    .hero { grid-template-columns: 1fr; gap: 28px; }
+    .hero-art { justify-self: start; max-width: 380px; }
+    .ways { grid-template-columns: 1fr; gap: 36px; }
+    .ways .rule { display: none; }
+    .sponsor { grid-template-columns: 1fr; }
+    .box { position: static; }
+    .how { grid-template-columns: 1fr; gap: 28px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .bar > span, .toast, .btn { transition: none; }
+    .bar > span, .toast { transition: none; }
   }
 </style>
 
-<div class="demo-bar">
-  <div><b>Prototype.</b> Real products and prices. Example numbers, nothing is live. <span id="demo-org-hint"></span></div>
-  <button type="button" id="demo-toggle" aria-expanded="false" aria-controls="demo-panel">Demo settings</button>
-</div>
-<div class="demo-panel" id="demo-panel" hidden>
-  <label>Org name <input id="in-org" value="Uniting Pride"></label>
-  <label>Closet name (optional) <input id="in-closet" value="Up and Away"></label>
-  <label>City <input id="in-city" value="Champaign-Urbana, IL"></label>
-  <label>Code <input id="in-code" value="UPRIDE15"></label>
-  <div class="row">
-    <button type="button" id="demo-apply">Apply</button>
-    <button type="button" class="ghost" id="demo-reset">Reset progress</button>
-    <button type="button" class="ghost" id="demo-fill">Jump to a full box</button>
-  </div>
-</div>
-
 <div class="wrap">
-  <div class="site-top">
-    <a class="brand" href="#" aria-label="RUBIES">RUBIES<small>NO-TUCK UNDERWEAR &amp; SWIMWEAR</small></a>
-    <div class="powered">Partner closets</div>
+  <div class="top">
+    <a class="brand" href="#" aria-label="RUBIES">RUBIES</a>
+    <span class="soft">Partner closets</span>
   </div>
 
   <header class="hero">
     <div class="hero-copy">
-      <div class="org-mark"><span class="dot" id="org-initial">U</span><span id="org-city">Champaign-Urbana, IL</span></div>
+      <p class="place" id="org-city">Champaign-Urbana, Illinois</p>
       <h1><span id="org-name-title">Uniting Pride</span>'s Closet</h1>
-      <p class="lede">Free no-tuck underwear and swimwear for anyone in our community who needs it, through <span id="closet-name">Uniting Pride's Up and Away closet</span>. Stocked by the community, powered by RUBIES.</p>
-      <div class="fork">
-        <a class="btn btn-primary" href="#need">Buy a pair, 15% off</a>
-        <a class="btn btn-ghost" href="#apply">Apply for a free pair</a>
-        <a class="btn btn-pink" href="#fill">Sponsor the closet</a>
+      <p class="lede">Free no-tuck underwear and swimwear for anyone in our community who needs it, through <span id="closet-name">Uniting Pride's Up and Away closet</span>. Stocked by the community, matched by RUBIES.</p>
+      <div class="doors">
+        <a class="btn btn-violet" href="#need">Buy a pair, 15% off</a>
+        <a class="btn btn-line" href="#apply">Apply for a free pair</a>
+        <a class="btn btn-pink" href="#sponsor">Sponsor the closet</a>
       </div>
     </div>
-    <div class="hero-card" aria-live="polite">
-      <div class="eyebrow">The closet's next box</div>
-      <div class="big"><span id="hero-amount">$0</span> <small>raised of $300</small></div>
-      <div class="bar" id="hero-bar"><span></span></div>
-      <div class="split">
-        <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way to the closet</span></div>
-        <div class="stat"><b id="hero-people">0</b><span>free pairs requested this month</span></div>
-      </div>
-      <p class="note">RUBIES matches every dollar. $16 puts a pair of underwear in the closet. Filled by sponsors and by 25% of every order made with the code, and shipped to <span class="org-name">Uniting Pride</span> when full.</p>
+    <div class="hero-art" aria-hidden="true">
+      <div class="blob"></div>
+      <img class="main" id="hero-main" alt="">
+      <img class="second" id="hero-second" alt="">
+      <span class="tag" id="hero-tag">$80 raised so far</span>
     </div>
   </header>
 
   <section id="need">
-    <div class="sec-head">
-      <div class="eyebrow">For you</div>
+    <div class="head">
       <h2>Need a pair? Two ways to get one.</h2>
       <p>If you can buy one, please do: a quarter of what you pay goes to the closet for someone who cannot. If money is tight right now, apply and the closet will cover it.</p>
     </div>
-    <div class="two-ways">
-      <div class="way way-buy">
+    <div class="ways">
+      <div class="way">
         <h3>If you can, buy one</h3>
-        <div class="code-card">
+        <p>Order at rubyshines.com with this code. It takes 15% off, and 25% of your order goes to the closet.</p>
+        <div class="code-row">
           <div class="code" id="code-display">UPRIDE15</div>
-          <div>
-            <p><b>15% off</b> at rubyshines.com, and <b>25% of your order goes to the closet</b>.</p>
-            <p class="fine">Enter it at checkout. No account needed. Free exchanges if the size is not right.</p>
-          </div>
+          <p class="fine">Enter it at checkout. No account needed. Free exchanges if the size is not right.</p>
         </div>
       </div>
-      <div class="way way-apply" id="apply">
+      <div class="rule"></div>
+      <div class="way" id="apply">
         <h3>If money is tight, apply for a free pair</h3>
-        <p class="way-lede">Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, usually within a day or two, and RUBIES sends it. Nobody at the closet sees your order.</p>
-        <form id="apply-form" class="apply-form">
+        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, usually within a day or two, and RUBIES sends it. Nobody at the closet sees your order.</p>
+        <form id="apply-form" class="form">
           <label>Style
             <select id="ap-style"></select>
           </label>
@@ -297,111 +257,119 @@
             <legend>How would you like it?</legend>
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
-            <p class="fine" style="margin:2px 0 0 26px">Picking up saves the closet the $8 shipping. Choose shipping if getting there is hard.</p>
+            <p class="fine">Picking up saves the closet the cost of shipping. Choose shipping if getting there is hard.</p>
           </fieldset>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
           </label>
-          <button type="submit" class="btn btn-primary">Send my request</button>
-          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Not sure about size? The size guide on rubyshines.com takes two minutes, and exchanges are free.</p>
+          <button type="submit" class="btn btn-violet">Send my request</button>
+          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Free pairs are final, so please check the size guide on rubyshines.com first. It takes two minutes.</p>
         </form>
-        <div class="apply-done" id="apply-done" hidden>
-          <b>Request sent.</b>
-          <p><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order your pair in your size.</p>
+        <div class="sent" id="apply-done" hidden>
+          <b>Request sent</b>
+          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order your pair in your size.</p>
         </div>
       </div>
     </div>
-    <h3 style="margin:34px 0 14px">What the closet stocks</h3>
     <div class="products" id="products"></div>
   </section>
 
-  <section id="fill">
-    <div class="sec-head">
-      <div class="eyebrow">For the closet</div>
+  <section id="sponsor">
+    <div class="head">
       <h2>Sponsor a pair for someone who asked</h2>
-      <p>These are the sizes the closet needs most. RUBIES matches every dollar, so each item costs half its price. $16 puts a pair of underwear in the closet. Delivered to someone's door, $24.</p>
+      <p>These are the sizes the closet needs most. RUBIES matches every dollar, so each item costs half its price. $16 puts a pair of underwear in the closet. Delivered to someone's door, $28.</p>
     </div>
-    <div class="registry-grid">
+    <div class="sponsor">
       <div>
-        <div class="registry" id="registry"></div>
-        <div class="chip-row" id="chips">
-          <span style="align-self:center;font-weight:700;font-size:14px;color:var(--ink-soft)">Or chip in:</span>
-        </div>
+        <div class="needs" id="registry"></div>
+        <div class="gifts" id="gifts"><span>Or chip in:</span></div>
       </div>
-      <aside class="aside">
-        <div class="hero-card">
-          <div class="eyebrow">The closet's next box</div>
-          <div class="big"><span class="amount">$0</span> <small>raised of $300</small></div>
-          <div class="bar side-bar"><span></span></div>
-          <div class="box-full" id="box-full">Full. About 18 pairs, or the mix the closet chooses, are on their way to <span class="org-name">Uniting Pride</span>.</div>
-          <ul class="ontheway" id="ontheway"></ul>
-          <p class="note">$300 raised, matched by RUBIES, is $600 of product, about 18 pairs of underwear or a mix. It ships when full, or after six months, whichever comes first.</p>
-        </div>
+      <aside class="box" aria-live="polite">
+        <h3>The closet's next box</h3>
+        <div class="amount"><span class="amount-num">$0</span><small>raised of $300</small></div>
+        <div class="bar"><span></span></div>
+        <div class="full-note" id="box-full">Full. About 18 pairs, or the mix the closet chooses, are on their way to <span class="org-name">Uniting Pride</span>.</div>
+        <ul class="ledger" id="ledger"></ul>
+        <p class="fine">$300 raised, matched by RUBIES, is $600 of product, about 18 pairs of underwear or a mix. It ships when full, or after six months, whichever comes first.</p>
       </aside>
     </div>
   </section>
 
   <section id="how">
-    <div class="sec-head">
-      <div class="eyebrow">How it works</div>
-      <h2>Three sides, one box.</h2>
+    <div class="head">
+      <h2>Three sides, one box</h2>
     </div>
     <div class="how">
       <div class="col">
         <h3>For your community</h3>
         <p>Those who can buy get 15% off, and 25% of their order goes to the closet. Those who cannot apply for a free pair, and the closet approves it.</p>
         <ul>
-          <li>Free exchanges if the size is off</li>
-          <li>Nobody is asked who they are buying for</li>
+          <li>Buying comes with free exchanges. Free pairs are final, so check the size guide first.</li>
+          <li>Nobody is asked who they are buying for.</li>
         </ul>
       </div>
       <div class="col">
         <h3>For the closet</h3>
         <p>Sponsors, community orders and the org's own budget fill one box. RUBIES matches every dollar. At $300 raised the box ships, $600 of product.</p>
         <ul>
-          <li>A free pair picked up at the closet costs the closet $16</li>
-          <li>A free pair shipped to a door costs the closet $24, delivery included</li>
-          <li>Returned and exchanged RUBIES items still arrive as donations, as today</li>
+          <li>A free pair picked up at the closet costs the closet $16.</li>
+          <li>A free pair shipped to a door costs the closet $28, delivery included.</li>
+          <li>Returned and exchanged RUBIES items still arrive as donations, as today.</li>
         </ul>
       </div>
       <div class="col">
         <h3>For the team</h3>
         <p>Nothing to log, count or update. This page runs on RUBIES data.</p>
         <ul>
-          <li>Share this link with your community</li>
-          <li>Approve free-pair requests from an email, one click, or set a monthly auto-approve</li>
-          <li>Tell us the sizes when the box is ready</li>
+          <li>Share this link with your community.</li>
+          <li>Approve free-pair requests from an email, one click, or set a monthly auto-approve.</li>
+          <li>Tell us the sizes when the box is ready.</li>
         </ul>
       </div>
     </div>
   </section>
 
   <footer>
-    <div class="tag">Every girl deserves to shine.</div>
-    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Prototype page for partner conversations. Products and prices are real; the closet, sponsors and progress shown are examples. Sponsor amounts are what the giver pays, half of retail; RUBIES matches each one.</p>
+    <p class="line">Every girl deserves to shine.</p>
+    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Sponsor amounts are half of each item's price, and RUBIES matches them.</p>
+    <p>Questions about the closet? Ask <span class="org-name">Uniting Pride</span>. Questions about an order? care@rubyshines.com.</p>
   </footer>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<div class="panel" id="panel" hidden>
+  <label>Org <input id="in-org"></label>
+  <label>Closet name <input id="in-closet"></label>
+  <label>City <input id="in-city"></label>
+  <label>Code <input id="in-code"></label>
+  <div class="row">
+    <button type="button" id="p-apply">Apply</button>
+    <button type="button" class="quiet" id="p-reset">Reset progress</button>
+    <button type="button" class="quiet" id="p-fill">Fill the box</button>
+    <button type="button" class="quiet" id="p-close">Close</button>
+  </div>
+</div>
+
 <script>
 (function () {
-  var BOX = 300; // dollars raised, the minimum that reaches RUBIES before a box ships; matched, it is $600 of product at retail
+  var BOX = 300;  // dollars raised, the minimum that reaches RUBIES before a box ships; matched, it is $600 of product at retail
+  var SHIP = 12;  // delivery charge on a pair shipped to a door
   var IMG = {{IMG_JSON}};
 
-  // Real products, retail from the catalog, closet price = half of retail, rounded to the dollar.
+  // Real products, adult store prices. give = half of retail, what a sponsor pays; RUBIES matches it to the full item.
   var PRODUCTS = [
-    { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',               retail: 32, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
-    { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage',   retail: 33, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
-    { key: 'sassy',   name: 'Sassy No-Tuck Shaping Underwear',       for: 'Cheeky cut, lower rise',          retail: 32, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-sassy-no-tuck-shaping-underwear' },
-    { key: 'brooke',  name: 'Brooke Shaping Bra',                    for: 'A great first bra',               retail: 42, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-brooke-bra' },
-    { key: 'ava',     name: 'Ava Seamless Shaping Bra',              for: 'Smooth under anything',           retail: 46, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-ava-seamless-shaping-bra' },
-    { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',      retail: 48, sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
+    { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',             retail: 32, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
+    { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage', retail: 33, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
+    { key: 'sassy',   name: 'Sassy No-Tuck Shaping Underwear',       for: 'Cheeky cut, lower rise',        retail: 32, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-sassy-no-tuck-shaping-underwear' },
+    { key: 'brooke',  name: 'Brooke Shaping Bra',                    for: 'A great first bra',             retail: 42, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-brooke-bra' },
+    { key: 'ava',     name: 'Ava Seamless Shaping Bra',              for: 'Smooth under anything',         retail: 46, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-ava-seamless-shaping-bra' },
+    { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',    retail: 48, sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
   ];
   var byKey = {};
-  PRODUCTS.forEach(function (p) { p.closet = Math.round(p.retail / 2); p.give = Math.round(p.retail / 2); byKey[p.key] = p; }); // give = what a sponsor pays per item in the closet, half of retail; RUBIES matches it to the full item
+  PRODUCTS.forEach(function (p) { p.give = Math.round(p.retail / 2); byKey[p.key] = p; });
 
-  // The registry is GENERATED from a size mix the org gives once. Nobody at the org maintains it.
+  // Generated from a size mix the org gives once. Nobody at the org maintains it.
   var TARGET = [
     { key: 'aj', size: 'S',  need: 3 },
     { key: 'aj', size: 'M',  need: 4 },
@@ -413,48 +381,53 @@
     { key: 'ruby', size: 'L',  need: 1 }
   ];
 
-  var DEFAULT_STATE = {
-    org: 'Uniting Pride', closet: 'Up and Away', city: 'Champaign-Urbana, IL', code: 'UPRIDE15',
-    // example starting point: 4 orders through the code (25% of retail each), 3 pairs already sponsored
+  var DEFAULTS = {
+    org: 'Uniting Pride', closet: 'Up and Away', city: 'Champaign-Urbana, Illinois', code: 'UPRIDE15',
     orders: 4, orderCredit: 32, sponsored: { 'aj|M': 2, 'aj|L': 1 }, gifts: 0, requests: 3
   };
   var state = load();
+  readLink();
 
   function load() {
     try {
-      var raw = localStorage.getItem('closet-proto-v1');
-      if (raw) { var s = JSON.parse(raw); return Object.assign({}, DEFAULT_STATE, s, { sponsored: Object.assign({}, s.sponsored || {}) }); }
+      var raw = localStorage.getItem('closet-page-v2');
+      if (raw) { var s = JSON.parse(raw); return Object.assign({}, DEFAULTS, s, { sponsored: Object.assign({}, s.sponsored || {}) }); }
     } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULT_STATE));
+    return JSON.parse(JSON.stringify(DEFAULTS));
   }
-  function save() { try { localStorage.setItem('closet-proto-v1', JSON.stringify(state)); } catch (e) {} }
+  function save() { try { localStorage.setItem('closet-page-v2', JSON.stringify(state)); } catch (e) {} }
+  function readLink() {
+    try {
+      var q = new URLSearchParams(location.search);
+      ['org', 'closet', 'city', 'code'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
+      if (q.has('code')) state.code = state.code.toUpperCase();
+      if (q.has('reset')) { var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code }; state = Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), keep); }
+      save();
+    } catch (e) {}
+  }
 
   function money(n) { return '$' + Math.round(n); }
+  function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
+  function shortName(p) { return p.name.replace(/No-Tuck |Shaping /g, ''); }
   function ledger() {
     var sum = state.orderCredit + state.gifts;
     Object.keys(state.sponsored).forEach(function (k) { sum += state.sponsored[k] * byKey[k.split('|')[0]].give; });
     return sum;
   }
-  function pairsOnTheWay() {
-    // every $16 raised is a pair of underwear in the closet once RUBIES matches it; shown in AJ-pair equivalents
-    return Math.floor(ledger() / byKey.aj.give);
-  }
-
-  function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
 
   function renderOrg() {
     document.title = possessive(state.org) + ' Closet';
     document.getElementById('org-name-title').textContent = state.org;
     document.getElementById('org-city').textContent = state.city;
-    document.getElementById('org-initial').textContent = state.org.trim().charAt(0).toUpperCase() || 'R';
     document.getElementById('closet-name').textContent = state.closet ? possessive(state.org) + ' ' + state.closet + ' closet' : possessive(state.org) + ' closet';
     document.getElementById('code-display').textContent = state.code;
-    document.getElementById('demo-org-hint').textContent = 'Showing: ' + state.org + '.';
     Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
     document.getElementById('in-org').value = state.org;
     document.getElementById('in-closet').value = state.closet;
     document.getElementById('in-city').value = state.city;
     document.getElementById('in-code').value = state.code;
+    document.getElementById('hero-main').src = IMG['the-aj-shaping-underwear'];
+    document.getElementById('hero-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
   }
 
   function renderProducts() {
@@ -465,12 +438,10 @@
       el.className = 'product';
       el.innerHTML =
         '<img alt="" src="' + IMG[p.img] + '">' +
-        '<div class="body">' +
-          '<div class="name">' + p.name + '</div>' +
-          '<div class="for">' + p.for + '</div>' +
-          '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.85) + ' with the code</div>' +
-          '<div class="sizes">' + p.sizes.map(function (s) { return '<span>' + s + '</span>'; }).join('') + '</div>' +
-        '</div>';
+        '<div class="name">' + p.name + '</div>' +
+        '<div class="for">' + p.for + '</div>' +
+        '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.85) + ' with the code</div>' +
+        '<div class="sizes">' + p.sizes[0] + ' to ' + p.sizes[p.sizes.length - 1] + '</div>';
       host.appendChild(el);
     });
   }
@@ -484,14 +455,14 @@
       var got = state.sponsored[k] || 0;
       var left = Math.max(0, t.need - got);
       var el = document.createElement('div');
-      el.className = 'need' + (left === 0 ? ' done' : '');
+      el.className = 'need' + (left === 0 ? ' covered' : '');
       el.innerHTML =
         '<img alt="" src="' + IMG[p.img] + '">' +
-        '<div class="what"><b>' + p.name + ' <span style="color:var(--violet)">' + t.size + '</span></b>' +
-          '<span>' + (left === 0 ? 'Covered. Thank you!' : '<span class="count">' + left + ' still needed</span> &middot; ' + got + ' sponsored') + '</span></div>' +
+        '<div class="what"><b>' + p.name + ' <em>' + t.size + '</em></b>' +
+          '<span>' + (left === 0 ? 'Covered. Thank you.' : left + ' still needed' + (got ? ', ' + got + ' sponsored' : '')) + '</span></div>' +
         '<div class="act">' +
-          '<button type="button" class="btn btn-ghost btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one &middot; ' + money(p.give)) + '</button>' +
-          '<small>half of retail, RUBIES matches the rest</small>' +
+          '<button type="button" class="btn btn-line btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one, ' + money(p.give)) + '</button>' +
+          '<small>half its price, RUBIES matches the rest</small>' +
         '</div>';
       host.appendChild(el);
     });
@@ -501,23 +472,24 @@
         state.sponsored[k] = (state.sponsored[k] || 0) + 1;
         save();
         var p = byKey[k.split('|')[0]];
-        toast('Thank you! RUBIES matched it. A pair of ' + p.name.replace(/No-Tuck |Shaping /g, '').toLowerCase() + ' in ' + k.split('|')[1] + ' is heading to ' + possessive(state.org) + ' closet.');
+        toast('Thank you. RUBIES matched it: a ' + shortName(p).toLowerCase() + ' in ' + k.split('|')[1] + ' is going to ' + possessive(state.org) + ' closet.');
         renderRegistry(); renderProgress();
       });
     });
   }
 
-  function renderChips() {
-    var host = document.getElementById('chips');
+  function renderGifts() {
+    var host = document.getElementById('gifts');
     [10, 25, 50, 100].forEach(function (amt) {
       var pairs = Math.floor(amt / byKey.aj.give);
+      var delivered = Math.floor(amt / (byKey.aj.give + SHIP));
       var c = document.createElement('button');
-      c.type = 'button'; c.className = 'chip';
-      var delivered = Math.floor(amt / (byKey.aj.give + 8));
-      c.innerHTML = money(amt) + '<small>' + (pairs >= 1 ? pairs + (pairs === 1 ? ' pair' : ' pairs') + ' in the closet' + (delivered >= 1 ? ', or ' + delivered + ' delivered' : '') : 'toward the next pair') + '</small>';
+      c.type = 'button'; c.className = 'gift';
+      var line = pairs >= 1 ? pairs + (pairs === 1 ? ' pair' : ' pairs') + ' in the closet' + (delivered >= 1 ? ', or ' + delivered + ' delivered' : '') : 'toward the next pair';
+      c.innerHTML = money(amt) + '<small>' + line + '</small>';
       c.addEventListener('click', function () {
         state.gifts += amt; save();
-        toast('Thank you! ' + money(amt) + ' toward ' + possessive(state.org) + ' next box.');
+        toast('Thank you. ' + money(amt) + ', matched by RUBIES, toward ' + possessive(state.org) + ' next box.');
         renderProgress();
       });
       host.appendChild(c);
@@ -528,23 +500,21 @@
     var total = ledger();
     var pct = Math.min(100, Math.round(total / BOX * 100));
     var full = total >= BOX;
-    document.getElementById('hero-amount').textContent = money(Math.min(total, BOX));
-    document.getElementById('hero-pairs').textContent = pairsOnTheWay();
-    document.getElementById('hero-people').textContent = state.requests || 0;
-    Array.prototype.forEach.call(document.querySelectorAll('.amount'), function (el) { el.textContent = money(Math.min(total, BOX)); });
+    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(Math.min(total, BOX)); });
+    document.getElementById('hero-tag').textContent = full ? 'The box is full' : money(total) + ' raised so far';
     Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) {
       bar.classList.toggle('full', full);
       bar.firstElementChild.style.width = pct + '%';
     });
     document.getElementById('box-full').classList.toggle('show', full);
 
-    var list = document.getElementById('ontheway');
+    var list = document.getElementById('ledger');
     list.innerHTML = '';
     var rows = [];
     Object.keys(state.sponsored).forEach(function (k) {
       var n = state.sponsored[k]; if (!n) return;
       var p = byKey[k.split('|')[0]];
-      rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.give });
+      rows.push({ label: n + ' × ' + shortName(p) + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.give });
     });
     if (state.orders) rows.push({ label: state.orders + ' community orders with the code, 25% of each', amt: state.orderCredit });
     if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
@@ -554,7 +524,7 @@
       list.appendChild(li);
     });
     var li = document.createElement('li');
-    li.innerHTML = '<span><b>On the ledger</b></span><b>' + money(total) + '</b>';
+    li.innerHTML = '<span>Raised so far</span><b>' + money(total) + '</b>';
     list.appendChild(li);
   }
 
@@ -563,39 +533,8 @@
     var t = document.getElementById('toast');
     t.textContent = msg; t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3200);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3400);
   }
-
-  // demo controls
-  var panel = document.getElementById('demo-panel');
-  var toggle = document.getElementById('demo-toggle');
-  toggle.addEventListener('click', function () {
-    panel.hidden = !panel.hidden;
-    toggle.setAttribute('aria-expanded', String(!panel.hidden));
-    toggle.textContent = panel.hidden ? 'Demo settings' : 'Hide settings';
-  });
-  document.getElementById('demo-apply').addEventListener('click', function () {
-    state.org = document.getElementById('in-org').value.trim() || 'Your Org';
-    state.closet = document.getElementById('in-closet').value.trim();
-    state.city = document.getElementById('in-city').value.trim();
-    state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
-    save(); renderOrg(); renderRegistry(); renderProgress();
-    toast('Now showing ' + possessive(state.org) + ' page.');
-  });
-  document.getElementById('demo-reset').addEventListener('click', function () {
-    var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code };
-    state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), keep);
-    save(); renderRegistry(); renderProgress();
-    document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
-    toast('Progress reset to the example starting point.');
-  });
-  document.getElementById('demo-fill').addEventListener('click', function () {
-    var gap = BOX - ledger();
-    if (gap > 0) { state.gifts += gap; save(); }
-    renderProgress();
-    toast('Box full. This is what the org sees when it is time to choose sizes.');
-    document.getElementById('fill').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 
   // apply form
   (function () {
@@ -612,11 +551,42 @@
       state.requests = (state.requests || 0) + 1; save();
       document.getElementById('apply-form').hidden = true;
       document.getElementById('apply-done').hidden = false;
-      renderProgress();
-      toast('Request sent to ' + state.org + ' for approval.');
+      toast('Request sent to ' + state.org + '.');
     });
   })();
 
-  renderOrg(); renderProducts(); renderRegistry(); renderChips(); renderProgress();
+  // presenter panel: press "e" with nothing focused, or add ?panel to the link
+  var panel = document.getElementById('panel');
+  function togglePanel(force) { panel.hidden = force === undefined ? !panel.hidden : !force; }
+  document.addEventListener('keydown', function (e) {
+    var tag = (document.activeElement && document.activeElement.tagName || '').toLowerCase();
+    if (e.key === 'e' && tag !== 'input' && tag !== 'select' && tag !== 'textarea') togglePanel();
+    if (e.key === 'Escape') togglePanel(false);
+  });
+  try { if (new URLSearchParams(location.search).has('panel')) togglePanel(true); } catch (e) {}
+  document.getElementById('p-close').addEventListener('click', function () { togglePanel(false); });
+  document.getElementById('p-apply').addEventListener('click', function () {
+    state.org = document.getElementById('in-org').value.trim() || 'Your Org';
+    state.closet = document.getElementById('in-closet').value.trim();
+    state.city = document.getElementById('in-city').value.trim();
+    state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
+    save(); renderOrg(); renderRegistry(); renderProgress();
+    togglePanel(false);
+  });
+  document.getElementById('p-reset').addEventListener('click', function () {
+    var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code };
+    state = Object.assign(JSON.parse(JSON.stringify(DEFAULTS)), keep);
+    save(); renderRegistry(); renderProgress();
+    document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
+  });
+  document.getElementById('p-fill').addEventListener('click', function () {
+    var gap = BOX - ledger();
+    if (gap > 0) { state.gifts += gap; save(); }
+    renderProgress();
+    document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    togglePanel(false);
+  });
+
+  renderOrg(); renderProducts(); renderRegistry(); renderGifts(); renderProgress();
 })();
 </script>
