@@ -26,9 +26,10 @@
   }
   a { color: var(--magenta); }
   h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.06; text-wrap: balance; }
-  h1 { font-size: clamp(38px, 5.6vw, 60px); font-weight: 700; letter-spacing: -0.01em; }
+  h1 { font-size: clamp(28px, 4.4vw, 52px); font-weight: 700; letter-spacing: -0.01em; }
+  .h1-row { display: flex; align-items: center; gap: 0.22em; white-space: nowrap; }
   h1 .sub { display: block; font-weight: 500; font-size: 0.55em; color: var(--ink-2); margin-top: 6px; letter-spacing: 0; }
-  h1 .x { color: var(--magenta); font-weight: 500; padding: 0 0.08em; }
+  h1 .x { color: var(--magenta); font-weight: 500; }
   h2 { font-size: clamp(28px, 3.6vw, 38px); font-weight: 600; }
   h3 { font-size: 22px; font-weight: 600; }
   p { margin: 0; }
@@ -40,8 +41,8 @@
 
   /* hero */
   .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 44px 0 54px; }
-  .h1-logo { display: inline-block; line-height: 0; vertical-align: -0.06em; }
-  .h1-logo img { height: 0.82em; width: auto; display: inline-block; }
+  .h1-logo { display: inline-block; line-height: 0; }
+  .h1-logo img { height: 0.78em; width: auto; display: block; }
   .hero-copy { display: grid; gap: 20px; }
   .lede { font-size: 20px; color: var(--ink-2); max-width: 36ch; }
   .doors { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -179,7 +180,7 @@
 <div class="wrap">
   <header class="hero">
     <div class="hero-copy">
-      <h1><a class="h1-logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a><span class="x">×</span><span id="org-name-title">Uniting Pride</span><span class="sub">Virtual Closet</span></h1>
+      <h1><span class="h1-row"><a class="h1-logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a><span class="x">×</span><span id="org-name-title">Uniting Pride</span></span><span class="sub">Virtual Closet</span></h1>
       <p class="lede">Gender-affirming underwear and swimwear, free for anyone in our community who needs it. Stocked by the community, matched by RUBIES.</p>
       <div class="doors">
         <a class="btn btn-fill" href="#need">Buy a pair, 15% off</a>
