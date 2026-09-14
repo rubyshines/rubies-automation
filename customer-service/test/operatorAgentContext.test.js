@@ -249,6 +249,59 @@ test('prompt: straight swap is never invoiced, never calls exchange_difference',
   assert.match(prompt, /never invoiced even if the new size has a different list price/);
 });
 
+// --- fulfillment line: the fact that decides edit_order vs exchange -----------
+// Ticket 3588: the status rendered as "unknown", the size/colour-swap rule beat
+// "unfulfilled changes -> edit_order", and the exchange tool (which only accepts a
+// FULFILLED anchor) staged free goods against a three-month-old shipped order.
+
+test('an unshipped order routes the swap to edit_order and rules out the exchange tool', () => {
+  const prompt = buildSystemPrompt(ctx({ fulfillment_status: 'UNFULFILLED', order_number: '33694' }));
+  const line = prompt.split('\n').find(l => l.startsWith('- Fulfillment:'));
+  assert.match(line, /NOT received this order/);
+  assert.match(line, /`edit_order` on #33694, including a plain size or colour swap/);
+  assert.match(line, /`create_exchange_order` cannot anchor on this order/);
+});
+
+test('the lowercase status production stores is still recognised as unshipped', () => {
+  const line = buildSystemPrompt(ctx({ fulfillment_status: 'unfulfilled' }))
+    .split('\n').find(l => l.startsWith('- Fulfillment:'));
+  assert.match(line, /^- Fulfillment: UNFULFILLED — the customer has NOT received/);
+});
+
+test('a partially fulfilled order is described accurately, not as wholly unreceived', () => {
+  const line = buildSystemPrompt(ctx({ fulfillment_status: 'PARTIALLY_FULFILLED' }))
+    .split('\n').find(l => l.startsWith('- Fulfillment:'));
+  assert.match(line, /part of this order has shipped and part has not/);
+  assert.doesNotMatch(line, /has NOT received this order/);
+  assert.match(line, /cannot anchor on this order/);
+});
+
+test('a shipped order keeps the exchange path open', () => {
+  const line = buildSystemPrompt(ctx({ fulfillment_status: 'FULFILLED' }))
+    .split('\n').find(l => l.startsWith('- Fulfillment:'));
+  assert.match(line, /received this order, so replacements ship as a new order/);
+  assert.doesNotMatch(line, /cannot anchor/);
+});
+
+test('an unreadable status tells the agent to go and look, never to guess', () => {
+  for (const status of [null, undefined, '', 'weird_new_status']) {
+    const line = buildSystemPrompt(ctx({ fulfillment_status: status, order_number: '33694' }))
+      .split('\n').find(l => l.startsWith('- Fulfillment:'));
+    assert.match(line, /`get_order_details` on #33694/, `status=${status}`);
+    assert.match(line, /Do not guess/, `status=${status}`);
+  }
+});
+
+test('both size/colour-swap rules are scoped to orders the customer has received', () => {
+  const prompt = buildSystemPrompt(ctx());
+  // The decision-table bullet and the "straight swap" paragraph are the two places
+  // that used to send an unshipped colour swap to create_exchange_order.
+  assert.match(prompt, /\*\*Same product, different size\/color, on an order the customer has RECEIVED:\*\* create_exchange_order/);
+  assert.match(prompt, /\*\*Straight swap on an order the customer has already RECEIVED[^*]*\*\*/);
+  assert.match(prompt, /The same swap on an order that has NOT shipped is an `edit_order` with `even_swap: true`/);
+  assert.match(prompt, /\*\*Any change to an order that has NOT shipped — a size or colour swap included[^*]*\*\* edit_order/);
+});
+
 test('prompt forbids splitting or self-estimating the difference', () => {
   const prompt = buildSystemPrompt(ctx());
   assert.match(prompt, /never split into a separate exchange order plus a separate invoice order/);

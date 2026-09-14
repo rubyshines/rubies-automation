@@ -27,6 +27,10 @@ const tools = [
       'Phase 1 (confirmed omitted or false): creates a draft order at $0 and returns a preview with clickable Shopify admin links to both the original order and draft order. Does NOT mark as paid.',
       'Phase 2 (confirmed=true + draft_order_id): completes the draft order and marks it as paid. IMPORTANT: You MUST present the Phase 1 preview summary to the user and receive their explicit confirmation before calling Phase 2. Never auto-confirm.',
       'IMPORTANT: Only FULFILLED, non-cancelled orders may be used as the basis for an exchange.',
+      'This is for goods the customer ALREADY HAS. Changing an order that has not shipped yet — including a plain '
+        + 'size or colour swap — is `edit_order` on that order, not an exchange. Because the anchor must be FULFILLED, '
+        + 'calling this tool for an unshipped order cannot act on that order at all: it lands on an older shipped order '
+        + 'instead, and the unshipped one still ships as placed.',
       'When determining sizes (e.g. "one size down"), you MUST reference the most recent FULFILLED order — ignore unfulfilled $0 exchange orders.',
       'Do NOT pass original_order_id unless explicitly given an order number by the user. Let the tool auto-find the correct fulfilled order.',
       'If no original_order_id is provided, automatically finds the customer\'s most recent FULFILLED, non-cancelled order.',

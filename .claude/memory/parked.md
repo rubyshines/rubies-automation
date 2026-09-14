@@ -8,6 +8,20 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## create_exchange_order silently guesses its anchor order
+- Parked: 2026-09-14
+- Domains: cs
+- Type: bug
+- Priority: medium
+- Notes: With `original_order_id` omitted the tool auto-picks the customer's most recent FULFILLED order, and its own description tells the agent to prefer that ("let the tool auto-find"). The anchor sets the ship-to and is what the agent reads variants off, so a wrong guess produces a plausible-looking preview against an order nobody named. The 2026-09-14 fix stops the agent reaching for this tool on an unshipped order but leaves the guessing intact — a mis-scoped exchange on a customer with several shipped orders still lands wherever auto-find points. Options: name the anchor in the preview loudly enough that the operator must notice it, require `original_order_id` when the customer has more than one eligible order, or refuse to auto-find when the ticket's own order is unshipped (the case where the guess is definitionally wrong). Also worth checking whether the SKU-keyed `findLiveOrderOverlap` guard should cover this tool — it is wired only into `create_invoice_order`, and it would not have caught the observed case anyway (BB-SND-12 vs BB-BLK-6 do not overlap), so a variant-blind "same product on a live order" check may be the better shape.
+
+## An operator action chat cannot be reconstructed after it completes
+- Parked: 2026-09-14
+- Domains: cs
+- Type: bug
+- Priority: medium
+- Notes: `action_result` (which holds `chat_history`) is deliberately cleared when an action completes, so the operator's typed command is gone the moment the work lands. Diagnosing a bad action afterwards then depends on a shadow run existing, and `cs_diagnostics` is usually off. Ticket 3588 was diagnosable only because Shopify kept an order note naming the anchor order; the size choice could not be explained at all. `ai_calls` records tool *names* but not inputs, which is the other half of the gap. Cheapest fix is probably to append the completed chat onto the `actions[]` entry being filed (it is already the canonical timeline log) rather than keeping a separate live scratchpad, or to persist tool inputs on `ai_calls`. Worth weighing against row size and the fact that chat text can contain customer detail.
+
 ## Re-sync stored Gmail bodies so the signatures come back
 - Parked: 2026-09-11
 - Domains: b2b_sales, cs, tech

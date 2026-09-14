@@ -1653,7 +1653,7 @@ async function apiGetHistory(query) {
 // Action Chat — Claude-powered tool execution via chat
 // ---------------------------------------------------------------------------
 
-const { LIVE_ORDER_OVERLAP_MARKER } = require('../lib/orderUtils');
+const { LIVE_ORDER_OVERLAP_MARKER, resolveOrderFulfillment } = require('../lib/orderUtils');
 
 // Tools that write/modify Shopify state. Used by the completing-tool detector
 // to decide whether a tool result counts as a completed action worth filing in
@@ -1802,6 +1802,13 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   // covers the current turn).
   let ticketOrderCtx = {};
   let completedActions = Array.isArray(draft.actions) ? draft.actions : [];
+
+  // Whether the order has shipped decides edit_order vs create_exchange_order, and
+  // neither the draft's structured order nor cs_tickets.order_context carries it —
+  // so it rendered as "unknown" and the agent had to guess. Read it live: the
+  // snapshot taken at intake can also be hours stale by the time the operator acts.
+  const liveFulfillment = resolveOrderFulfillment(draft.order_number);
+
   if (draft.ticket_id) {
     const [{ data: t }, { data: siblingDrafts }] = await Promise.all([
       supabase.from('cs_tickets')
@@ -1830,7 +1837,8 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     customer_email: draft.customer_email,
     order_number: (draft.order_number || '').replace('#', ''),
     order_items: structured.order?.items || ticketOrderCtx.items || [],
-    fulfillment_status: structured.order?.fulfillment_status || ticketOrderCtx.fulfillment_status || null,
+    fulfillment_status: (await liveFulfillment)?.status
+      || structured.order?.fulfillment_status || ticketOrderCtx.fulfillment_status || null,
     intake: structured.intake || null,
     completed_actions: completedActions,
     gorgias_ticket_id: draft.gorgias_ticket_id,
@@ -1980,7 +1988,9 @@ async function apiActionChatNoDraft(ticketId, body, { onStream } = {}) {
     customer_email: t?.customer_email,
     order_number: (t?.order_number || '').replace('#', ''),
     order_items: orderCtx.items || [],
-    fulfillment_status: orderCtx.fulfillment_status || null,
+    // Same live read as apiActionChat — order_context never carries this field.
+    fulfillment_status: (await resolveOrderFulfillment(t?.order_number))?.status
+      || orderCtx.fulfillment_status || null,
     intake: null,
     gorgias_ticket_id: t?.gorgias_ticket_id,
   };

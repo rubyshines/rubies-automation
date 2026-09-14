@@ -11,6 +11,7 @@ const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 const { runToolLoop } = require('./runToolLoop');
 const { formatCompletedActions } = require('./draftActions');
+const { LIVE_FULFILLMENT_STATUSES } = require('./orderUtils');
 
 // Parse + remove the automation-only `AUTO_CONFIRM: SAFE | HOLD — reason` verdict
 // the operator agent appends to phase-1 previews. Returns the clean operator-facing
@@ -91,6 +92,28 @@ function buildSystemPrompt(context) {
       }).join(', ')
     : 'none';
 
+  // Whether this order has shipped is the single fact that decides edit_order vs
+  // create_exchange_order, so it is spelled out with its consequence rather than
+  // left as a bare status word. With the status rendering as "unknown" (neither
+  // the draft's structured order nor cs_tickets.order_context carries it), the
+  // "same product, different size/color -> create_exchange_order" rule below beat
+  // "unfulfilled order changes -> edit_order", and a colour swap on an unshipped
+  // order executed as an exchange. That tool only accepts a FULFILLED anchor, so
+  // it silently jumped to the customer's last shipped order (three months old) and
+  // staged free goods against it, inheriting that order's sizes.
+  const fulfillmentUpper = String(fulfillment_status || '').toUpperCase();
+  let fulfillmentLine;
+  if (LIVE_FULFILLMENT_STATUSES.has(fulfillmentUpper)) {
+    const received = fulfillmentUpper === 'PARTIALLY_FULFILLED'
+      ? 'part of this order has shipped and part has not'
+      : 'the customer has NOT received this order';
+    fulfillmentLine = `${fulfillmentUpper} — ${received}. Change it with \`edit_order\` on #${order_number}, including a plain size or colour swap. \`create_exchange_order\` cannot anchor on this order: it accepts only a FULFILLED order, so it would stage the goods against a different, older order of this customer's and inherit that order's sizes.`;
+  } else if (fulfillmentUpper === 'FULFILLED') {
+    fulfillmentLine = 'FULFILLED — the customer has received this order, so replacements ship as a new order.';
+  } else {
+    fulfillmentLine = `${fulfillment_status || 'unknown'} — call \`get_order_details\` on #${order_number} and read the status before choosing between \`edit_order\` and \`create_exchange_order\`. Do not guess: the whole choice turns on whether this order has shipped.`;
+  }
+
   const completedActions = formatCompletedActions(completedList);
 
   return `You are an action executor for the RUBIES customer service dashboard. You execute exchanges, refunds, order edits, holds, and cancellations.
@@ -98,7 +121,7 @@ function buildSystemPrompt(context) {
 ## Current Ticket Context
 - Customer: ${customer_email}
 - Order: #${order_number}
-- Fulfillment: ${fulfillment_status || 'unknown'}
+- Fulfillment: ${fulfillmentLine}
 - Warehouse hold: ${holdAlreadyPlaced ? 'ALREADY PLACED — do NOT call warehouse_hold again' : 'not placed'}
 - Order items:
 ${itemList || '  (no items)'}${completedActions ? `\n\n## Already Completed This Ticket\nThese actions have already been executed — do not repeat them unless the operator explicitly asks:\n${completedActions}` : ''}
@@ -131,7 +154,7 @@ Sizing systems:
 
 ## How to Execute Actions
 
-**Exchanges:** Use create_exchange_order for pure exchanges (same number of items, all free). For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed. IMPORTANT: Always include the color in the query to match the original order (check the order items above for the color). If the customer ordered Pink, search for "AJ 2X Pink" not just "AJ 2X". Only use a different color if the customer explicitly asked for one.
+**Exchanges:** Use create_exchange_order for pure exchanges (same number of items, all free) of goods the customer ALREADY HAS. Check the Fulfillment line first — an order that has not shipped is an \`edit_order\`, never an exchange. For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed. IMPORTANT: Always include the color in the query to match the original order (check the order items above for the color). If the customer ordered Pink, search for "AJ 2X Pink" not just "AJ 2X". Only use a different color if the customer explicitly asked for one.
 
 **One exchange order per request, not per original order.** Every replacement item goes in a SINGLE \`create_exchange_order\` call, even when the returned items came from two or more different original orders. \`original_order_id\` is a back-reference (it sets the link and the ship-to address), not a constraint on what can be on the order — pass one of the fulfilled orders and name the others in \`note\` (e.g. note: "also covers order #12399"). Two calls means two draft orders and two boxes for one customer request.
 
@@ -144,7 +167,7 @@ Sizing systems:
 
 Never estimate prices or the difference yourself, never put items in \`exchange_items\` to dodge a real upcharge, and never split into a separate exchange order plus a separate invoice order — \`exchange_difference\` is the single source of truth and the recommended_action tells you the one path to take.
 
-**Straight swap (same item, different size/color):** Do NOT call exchange_difference. Use \`create_exchange_order\` (free, $0). A straight swap is never invoiced even if the new size has a different list price.
+**Straight swap on an order the customer has already RECEIVED (same item, different size/color):** Do NOT call exchange_difference. Use \`create_exchange_order\` (free, $0). A straight swap is never invoiced even if the new size has a different list price. The same swap on an order that has NOT shipped is an \`edit_order\` with \`even_swap: true\`.
 
 **New orders:** Use create_order for paid orders or standalone gifts/samples with no existing order context (e.g. sending a sample to a new prospect). Use create_order_complete to finalize (mark as paid for free orders, send invoice for paid orders). For free replacements tied to an existing customer or order — defect replacements, goodwill sends, OOS substitutions — use create_exchange_order instead (free=true equivalent, links to the customer, matches the free_order action_type).
 
@@ -165,11 +188,11 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
 **Revoking a discount code:** Use revoke_discount_code when the operator says "invalidate", "revoke", "kill", "burn", or "cancel" a code, or asks why a customer's code isn't working. Pass the code exactly as the customer gave it. Call it without confirmed first — that lookup reports the parent discount, the code's own usage, how many other codes share the discount, and a diagnosis when the code is expired or already spent. It removes only that one code; the other codes on the same discount (bulk email pools, the shared "Thank You N" buckets) keep working. Typical pairing: after issuing a replacement code, revoke the original so the customer can't redeem both. It does not refund anything — if the operator also wants the discount value back, that's a separate refund_order call.
 
 ## Choosing the Right Tool
-- **Same product, different size/color:** create_exchange_order (all free, $0 draft) — one call covering every replacement, even across multiple original orders
+- **Same product, different size/color, on an order the customer has RECEIVED:** create_exchange_order (all free, $0 draft) — one call covering every replacement, even across multiple original orders
 - **Free replacement / goodwill send / defect replacement / OOS substitution (existing customer):** create_exchange_order (no return story needed — this is action_type free_order)
 - **Replacements + genuinely extra items (more items than returned):** create_invoice_order with exchange_items + paid_items
 - **Exchange for DIFFERENT items (any price difference, either direction):** call exchange_difference FIRST, then follow its recommended_action (invoice / refund / free_exchange). Invoice only when you explicitly asked to charge the difference; refund is automatic when the customer is owed.
-- **Unfulfilled order changes, including ADDING an item and invoicing the difference:** edit_order (auto-handles invoice/refund for price diff). The word "invoice" in the request does not make this create_invoice_order — what decides is whether the customer already has an order that hasn't shipped.
+- **Any change to an order that has NOT shipped — a size or colour swap included, and ADDING an item and invoicing the difference:** edit_order (auto-handles invoice/refund for price diff). The word "invoice" in the request does not make this create_invoice_order — what decides is whether the customer already has an order that hasn't shipped.
 - **Pure refund:** refund_order
 - **New standalone paid order OR gift/sample to someone with no prior order context:** create_order
 - **Discount code (>10% or free product):** create_discount_code

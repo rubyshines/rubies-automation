@@ -5,7 +5,7 @@
  * across exchangeOrder.js and wholesaleOrder.js.
  */
 
-const { searchCustomers } = require('./shopify');
+const { searchCustomers, getOrderByNumber } = require('./shopify');
 const { formatAddressBlock } = require('./addressUtils');
 
 /**
@@ -349,6 +349,39 @@ function liveOrderOverlapWarning(overlaps) {
   ].join('\n');
 }
 
+/**
+ * Read an order's CURRENT fulfillment state from Shopify by order number.
+ *
+ * This is the fact that decides `edit_order` vs `create_exchange_order`, so it
+ * is deliberately a live read rather than whatever was snapshotted onto the
+ * ticket at intake: an order that shipped in the hour since the draft was
+ * written must not be edited, and one still sitting unshipped must not have
+ * free replacement goods staged against an older order.
+ *
+ * Fail-soft — returns null when the order can't be read, so callers fall back
+ * to "unknown" (which the operator prompt turns into "go and check") rather
+ * than guessing.
+ *
+ * @param {string|number} orderNumber - "#33694", "33694", or 33694
+ * @returns {Promise<{ status: string, cancelled: boolean, notShipped: boolean } | null>}
+ */
+async function resolveOrderFulfillment(orderNumber) {
+  if (orderNumber == null || String(orderNumber).trim() === '') return null;
+  try {
+    const order = await getOrderByNumber(orderNumber);
+    if (!order) return null;
+    const status = String(order.displayFulfillmentStatus || '').toUpperCase();
+    if (!status) return null;
+    return {
+      status,
+      cancelled: Boolean(order.cancelledAt),
+      notShipped: LIVE_FULFILLMENT_STATUSES.has(status),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 module.exports = {
   resolveCustomerForDraft,
   buildShippingAddress,
@@ -364,6 +397,7 @@ module.exports = {
   shippingPreviewLine,
   shippingChargeError,
   findLiveOrderOverlap,
+  resolveOrderFulfillment,
   liveOrderOverlapWarning,
   LIVE_ORDER_OVERLAP_MARKER,
   LIVE_FULFILLMENT_STATUSES,
