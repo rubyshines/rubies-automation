@@ -1,0 +1,548 @@
+<title>Uniting Pride's Closet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap">
+<style>
+  :root {
+    --ground: #FFFDF9;
+    --surface: #FFFFFF;
+    --tint: #F3F0FF;
+    --pink-tint: #FFF0F7;
+    --ink: #221D3D;
+    --ink-soft: #5D5779;
+    --line: #E4DFF0;
+    --violet: #4B3BFF;
+    --violet-deep: #3527D6;
+    --pink: #FF4FA3;
+    --yellow: #FFD23F;
+    --ok: #1E9E6A;
+    --shadow: 0 8px 28px rgba(34, 29, 61, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Nunito Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  a { color: var(--violet); }
+  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.1; text-wrap: balance; }
+  h1 { font-size: clamp(36px, 5.5vw, 58px); font-weight: 700; }
+  h2 { font-size: clamp(26px, 3.4vw, 34px); font-weight: 600; }
+  h3 { font-size: 20px; font-weight: 600; }
+  p { margin: 0; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--pink); }
+
+  /* demo bar */
+  .demo-bar {
+    background: var(--ink); color: #fff; font-size: 13px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 8px 24px;
+  }
+  .demo-bar b { color: var(--yellow); }
+  .demo-bar button {
+    background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer;
+  }
+  .demo-bar button:hover, .demo-bar button:focus-visible { border-color: #fff; outline: none; }
+  .demo-panel {
+    background: #2E2850; color: #fff; padding: 14px 24px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end;
+    font-size: 13px;
+  }
+  .demo-panel label { display: grid; gap: 4px; }
+  .demo-panel input {
+    font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3);
+    background: #1B1730; color: #fff;
+  }
+  .demo-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .demo-panel button {
+    font: inherit; font-weight: 700; padding: 8px 14px; border-radius: 8px; border: 0; cursor: pointer;
+    background: var(--yellow); color: var(--ink);
+  }
+  .demo-panel button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+
+  /* header */
+  .site-top { display: flex; justify-content: space-between; align-items: center; padding: 18px 0 8px; }
+  .brand { font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 22px; letter-spacing: 0.06em; color: var(--ink); text-decoration: none; }
+  .brand small { display: block; font-family: "Nunito Sans", sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; color: var(--ink-soft); }
+  .powered { font-size: 13px; color: var(--ink-soft); }
+
+  .hero {
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: center;
+    padding: 28px 0 40px;
+  }
+  .hero-copy { display: grid; gap: 18px; }
+  .hero p.lede { font-size: 19px; color: var(--ink-soft); max-width: 34ch; }
+  .org-mark {
+    display: inline-flex; align-items: center; gap: 12px; padding: 8px 14px 8px 8px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px; width: fit-content;
+    font-weight: 700; font-size: 14px;
+  }
+  .org-mark .dot {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: conic-gradient(var(--pink), var(--yellow), var(--violet), var(--pink));
+    display: grid; place-items: center; color: #fff; font-family: "Fredoka", sans-serif; font-size: 16px;
+  }
+  .fork { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    font: inherit; font-weight: 800; font-size: 16px; padding: 14px 22px; border-radius: 999px; border: 2px solid transparent;
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+  .btn-primary { background: var(--violet); color: #fff; }
+  .btn-primary:hover { background: var(--violet-deep); }
+  .btn-pink { background: var(--pink); color: #fff; }
+  .btn-pink:hover { filter: brightness(0.95); }
+  .btn-ghost { background: var(--surface); color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { border-color: var(--violet); }
+  .btn-small { font-size: 14px; padding: 9px 16px; }
+
+  .hero-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 22px; box-shadow: var(--shadow);
+    display: grid; gap: 14px;
+  }
+  .hero-card .big { font-family: "Fredoka", sans-serif; font-size: 44px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .hero-card .big small { font-size: 18px; color: var(--ink-soft); font-weight: 600; }
+  .bar { height: 14px; border-radius: 999px; background: var(--tint); overflow: hidden; position: relative; }
+  .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--violet), var(--pink)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+  .bar.full > span { background: linear-gradient(90deg, var(--ok), var(--yellow)); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stat { background: var(--tint); border-radius: 14px; padding: 12px 14px; display: grid; gap: 2px; }
+  .stat b { font-size: 22px; font-family: "Fredoka", sans-serif; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 13px; color: var(--ink-soft); }
+  .hero-card .note { font-size: 13.5px; color: var(--ink-soft); }
+
+  /* sections */
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+  .sec-head { display: grid; gap: 8px; margin-bottom: 26px; max-width: 62ch; }
+  .sec-head p { color: var(--ink-soft); font-size: 17px; }
+
+  .code-card {
+    display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center;
+    background: var(--tint); border-radius: 22px; padding: 24px 26px; margin-bottom: 26px;
+  }
+  .code {
+    font-family: "Fredoka", sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.06em;
+    background: var(--surface); border: 2px dashed var(--violet); border-radius: 14px; padding: 12px 20px; color: var(--violet);
+  }
+  .code-card p { color: var(--ink); font-size: 16px; }
+  .code-card .fine { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+
+  .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+  .product { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+  .product img { width: 100%; aspect-ratio: 1 / 1.05; object-fit: cover; display: block; background: #F6F3EE; }
+  .product .body { padding: 12px 14px 14px; display: grid; gap: 4px; align-content: start; }
+  .product .name { font-weight: 800; font-size: 14px; line-height: 1.25; }
+  .product .for { font-size: 13px; color: var(--ink-soft); }
+  .product .price { font-weight: 800; font-size: 15px; margin-top: 4px; }
+  .product .price s { color: var(--ink-soft); font-weight: 600; margin-right: 6px; }
+  .product .sizes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .product .sizes span { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--tint); color: var(--ink-soft); }
+
+  /* registry */
+  .registry-grid { display: grid; grid-template-columns: 1.4fr 0.9fr; gap: 28px; align-items: start; }
+  .registry { display: grid; gap: 10px; }
+  .need {
+    display: grid; grid-template-columns: 64px 1fr auto; gap: 16px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
+    transition: opacity .3s ease;
+  }
+  .need img { width: 64px; height: 64px; object-fit: cover; border-radius: 12px; background: #F6F3EE; }
+  .need .what { display: grid; gap: 2px; }
+  .need .what b { font-size: 15px; }
+  .need .what span { font-size: 13.5px; color: var(--ink-soft); }
+  .need .count { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 15px; color: var(--violet); }
+  .need .act { display: grid; gap: 4px; justify-items: end; }
+  .need .act small { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  .need.done { opacity: 0.55; }
+  .need.done .btn { background: var(--tint); color: var(--ink-soft); border-color: transparent; cursor: default; }
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  .chip { font: inherit; font-weight: 800; padding: 10px 16px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); cursor: pointer; }
+  .chip:hover, .chip:focus-visible { border-color: var(--pink); outline: none; }
+  .chip small { display: block; font-weight: 600; font-size: 11.5px; color: var(--ink-soft); }
+  .aside { display: grid; gap: 14px; position: sticky; top: 16px; }
+  .aside .hero-card { box-shadow: none; }
+  .ontheway { display: grid; gap: 8px; }
+  .ontheway li { list-style: none; display: flex; justify-content: space-between; gap: 12px; font-size: 14.5px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .ontheway li:last-child { border-bottom: 0; }
+  .ontheway b { font-variant-numeric: tabular-nums; }
+  .box-full { display: none; background: #EAF8F1; border: 1px solid #BFE8D3; color: #0F5C3D; border-radius: 16px; padding: 14px 16px; font-weight: 700; }
+  .box-full.show { display: block; }
+
+  /* how it works */
+  .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .how .col { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; display: grid; gap: 10px; align-content: start; }
+  .how .col:nth-child(1) { border-top: 4px solid var(--violet); }
+  .how .col:nth-child(2) { border-top: 4px solid var(--pink); }
+  .how .col:nth-child(3) { border-top: 4px solid var(--yellow); }
+  .how .col p { color: var(--ink-soft); font-size: 15px; }
+  .how ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 15px; display: grid; gap: 6px; }
+  .how ul li::marker { color: var(--ink); }
+
+  footer { padding: 34px 0 60px; color: var(--ink-soft); font-size: 14px; display: grid; gap: 8px; }
+  footer .tag { font-family: "Fredoka", sans-serif; font-size: 20px; font-weight: 600; color: var(--ink); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 14px; font-size: 15px; font-weight: 600;
+    opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .25s ease; max-width: min(92vw, 560px); text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; }
+    .registry-grid { grid-template-columns: 1fr; }
+    .aside { position: static; }
+    .how { grid-template-columns: 1fr; }
+    .code-card { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar > span, .toast, .btn { transition: none; }
+  }
+</style>
+
+<div class="demo-bar">
+  <div><b>Prototype.</b> Real products and prices. Example numbers, nothing is live. <span id="demo-org-hint"></span></div>
+  <button type="button" id="demo-toggle" aria-expanded="false" aria-controls="demo-panel">Demo settings</button>
+</div>
+<div class="demo-panel" id="demo-panel" hidden>
+  <label>Org name <input id="in-org" value="Uniting Pride"></label>
+  <label>Closet name (optional) <input id="in-closet" value="Up and Away"></label>
+  <label>City <input id="in-city" value="Champaign-Urbana, IL"></label>
+  <label>Code <input id="in-code" value="UPRIDE15"></label>
+  <div class="row">
+    <button type="button" id="demo-apply">Apply</button>
+    <button type="button" class="ghost" id="demo-reset">Reset progress</button>
+    <button type="button" class="ghost" id="demo-fill">Jump to a full box</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="site-top">
+    <a class="brand" href="#" aria-label="RUBIES">RUBIES<small>NO-TUCK UNDERWEAR &amp; SWIMWEAR</small></a>
+    <div class="powered">Partner closets</div>
+  </div>
+
+  <header class="hero">
+    <div class="hero-copy">
+      <div class="org-mark"><span class="dot" id="org-initial">U</span><span id="org-city">Champaign-Urbana, IL</span></div>
+      <h1><span id="org-name-title">Uniting Pride</span>'s Closet</h1>
+      <p class="lede">Free no-tuck underwear and swimwear for anyone in our community who needs it, through <span id="closet-name">Uniting Pride's Up and Away closet</span>. Stocked by the community, powered by RUBIES.</p>
+      <div class="fork">
+        <a class="btn btn-primary" href="#need">I need a pair</a>
+        <a class="btn btn-pink" href="#fill">Send a pair to the closet</a>
+      </div>
+    </div>
+    <div class="hero-card" aria-live="polite">
+      <div class="eyebrow">The next box</div>
+      <div class="big"><span id="hero-amount">$0</span> <small>of $300</small></div>
+      <div class="bar" id="hero-bar"><span></span></div>
+      <div class="split">
+        <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way, after RUBIES doubles it</span></div>
+        <div class="stat"><b id="hero-orders">0</b><span>orders through the code so far</span></div>
+      </div>
+      <p class="note">When the box is full, <span class="org-name">Uniting Pride</span> picks the sizes and styles at closet prices, and RUBIES sends two of everything.</p>
+    </div>
+  </header>
+
+  <section id="need">
+    <div class="sec-head">
+      <div class="eyebrow">For you</div>
+      <h2>Need a pair? Ask at the desk, or use the code.</h2>
+      <p>The closet keeps a run of sizes to try on. When you order online, this code takes 15% off, and every pair you buy sends a pair back to the closet.</p>
+    </div>
+    <div class="code-card">
+      <div class="code" id="code-display">UPRIDE15</div>
+      <div>
+        <p><b>15% off</b> anything at rubyshines.com, and <b>one pair to the closet for every pair you buy</b>.</p>
+        <p class="fine">Enter it at checkout, or scan the QR on the card from the desk and it is applied for you. No account needed. Free exchanges if the size is not right.</p>
+      </div>
+    </div>
+    <div class="products" id="products"></div>
+  </section>
+
+  <section id="fill">
+    <div class="sec-head">
+      <div class="eyebrow">For the closet</div>
+      <h2>What the closet needs right now</h2>
+      <p>Sponsor a pair at the closet's price, half of retail. RUBIES matches every one, so each pair you sponsor arrives as two. Nothing ships until the box is full, then it all goes at once.</p>
+    </div>
+    <div class="registry-grid">
+      <div>
+        <div class="registry" id="registry"></div>
+        <div class="chip-row" id="chips">
+          <span style="align-self:center;font-weight:700;font-size:14px;color:var(--ink-soft)">Or chip in:</span>
+        </div>
+      </div>
+      <aside class="aside">
+        <div class="hero-card">
+          <div class="eyebrow">Box progress</div>
+          <div class="big"><span class="amount">$0</span> <small>of $300</small></div>
+          <div class="bar side-bar"><span></span></div>
+          <div class="box-full" id="box-full">The box is full. <span class="org-name">Uniting Pride</span> chooses the mix, and RUBIES sends double.</div>
+          <ul class="ontheway" id="ontheway"></ul>
+          <p class="note">Every sponsored pair and every order through the code lands here. The box ships when it reaches $300, or after six months, whichever comes first.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="sec-head">
+      <div class="eyebrow">How it works</div>
+      <h2>Three sides, one box.</h2>
+    </div>
+    <div class="how">
+      <div class="col">
+        <h3>For your community</h3>
+        <p>Anyone who needs a pair asks at the desk or uses the code. 15% off, and each pair they buy earns the closet a pair.</p>
+        <ul>
+          <li>Sizes to try on at the closet</li>
+          <li>Free exchanges if the size is off</li>
+          <li>Nobody is asked who they are buying for</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3>For the closet</h3>
+        <p>Sponsored pairs, orders through the code, and the org's own budget all fill one box. At $300 it ships, doubled.</p>
+        <ul>
+          <li><span class="org-name">Uniting Pride</span> chooses the styles and sizes</li>
+          <li>RUBIES sends two of everything chosen</li>
+          <li>Returned and exchanged RUBIES items still arrive as donations, as today</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3>For the team</h3>
+        <p>Nothing to log, count or update. This page runs on RUBIES data.</p>
+        <ul>
+          <li>Share this link with your community</li>
+          <li>Hand out the code to anyone who asks</li>
+          <li>Tell us the sizes when the box is ready</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="tag">Every girl deserves to shine.</div>
+    <p>RUBIES makes no-tuck underwear and swimwear that looks, wears and feels like regular underwear and swimwear. Prototype page for partner conversations. Products and prices are real; the closet, sponsors and progress shown are examples.</p>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  var BOX = 300;
+  var IMG = {{IMG_JSON}};
+
+  // Real products, retail from the catalog, closet price = half of retail, rounded to the dollar.
+  var PRODUCTS = [
+    { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',               retail: 32, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
+    { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage',   retail: 33, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
+    { key: 'sassy',   name: 'Sassy No-Tuck Shaping Underwear',       for: 'Cheeky cut, lower rise',          retail: 32, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-sassy-no-tuck-shaping-underwear' },
+    { key: 'brooke',  name: 'Brooke Shaping Bra',                    for: 'A great first bra',               retail: 42, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-brooke-bra' },
+    { key: 'ava',     name: 'Ava Seamless Shaping Bra',              for: 'Smooth under anything',           retail: 46, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-ava-seamless-shaping-bra' },
+    { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',      retail: 48, sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
+  ];
+  var byKey = {};
+  PRODUCTS.forEach(function (p) { p.closet = Math.round(p.retail / 2); byKey[p.key] = p; });
+
+  // The registry is GENERATED from a size mix the org gives once. Nobody at the org maintains it.
+  var TARGET = [
+    { key: 'aj', size: 'S',  need: 3 },
+    { key: 'aj', size: 'M',  need: 4 },
+    { key: 'aj', size: 'L',  need: 4 },
+    { key: 'aj', size: '1X', need: 2 },
+    { key: 'aj', size: '2X', need: 2 },
+    { key: 'brooke', size: 'M', need: 1 },
+    { key: 'ruby', size: 'M',  need: 1 },
+    { key: 'ruby', size: 'L',  need: 1 }
+  ];
+
+  var DEFAULT_STATE = {
+    org: 'Uniting Pride', closet: 'Up and Away', city: 'Champaign-Urbana, IL', code: 'UPRIDE15',
+    // example starting point: 4 orders through the code (25% of retail each), 3 pairs already sponsored
+    orders: 4, orderCredit: 32, sponsored: { 'aj|M': 2, 'aj|L': 1 }, gifts: 0
+  };
+  var state = load();
+
+  function load() {
+    try {
+      var raw = localStorage.getItem('closet-proto-v1');
+      if (raw) { var s = JSON.parse(raw); return Object.assign({}, DEFAULT_STATE, s, { sponsored: Object.assign({}, s.sponsored || {}) }); }
+    } catch (e) {}
+    return JSON.parse(JSON.stringify(DEFAULT_STATE));
+  }
+  function save() { try { localStorage.setItem('closet-proto-v1', JSON.stringify(state)); } catch (e) {} }
+
+  function money(n) { return '$' + Math.round(n); }
+  function ledger() {
+    var sum = state.orderCredit + state.gifts;
+    Object.keys(state.sponsored).forEach(function (k) { sum += state.sponsored[k] * byKey[k.split('|')[0]].closet; });
+    return sum;
+  }
+  function pairsOnTheWay() {
+    // dollars buy product at the closet price, then RUBIES doubles it; shown in AJ-pair equivalents
+    return Math.floor(ledger() / byKey.aj.closet) * 2;
+  }
+
+  function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
+
+  function renderOrg() {
+    document.title = possessive(state.org) + ' Closet';
+    document.getElementById('org-name-title').textContent = state.org;
+    document.getElementById('org-city').textContent = state.city;
+    document.getElementById('org-initial').textContent = state.org.trim().charAt(0).toUpperCase() || 'R';
+    document.getElementById('closet-name').textContent = state.closet ? possessive(state.org) + ' ' + state.closet + ' closet' : possessive(state.org) + ' closet';
+    document.getElementById('code-display').textContent = state.code;
+    document.getElementById('demo-org-hint').textContent = 'Showing: ' + state.org + '.';
+    Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
+    document.getElementById('in-org').value = state.org;
+    document.getElementById('in-closet').value = state.closet;
+    document.getElementById('in-city').value = state.city;
+    document.getElementById('in-code').value = state.code;
+  }
+
+  function renderProducts() {
+    var host = document.getElementById('products');
+    host.innerHTML = '';
+    PRODUCTS.forEach(function (p) {
+      var el = document.createElement('article');
+      el.className = 'product';
+      el.innerHTML =
+        '<img alt="" src="' + IMG[p.img] + '">' +
+        '<div class="body">' +
+          '<div class="name">' + p.name + '</div>' +
+          '<div class="for">' + p.for + '</div>' +
+          '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.85) + ' with the code</div>' +
+          '<div class="sizes">' + p.sizes.map(function (s) { return '<span>' + s + '</span>'; }).join('') + '</div>' +
+        '</div>';
+      host.appendChild(el);
+    });
+  }
+
+  function renderRegistry() {
+    var host = document.getElementById('registry');
+    host.innerHTML = '';
+    TARGET.forEach(function (t) {
+      var p = byKey[t.key];
+      var k = t.key + '|' + t.size;
+      var got = state.sponsored[k] || 0;
+      var left = Math.max(0, t.need - got);
+      var el = document.createElement('div');
+      el.className = 'need' + (left === 0 ? ' done' : '');
+      el.innerHTML =
+        '<img alt="" src="' + IMG[p.img] + '">' +
+        '<div class="what"><b>' + p.name + ' <span style="color:var(--violet)">' + t.size + '</span></b>' +
+          '<span>' + (left === 0 ? 'Covered. Thank you!' : '<span class="count">' + left + ' still needed</span> &middot; ' + got + ' sponsored') + '</span></div>' +
+        '<div class="act">' +
+          '<button type="button" class="btn btn-ghost btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one &middot; ' + money(p.closet)) + '</button>' +
+          '<small>' + money(p.closet) + ' sends two to the closet</small>' +
+        '</div>';
+      host.appendChild(el);
+    });
+    Array.prototype.forEach.call(host.querySelectorAll('button[data-k]'), function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-k');
+        state.sponsored[k] = (state.sponsored[k] || 0) + 1;
+        save();
+        var p = byKey[k.split('|')[0]];
+        toast('Thank you! Two ' + p.name.replace(/No-Tuck |Shaping /g, '').toLowerCase() + ' in ' + k.split('|')[1] + ' are heading to ' + possessive(state.org) + ' closet.');
+        renderRegistry(); renderProgress();
+      });
+    });
+  }
+
+  function renderChips() {
+    var host = document.getElementById('chips');
+    [10, 25, 50, 100].forEach(function (amt) {
+      var pairs = Math.floor(amt / byKey.aj.closet) * 2;
+      var c = document.createElement('button');
+      c.type = 'button'; c.className = 'chip';
+      c.innerHTML = money(amt) + '<small>' + (pairs >= 2 ? 'about ' + pairs + ' pairs, matched' : 'toward the next pair') + '</small>';
+      c.addEventListener('click', function () {
+        state.gifts += amt; save();
+        toast('Thank you! ' + money(amt) + ' toward ' + possessive(state.org) + ' next box.');
+        renderProgress();
+      });
+      host.appendChild(c);
+    });
+  }
+
+  function renderProgress() {
+    var total = ledger();
+    var pct = Math.min(100, Math.round(total / BOX * 100));
+    var full = total >= BOX;
+    document.getElementById('hero-amount').textContent = money(Math.min(total, BOX));
+    document.getElementById('hero-pairs').textContent = pairsOnTheWay();
+    document.getElementById('hero-orders').textContent = state.orders;
+    Array.prototype.forEach.call(document.querySelectorAll('.amount'), function (el) { el.textContent = money(Math.min(total, BOX)); });
+    Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) {
+      bar.classList.toggle('full', full);
+      bar.firstElementChild.style.width = pct + '%';
+    });
+    document.getElementById('box-full').classList.toggle('show', full);
+
+    var list = document.getElementById('ontheway');
+    list.innerHTML = '';
+    var rows = [];
+    Object.keys(state.sponsored).forEach(function (k) {
+      var n = state.sponsored[k]; if (!n) return;
+      var p = byKey[k.split('|')[0]];
+      rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.closet });
+    });
+    if (state.orders) rows.push({ label: state.orders + ' orders through the code', amt: state.orderCredit });
+    if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
+    rows.forEach(function (r) {
+      var li = document.createElement('li');
+      li.innerHTML = '<span>' + r.label + '</span><b>' + money(r.amt) + '</b>';
+      list.appendChild(li);
+    });
+    var li = document.createElement('li');
+    li.innerHTML = '<span><b>On the ledger</b></span><b>' + money(total) + '</b>';
+    list.appendChild(li);
+  }
+
+  var toastTimer;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3200);
+  }
+
+  // demo controls
+  var panel = document.getElementById('demo-panel');
+  var toggle = document.getElementById('demo-toggle');
+  toggle.addEventListener('click', function () {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute('aria-expanded', String(!panel.hidden));
+    toggle.textContent = panel.hidden ? 'Demo settings' : 'Hide settings';
+  });
+  document.getElementById('demo-apply').addEventListener('click', function () {
+    state.org = document.getElementById('in-org').value.trim() || 'Your Org';
+    state.closet = document.getElementById('in-closet').value.trim();
+    state.city = document.getElementById('in-city').value.trim();
+    state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
+    save(); renderOrg(); renderRegistry(); renderProgress();
+    toast('Now showing ' + possessive(state.org) + ' page.');
+  });
+  document.getElementById('demo-reset').addEventListener('click', function () {
+    var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code };
+    state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), keep);
+    save(); renderRegistry(); renderProgress();
+    toast('Progress reset to the example starting point.');
+  });
+  document.getElementById('demo-fill').addEventListener('click', function () {
+    var gap = BOX - ledger();
+    if (gap > 0) { state.gifts += gap; save(); }
+    renderProgress();
+    toast('Box full. This is what the org sees when it is time to choose sizes.');
+    document.getElementById('fill').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  renderOrg(); renderProducts(); renderRegistry(); renderChips(); renderProgress();
+})();
+</script>
