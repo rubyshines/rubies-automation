@@ -119,13 +119,10 @@
   .ask .what span { font-size: 14px; color: var(--ink-2); }
   .ask .act { display: grid; gap: 3px; justify-items: end; }
   .ask .act small { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
-  .ask.covered { opacity: 0.55; }
-  .ask.covered .btn { background: var(--tint); color: var(--ink-2); border-color: transparent; cursor: default; }
-  .stock-head { margin: 34px 0 6px; display: grid; gap: 4px; }
-  .stock-head p { font-size: 15px; color: var(--ink-2); }
-  .gifts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 30px; }
+  .gifts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .gifts-head { margin: 34px 0 10px; font-weight: 700; color: var(--ink-2); font-size: 15px; }
-  .gift { font: inherit; font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 22px; padding: 14px 10px; border-radius: 14px; border: 2px solid var(--rule); background: var(--paper); cursor: pointer; text-align: center; color: var(--ink); }
+  .gift { font: inherit; font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 26px; padding: 18px 12px 14px; border-radius: 16px; border: 2px solid var(--rule); background: var(--paper); cursor: pointer; text-align: center; color: var(--ink); display: grid; gap: 4px; }
+  .gift small { font-family: "Nunito Sans", sans-serif; font-weight: 700; font-size: 13px; color: var(--ink-2); }
   .gift:hover, .gift:focus-visible { border-color: var(--magenta); outline: none; }
 
   .box { position: sticky; top: 18px; background: var(--paper); border-radius: 26px; padding: 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 16px; }
@@ -187,7 +184,7 @@
       <div class="doors">
         <a class="btn btn-fill" href="#need">Buy a pair, 15% off</a>
         <a class="btn btn-line" href="#apply">Apply for a free pair</a>
-        <a class="btn btn-sun" href="#sponsor">Sponsor someone's pair</a>
+        <a class="btn btn-sun" href="#sponsor">Sponsor the closet</a>
       </div>
     </div>
     <div class="hero-art" aria-hidden="true">
@@ -214,7 +211,7 @@
       <div class="rule"></div>
       <div class="way" id="apply">
         <h3>If money is tight, apply for a free pair</h3>
-        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, and once a sponsor or the closet's funds cover it, RUBIES sends it. Nobody at the closet sees your order.</p>
+        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, and it is filled when the closet's next box goes out. Nobody at the closet sees your order.</p>
         <form id="apply-form" class="form">
           <div class="items" id="items"></div>
           <button type="button" class="add-item" id="add-item">+ Add another item</button>
@@ -222,7 +219,7 @@
             <legend>How would you like it?</legend>
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
-            <p class="fine">Shipping gets it to you sooner, as soon as your request is covered. Picking up saves the closet the cost of shipping, but waits for the closet's next box.</p>
+            <p class="fine">Either way it arrives when the closet's next box goes out. Picking up saves the closet the cost of shipping.</p>
           </fieldset>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
@@ -232,7 +229,7 @@
         </form>
         <div class="sent" id="apply-done" hidden>
           <b>Request sent</b>
-          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When your request is approved and covered you will get an email with a one-time code and a link to order in your size. Shipped requests usually go out within days of being covered. Pickups are ready when the closet's next box arrives.</p>
+          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When the closet's next box goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.</p>
         </div>
       </div>
     </div>
@@ -241,18 +238,11 @@
 
   <section id="sponsor">
     <div class="head">
-      <h2>Sponsor someone's pair</h2>
-      <p>People in our community have asked. Cover one and RUBIES matches it, so a pair costs half its price.</p>
+      <h2>Sponsor the closet</h2>
+      <p><span id="waiting-line">6 people have asked for a pair this month.</span> Every dollar goes into the closet's next box, and RUBIES matches it. When the box goes out, everyone who asked gets theirs at the same time.</p>
     </div>
     <div class="sponsor">
       <div>
-        <div class="asks" id="asks"></div>
-        <div class="stock-head">
-          <h3>Or stock the closet</h3>
-          <p>Sizes <span class="org-name">Uniting Pride</span> keeps on hand for walk-ins.</p>
-        </div>
-        <div class="asks" id="stock"></div>
-        <p class="gifts-head">Or chip in toward the closet's next box</p>
         <div class="gifts" id="gifts"></div>
       </div>
       <aside class="box" aria-live="polite">
@@ -273,7 +263,7 @@
     <div class="how">
       <div class="col">
         <h3>Community</h3>
-        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair: <span class="org-name">Uniting Pride</span> approves it, and once it is covered RUBIES sends it.</p>
+        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair: <span class="org-name">Uniting Pride</span> approves it, and it is filled with the next box.</p>
       </div>
       <div class="col">
         <h3>Closet</h3>
@@ -299,8 +289,6 @@
   <label>Code <input id="in-code"></label>
   <label>Sizes the closet offers <input id="in-sizes" placeholder="XS, S, M, L, 1X, 2X, 3X, 4X"></label>
   <label>Items per request <input id="in-max" type="number" min="1" max="6"></label>
-  <label>Sizes kept for walk-ins <input id="in-stock" placeholder="aj S 3, aj M 4, aj L 4"></label>
-  <span class="hint">Product keys: aj, charlie, sassy, brooke, ava, ruby</span>
   <div class="row">
     <button type="button" id="p-apply">Apply</button>
     <button type="button" class="quiet" id="p-reset">Reset progress</button>
@@ -312,7 +300,7 @@
 <script>
 (function () {
   var BOX = 300;  // dollars raised per box, the minimum that reaches RUBIES before one ships; matched, $600 of product
-  var SHIP = 12;  // delivery on a pair shipped to a door
+  var SHIP = 15;  // charged to the closet's pool per package shipped to a door when the box goes out; not shown on the page
   var IMG = {{IMG_JSON}};
   var STORE = 'https://rubyshines.com/products/';
 
@@ -332,26 +320,19 @@
     org: 'Uniting Pride', city: 'Champaign-Urbana, Illinois', code: 'UPRIDE15',
     sizes: ['XS','S','M','L','1X','2X','3X','4X'],   // sizes the closet offers; set by the org
     maxItems: 2,                                        // items per request; set by the org
-    stock: [ { key: 'aj', size: 'S', need: 3 }, { key: 'aj', size: 'M', need: 4 }, { key: 'aj', size: 'L', need: 4 } ],  // walk-in sizes; set by the org
-    stocked: {},
-    // open requests from community members, anonymous. Seeded so the page has people on it.
-    asks: [
-      { id: 1, items: [ { key: 'aj', size: 'M' } ], how: 'pickup', covered: false },
-      { id: 2, items: [ { key: 'aj', size: '1X' }, { key: 'brooke', size: '1X' } ], how: 'ship', covered: false },
-      { id: 3, items: [ { key: 'ruby', size: 'S' } ], how: 'pickup', covered: true },
-      { id: 4, items: [ { key: 'sassy', size: 'L' } ], how: 'pickup', covered: false }
-    ],
-    orders: 4, orderCredit: 32, gifts: 0, nextId: 5
+    // requests waiting for the next box (anonymous); seeded so the page has people on it
+    asks: [ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }, { id: 6 } ],
+    orders: 4, orderCredit: 32, gifts: 56, nextId: 7
   };
   var state = load();
   readLink();
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function load() {
-    try { var raw = localStorage.getItem('closet-page-v3'); if (raw) return Object.assign(clone(DEFAULTS), JSON.parse(raw)); } catch (e) {}
+    try { var raw = localStorage.getItem('closet-page-v4'); if (raw) return Object.assign(clone(DEFAULTS), JSON.parse(raw)); } catch (e) {}
     return clone(DEFAULTS);
   }
-  function save() { try { localStorage.setItem('closet-page-v3', JSON.stringify(state)); } catch (e) {} }
+  function save() { try { localStorage.setItem('closet-page-v4', JSON.stringify(state)); } catch (e) {} }
   function readLink() {
     try {
       var q = new URLSearchParams(location.search);
@@ -364,7 +345,7 @@
     } catch (e) {}
   }
   function resetProgress() {
-    var keep = { org: state.org, city: state.city, code: state.code, sizes: state.sizes, maxItems: state.maxItems, stock: state.stock };
+    var keep = { org: state.org, city: state.city, code: state.code, sizes: state.sizes, maxItems: state.maxItems };
     state = Object.assign(clone(DEFAULTS), keep);
   }
   function parseSizes(str) {
@@ -372,26 +353,12 @@
     var out = []; String(str).split(/[,\s]+/).forEach(function (s) { var k = s.trim().toUpperCase(); if (all[k] && out.indexOf(all[k]) < 0) out.push(all[k]); });
     return out.length ? out : clone(DEFAULTS.sizes);
   }
-  function parseStock(str) {
-    var out = [];
-    String(str).split(',').forEach(function (part) {
-      var m = part.trim().match(/^(\w+)\s+(\S+)\s+(\d+)$/i);
-      if (m && byKey[m[1].toLowerCase()]) out.push({ key: m[1].toLowerCase(), size: m[2].toUpperCase(), need: parseInt(m[3], 10) });
-    });
-    return out;
-  }
   function offered(p) { return p.sizes.filter(function (s) { return state.sizes.indexOf(s) >= 0; }); }
 
   function money(n) { return '$' + Math.round(n); }
   function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
   function shortName(p) { return p.name.replace(/No-Tuck |Shaping /g, ''); }
-  function askCost(a) { var c = 0; a.items.forEach(function (it) { c += byKey[it.key].give; }); if (a.how === 'ship') c += SHIP; return c; }
-  function ledger() {
-    var sum = state.orderCredit + state.gifts;
-    state.asks.forEach(function (a) { if (a.covered) sum += askCost(a); });
-    Object.keys(state.stocked).forEach(function (k) { sum += state.stocked[k] * byKey[k.split('|')[0]].give; });
-    return sum;
-  }
+  function ledger() { return state.orderCredit + state.gifts; }
 
   function renderOrg() {
     document.title = state.org + ' x RUBIES Virtual Closet';
@@ -406,7 +373,6 @@
     document.getElementById('in-code').value = state.code;
     document.getElementById('in-sizes').value = state.sizes.join(', ');
     document.getElementById('in-max').value = state.maxItems;
-    document.getElementById('in-stock').value = state.stock.map(function (s) { return s.key + ' ' + s.size + ' ' + s.need; }).join(', ');
     document.getElementById('apply-fine').innerHTML = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. Please <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">compare styles</a> and check the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a> first.';
   }
 
@@ -426,85 +392,32 @@
     });
   }
 
-  function askLabel(a) {
-    return a.items.map(function (it) { return shortName(byKey[it.key]) + ' <em>' + it.size + '</em>'; }).join(' and ');
-  }
-  function renderAsks() {
-    var host = document.getElementById('asks');
-    host.innerHTML = '';
-    var open = state.asks.filter(function (a) { return !a.covered; });
-    var shown = open.concat(state.asks.filter(function (a) { return a.covered; }).slice(-1));
-    if (!shown.length) {
-      var empty = document.createElement('p'); empty.className = 'soft'; empty.textContent = 'Nobody is waiting right now. Stock the closet or chip in below.';
-      host.appendChild(empty); return;
-    }
-    shown.forEach(function (a) {
-      var first = byKey[a.items[0].key];
-      var el = document.createElement('div');
-      el.className = 'ask' + (a.covered ? ' covered' : '');
-      el.innerHTML =
-        '<img alt="" src="' + IMG[first.img] + '">' +
-        '<div class="what"><b>Someone asked for ' + askLabel(a) + '</b>' +
-          '<span>' + (a.how === 'ship' ? (a.covered ? 'Covered. RUBIES is shipping it to them, thank you.' : 'Cover it and RUBIES ships it to their door') : (a.covered ? 'Covered. It goes in the closet\'s next box, thank you.' : 'Picked up at the closet, from the next box')) + '</span></div>' +
-        '<div class="act">' +
-          '<button type="button" class="btn btn-line btn-small" data-id="' + a.id + '" ' + (a.covered ? 'disabled' : '') + '>' + (a.covered ? 'Covered' : 'Cover it, ' + money(askCost(a))) + '</button>' +
-          '<small>' + (a.how === 'ship' ? 'half price plus delivery, RUBIES matches the rest' : 'half its price, RUBIES matches the rest') + '</small>' +
-        '</div>';
-      host.appendChild(el);
-    });
-    Array.prototype.forEach.call(host.querySelectorAll('button[data-id]'), function (b) {
-      b.addEventListener('click', function () {
-        var a = state.asks.filter(function (x) { return String(x.id) === b.getAttribute('data-id'); })[0];
-        if (!a) return;
-        a.covered = true; save();
-        toast(a.how === 'ship' ? 'Thank you. RUBIES matched it, and it ships to them within days.' : 'Thank you. RUBIES matched it, and it goes in the closet\'s next box.');
-        renderAsks(); renderProgress();
-      });
-    });
-  }
-
-  function renderStock() {
-    var host = document.getElementById('stock');
-    host.innerHTML = '';
-    state.stock.forEach(function (t) {
-      var p = byKey[t.key]; if (!p) return;
-      var k = t.key + '|' + t.size;
-      var got = state.stocked[k] || 0;
-      var left = Math.max(0, t.need - got);
-      var el = document.createElement('div');
-      el.className = 'ask' + (left === 0 ? ' covered' : '');
-      el.innerHTML =
-        '<img alt="" src="' + IMG[p.img] + '">' +
-        '<div class="what"><b>' + shortName(p) + ' <em>' + t.size + '</em></b>' +
-          '<span>' + (left === 0 ? 'Covered. Thank you.' : left + ' still needed') + '</span></div>' +
-        '<div class="act">' +
-          '<button type="button" class="btn btn-line btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one, ' + money(p.give)) + '</button>' +
-          '<small>half its price, RUBIES matches the rest</small>' +
-        '</div>';
-      host.appendChild(el);
-    });
-    Array.prototype.forEach.call(host.querySelectorAll('button[data-k]'), function (b) {
-      b.addEventListener('click', function () {
-        var k = b.getAttribute('data-k');
-        state.stocked[k] = (state.stocked[k] || 0) + 1; save();
-        toast('Thank you. RUBIES matched it: a ' + shortName(byKey[k.split('|')[0]]).toLowerCase() + ' in ' + k.split('|')[1] + ' is going to the closet.');
-        renderStock(); renderProgress();
-      });
-    });
-  }
-
   function renderGifts() {
     var host = document.getElementById('gifts'); host.innerHTML = '';
-    [10, 25, 50, 100].forEach(function (amt) {
+    var tiles = [
+      { amt: byKey.aj.give, label: 'a pair of underwear' },
+      { amt: byKey.ruby.give, label: 'a bikini bottom' },
+      { amt: 50, label: 'three pairs' },
+      { amt: 100, label: 'six pairs' },
+      { amt: 150, label: 'half a box' },
+      { amt: 300, label: 'a whole box' }
+    ];
+    tiles.forEach(function (t) {
       var c = document.createElement('button');
-      c.type = 'button'; c.className = 'gift'; c.textContent = money(amt);
+      c.type = 'button'; c.className = 'gift';
+      c.innerHTML = money(t.amt) + '<small>' + t.label + '</small>';
       c.addEventListener('click', function () {
-        state.gifts += amt; save();
-        toast('Thank you. ' + money(amt) + ', matched by RUBIES, toward ' + possessive(state.org) + ' closet.');
+        state.gifts += t.amt; save();
+        toast('Thank you. ' + money(t.amt) + ', matched by RUBIES, is in ' + possessive(state.org) + ' next box.');
         renderProgress();
       });
       host.appendChild(c);
     });
+  }
+
+  function renderWaiting() {
+    var n = state.asks.length;
+    document.getElementById('waiting-line').textContent = n === 0 ? 'Nobody is waiting right now.' : (n === 1 ? 'One person has asked for a pair this month.' : n + ' people have asked for a pair this month.');
   }
 
   function renderProgress() {
@@ -522,13 +435,10 @@
 
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
-    var covered = state.asks.filter(function (a) { return a.covered; });
-    if (covered.length) rows.push({ label: covered.length + (covered.length === 1 ? ' request' : ' requests') + ' covered by sponsors', amt: covered.reduce(function (s, a) { return s + askCost(a); }, 0) });
-    var stockAmt = 0, stockN = 0; Object.keys(state.stocked).forEach(function (k) { stockN += state.stocked[k]; stockAmt += state.stocked[k] * byKey[k.split('|')[0]].give; });
-    if (stockN) rows.push({ label: stockN + (stockN === 1 ? ' item' : ' items') + ' sponsored for the closet', amt: stockAmt });
+    if (state.gifts) rows.push({ label: 'Sponsors', amt: state.gifts });
     if (state.orders) rows.push({ label: state.orders + ' community orders with the code, 25% of each', amt: state.orderCredit });
-    if (state.gifts) rows.push({ label: 'Gifts toward the closet', amt: state.gifts });
-    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + money(r.amt) + '</b>'; list.appendChild(li); });
+    if (state.asks.length) rows.push({ label: state.asks.length + ' requests waiting for this box', amt: null });
+    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + (r.amt === null ? '' : money(r.amt)) + '</b>'; list.appendChild(li); });
     var li = document.createElement('li'); li.innerHTML = '<span>Raised so far</span><b>' + money(total) + '</b>'; list.appendChild(li);
   }
 
@@ -566,11 +476,11 @@
     e.preventDefault();
     var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, size: sel[1].value }; });
     var how = document.querySelector('input[name="how"]:checked').value;
-    state.asks.push({ id: state.nextId++, items: items, how: how, covered: false }); save();
+    state.asks.push({ id: state.nextId++, items: items, how: how }); save();
     document.getElementById('apply-form').hidden = true;
     document.getElementById('apply-done').hidden = false;
     toast('Request sent to ' + state.org + '.');
-    renderAsks();
+    renderWaiting(); renderProgress();
   });
 
   // presenter panel: press "e" with nothing focused, or add ?panel to the link
@@ -588,7 +498,6 @@
     state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
     state.sizes = parseSizes(document.getElementById('in-sizes').value);
     state.maxItems = Math.min(6, Math.max(1, parseInt(document.getElementById('in-max').value, 10) || 2));
-    var st = parseStock(document.getElementById('in-stock').value); if (st.length) state.stock = st;
     save(); renderAll(); resetForm(); togglePanel(false);
   });
   document.getElementById('p-reset').addEventListener('click', function () { resetProgress(); save(); renderAll(); resetForm(); });
@@ -597,7 +506,7 @@
     renderProgress(); document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' }); togglePanel(false);
   });
 
-  function renderAll() { renderOrg(); renderProducts(); renderAsks(); renderStock(); renderGifts(); renderProgress(); }
+  function renderAll() { renderOrg(); renderProducts(); renderGifts(); renderWaiting(); renderProgress(); }
   renderAll(); resetForm();
 })();
 </script>
