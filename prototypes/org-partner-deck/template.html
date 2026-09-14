@@ -1,0 +1,269 @@
+<title>RUBIES Virtual Closet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800&display=swap">
+<style>
+  :root {
+    --ground: #FFFCF7;
+    --paper: #FFFFFF;
+    --tint: #FDEBFF;
+    --ink: #2A1B3D;
+    --ink-2: #6B5C7E;
+    --rule: #ECE4F1;
+    --magenta: #D400DB;
+    --magenta-raw: #FB00FF;
+    --orange: #FFAA42;
+    --lime: #B3FE00;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+  body { background: var(--ground); color: var(--ink); font-family: "Nunito Sans", "Segoe UI", system-ui, sans-serif; font-size: 20px; line-height: 1.5; }
+  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.05; text-wrap: balance; }
+  h1 { font-size: clamp(40px, 6vw, 80px); font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(34px, 4.6vw, 60px); font-weight: 700; letter-spacing: -0.01em; }
+  h3 { font-size: clamp(22px, 2.2vw, 30px); font-weight: 600; }
+  p { margin: 0; }
+  .soft { color: var(--ink-2); }
+
+  .slide { min-height: 100vh; scroll-snap-align: start; display: grid; align-content: center; padding: 8vh 7vw; position: relative; border-top: 1px solid var(--rule); }
+  .slide:first-child { border-top: 0; }
+  .slide .n { position: absolute; top: 4vh; right: 7vw; font-weight: 800; font-size: 14px; color: var(--ink-2); letter-spacing: 0.04em; }
+  .logo img { height: clamp(34px, 4vw, 56px); width: auto; display: block; }
+  .stack { display: grid; gap: 28px; max-width: 1100px; }
+  .lede { font-size: clamp(20px, 2vw, 28px); color: var(--ink-2); max-width: 36ch; }
+  .two { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 6vw; align-items: center; }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3vw; }
+  .col { display: grid; gap: 12px; align-content: start; padding-top: 18px; border-top: 4px solid var(--magenta); }
+  .col:nth-child(2) { border-top-color: var(--orange); }
+  .col:nth-child(3) { border-top-color: var(--lime); }
+  .col p { color: var(--ink-2); font-size: clamp(16px, 1.4vw, 20px); }
+  ul { margin: 0; padding-left: 22px; display: grid; gap: 12px; font-size: clamp(18px, 1.6vw, 24px); }
+  li::marker { color: var(--magenta); }
+  .big { font-family: "Fredoka", sans-serif; font-size: clamp(56px, 9vw, 140px); font-weight: 700; line-height: 0.95; color: var(--magenta); }
+  .big small { display: block; font-family: "Nunito Sans", sans-serif; font-size: clamp(18px, 1.8vw, 26px); font-weight: 700; color: var(--ink); margin-top: 10px; }
+  .pill { display: inline-block; background: var(--lime); color: var(--ink); font-family: "Fredoka", sans-serif; font-weight: 600; font-size: clamp(15px, 1.3vw, 18px); padding: 6px 14px; border-radius: 999px; width: fit-content; }
+  .pill.sun { background: var(--orange); }
+
+  .art { position: relative; aspect-ratio: 1 / 1; width: 100%; max-width: 520px; justify-self: end; }
+  .art .blob { position: absolute; inset: 6% 4% 4% 6%; background: var(--magenta-raw); opacity: 0.92; border-radius: 58% 42% 55% 45% / 48% 56% 44% 52%; }
+  .art img.main { position: absolute; left: 10%; top: 6%; width: 74%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 46% 54% 50% 50% / 52% 46% 54% 48%; }
+  .art img.second { position: absolute; right: 0; bottom: 0; width: 44%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 50%; border: 6px solid var(--ground); }
+
+  .products { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .product img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 18px; display: block; background: #F4F1EC; }
+  .product b { display: block; margin-top: 10px; font-size: clamp(15px, 1.3vw, 18px); }
+  .product span { color: var(--ink-2); font-size: clamp(14px, 1.2vw, 16px); }
+
+  .steps { display: grid; counter-reset: step; max-width: 900px; }
+  .step { display: grid; grid-template-columns: 64px 1fr; gap: 22px; align-items: start; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+  .step:last-child { border-bottom: 0; }
+  .step::before { counter-increment: step; content: counter(step); font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 34px; color: var(--magenta); line-height: 1; }
+  .step b { font-size: clamp(18px, 1.7vw, 24px); display: block; }
+  .step span { color: var(--ink-2); font-size: clamp(15px, 1.4vw, 19px); }
+
+  .match { display: grid; grid-template-columns: 1fr auto 1fr; gap: 3vw; align-items: center; max-width: 1000px; }
+  .match .cell { background: var(--paper); border-radius: 24px; padding: 30px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 6px; }
+  .match .cell .amt { font-family: "Fredoka", sans-serif; font-size: clamp(44px, 5vw, 72px); font-weight: 700; line-height: 1; }
+  .match .cell .amt.m { color: var(--magenta); }
+  .match .arrow { font-family: "Fredoka", sans-serif; font-size: clamp(40px, 5vw, 72px); color: var(--orange); font-weight: 700; }
+
+  .doors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3vw; }
+  .door { background: var(--paper); border-radius: 24px; padding: 28px; display: grid; gap: 10px; align-content: start; box-shadow: 0 1px 0 var(--rule); border-top: 6px solid var(--magenta); }
+  .door:nth-child(2) { border-top-color: var(--orange); }
+  .door:nth-child(3) { border-top-color: var(--lime); }
+  .door p { color: var(--ink-2); font-size: clamp(16px, 1.4vw, 20px); }
+  .door .who { font-size: 14px; font-weight: 800; letter-spacing: 0.02em; color: var(--ink-2); }
+
+  .contact { display: grid; gap: 10px; font-size: clamp(20px, 2vw, 28px); }
+  .contact a { color: var(--magenta); text-decoration: none; font-weight: 800; }
+
+  .nav { position: fixed; right: 18px; bottom: 18px; display: flex; gap: 8px; z-index: 5; }
+  .nav button { font: inherit; font-weight: 800; width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; }
+  .nav button:hover, .nav button:focus-visible { background: var(--lime); outline: none; }
+
+  @media (max-width: 860px) {
+    body { font-size: 17px; }
+    .slide { padding: 9vh 6vw; }
+    .two, .three, .doors, .products, .match { grid-template-columns: 1fr; }
+    .match .arrow { transform: rotate(90deg); justify-self: center; }
+    .art { justify-self: start; max-width: 300px; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+
+<section class="slide">
+  <div class="two">
+    <div class="stack">
+      <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-1" alt="RUBIES"></a>
+      <h1>The Virtual Closet</h1>
+      <p class="lede">A gender-affirming closet your community stocks, in your centre's name, with every dollar matched by RUBIES.</p>
+    </div>
+    <div class="art" aria-hidden="true">
+      <div class="blob"></div>
+      <img class="main" id="art-main" alt="">
+      <img class="second" id="art-second" alt="">
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">Who we are</span>
+  <div class="two">
+    <div class="stack">
+      <h2>Started in 2019 for a nine-year-old named Ruby</h2>
+      <ul>
+        <li>Underwear and swimwear that look, feel and wear like everyone else's. No tucking, no compression.</li>
+        <li>Shaping that reshapes rather than flattens, comfortable enough to swim, run and play in.</li>
+        <li>Kids 4 to 16 and adults XXS to 4X. Tens of thousands of packages to more than 40 countries.</li>
+        <li>Partner centres across the US, Canada, Europe and Australia already receive RUBIES through our donation programme.</li>
+      </ul>
+    </div>
+    <div class="products">
+      <div class="product"><img id="p-aj" alt=""><b>AJ underwear</b><span>The everyday pair</span></div>
+      <div class="product"><img id="p-brooke" alt=""><b>Brooke bra</b><span>A great first bra</span></div>
+      <div class="product"><img id="p-ruby" alt=""><b>Ruby bikini bottom</b><span>The one that started it</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">The gap</span>
+  <div class="stack">
+    <h2>Closets are strong on binders and thin on everything else</h2>
+    <p class="lede">Centres tell us the same thing: requests for trans-fem and non-binary gear come in, budgets are small, and binder brands have been cutting community programmes. Nobody covers the other half of the closet.</p>
+    <div class="three">
+      <div class="col"><h3>Demand you already see</h3><p>Walk-ins and request forms ask for underwear and swimwear, and go home with a binder or nothing.</p></div>
+      <div class="col"><h3>Budgets that don't stretch</h3><p>A closet's whole gear budget for a year buys a few dozen items at retail.</p></div>
+      <div class="col"><h3>A community that wants to help</h3><p>Allies, families and members ask how. There is rarely a simple answer.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">The idea</span>
+  <div class="two">
+    <div class="stack">
+      <h2>One page in your name. Your community buys, asks and gives. Everything lands in one box.</h2>
+      <p class="lede">Every dollar that reaches the box is matched by RUBIES. When the box is full it ships to your closet, and everyone who asked gets theirs at the same time.</p>
+    </div>
+    <div class="big">2×<small>every dollar, matched by RUBIES</small></div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">Three doors</span>
+  <div class="stack">
+    <h2>Three ways in, for three kinds of people</h2>
+    <div class="doors">
+      <div class="door"><span class="who">Those who can buy</span><h3>Buy a pair, 15% off</h3><p>Your centre's code takes 15% off at RUBIES, and 25% of every order goes into your closet's box.</p></div>
+      <div class="door"><span class="who">Those who can't right now</span><h3>Apply for a free pair</h3><p>Anyone can ask for what they need, in their size. You approve it from an email. It is filled when the box goes out.</p></div>
+      <div class="door"><span class="who">Those who want to help</span><h3>Sponsor the closet</h3><p>Allies and families give any amount into the box. $16 is a pair of underwear. $300 is a whole box.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">The box</span>
+  <div class="stack">
+    <h2>$300 raised becomes $600 of product</h2>
+    <div class="match">
+      <div class="cell"><span class="soft">The box fills from</span><span class="amt">$300</span><span class="soft">sponsors, 25% of community orders, and your own budget</span></div>
+      <div class="arrow">→</div>
+      <div class="cell"><span class="soft">Your closet receives</span><span class="amt m">$600</span><span class="soft">in the sizes and styles you choose, shipping included</span></div>
+    </div>
+    <p class="lede">Everyone who applied gets their pair from this box, picked up at your closet or shipped to them. Anything raised past $300 starts the next one.</p>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">What we ask of you</span>
+  <div class="two">
+    <div class="stack">
+      <h2>Three things. Nothing to maintain.</h2>
+      <ul>
+        <li>Share your closet's link with your community.</li>
+        <li>Approve requests from an email, one click. Or set a monthly auto-approve.</li>
+        <li>Tell us the sizes when a box is ready.</li>
+      </ul>
+      <p class="lede">The page runs on our data. There is nothing for your team to log, count or update.</p>
+    </div>
+    <div class="big">3<small>things, and the closet runs itself</small></div>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">Alongside</span>
+  <div class="stack">
+    <span class="pill">Running today</span>
+    <h2>Donations keep coming, and your budget goes twice as far</h2>
+    <ul>
+      <li>Customers near you who exchange an item have it routed to your closet, washed and in original condition, with your centre on our partner map.</li>
+      <li>Anything your centre buys directly is matched the same way: order $300, receive $600 of product.</li>
+      <li>Anyone in your community can apply for a free bikini bottom on our site, no partnership needed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <span class="n">Getting started</span>
+  <div class="stack">
+    <span class="pill sun">Piloting this fall. Your centre can be first.</span>
+    <h2>From this call to your first box</h2>
+    <div class="steps">
+      <div class="step"><div><b>A short agreement</b><span>Non-binding. It says what we each do, and you can step out any time.</span></div></div>
+      <div class="step"><div><b>A five-minute survey</b><span>Your address, the sizes you offer, how many items per request, and a logo for your page.</span></div></div>
+      <div class="step"><div><b>Your Virtual Closet page goes live</b><span>Your code, your link, your box. We send you everything to share, and a starter run of AJ underwear for the closet.</span></div></div>
+      <div class="step"><div><b>The first box fills</b><span>You approve requests as they come. When it reaches $300 we ship, doubled.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="two">
+    <div class="stack">
+      <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-2" alt="RUBIES"></a>
+      <h2>Let's stock the other half of the closet</h2>
+      <div class="contact">
+        <span>Jamie Alexander, founder</span>
+        <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a>
+        <a href="https://rubyshines.com" target="_blank" rel="noopener">rubyshines.com</a>
+      </div>
+    </div>
+    <div class="art" aria-hidden="true">
+      <div class="blob" style="background: var(--orange)"></div>
+      <img class="main" id="art-main-2" alt="">
+      <img class="second" id="art-second-2" alt="">
+    </div>
+  </div>
+</section>
+
+<div class="nav" aria-label="Slide navigation">
+  <button type="button" id="prev" aria-label="Previous slide">↑</button>
+  <button type="button" id="next" aria-label="Next slide">↓</button>
+</div>
+
+<script>
+(function () {
+  var IMG = {{IMG_JSON}};
+  ['logo-1', 'logo-2'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
+  document.getElementById('art-main').src = IMG['the-aj-shaping-underwear'];
+  document.getElementById('art-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
+  document.getElementById('art-main-2').src = IMG['the-brooke-bra'];
+  document.getElementById('art-second-2').src = IMG['the-sassy-no-tuck-shaping-underwear'];
+  document.getElementById('p-aj').src = IMG['the-aj-shaping-underwear'];
+  document.getElementById('p-brooke').src = IMG['the-brooke-bra'];
+  document.getElementById('p-ruby').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  function current() {
+    var y = window.scrollY + window.innerHeight / 2;
+    for (var i = slides.length - 1; i >= 0; i--) { if (slides[i].offsetTop <= y) return i; }
+    return 0;
+  }
+  function go(i) { i = Math.max(0, Math.min(slides.length - 1, i)); slides[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  document.getElementById('prev').addEventListener('click', function () { go(current() - 1); });
+  document.getElementById('next').addEventListener('click', function () { go(current() + 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(current() + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(current() - 1); }
+  });
+})();
+</script>
