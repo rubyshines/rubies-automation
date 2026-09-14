@@ -295,8 +295,9 @@
           </label>
           <fieldset>
             <legend>How would you like it?</legend>
-            <label class="radio"><input type="radio" name="how" value="ship" checked> Ship it to me, free</label>
-            <label class="radio"><input type="radio" name="how" value="pickup"> I'll pick it up at the closet</label>
+            <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
+            <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
+            <p class="fine" style="margin:2px 0 0 26px">Picking up stretches the closet's funds about three times further. Choose shipping if getting there is hard.</p>
           </fieldset>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
@@ -318,7 +319,7 @@
     <div class="sec-head">
       <div class="eyebrow">For the closet</div>
       <h2>Sponsor a pair for someone who asked</h2>
-      <p>These are the sizes the closet needs most. Sponsor a pair at the closet's price, half of retail. Picked up at the closet, RUBIES doubles it. Shipped to someone's home, RUBIES covers the delivery.</p>
+      <p>These are the sizes the closet needs most. Sponsor a pair at the closet's price, half of retail. RUBIES doubles every pair that goes into the closet's box. A pair shipped to someone's door costs the closet $8 more for delivery.</p>
     </div>
     <div class="registry-grid">
       <div>
@@ -358,8 +359,8 @@
         <h3>For the closet</h3>
         <p>Sponsors, community orders and the org's own budget all fill one box. At $300 it ships to the closet, doubled by RUBIES.</p>
         <ul>
-          <li>Free pairs picked up at the closet come out of the box</li>
-          <li>Free pairs shipped to a home go straight from RUBIES, delivery on us</li>
+          <li>A free pair picked up at the closet costs the closet $8, because RUBIES doubles the box</li>
+          <li>A free pair shipped to a door costs the closet $24, the pair plus delivery</li>
           <li>Returned and exchanged RUBIES items still arrive as donations, as today</li>
         </ul>
       </div>
@@ -490,7 +491,7 @@
           '<span>' + (left === 0 ? 'Covered. Thank you!' : '<span class="count">' + left + ' still needed</span> &middot; ' + got + ' sponsored') + '</span></div>' +
         '<div class="act">' +
           '<button type="button" class="btn btn-ghost btn-small" data-k="' + k + '" ' + (left === 0 ? 'disabled' : '') + '>' + (left === 0 ? 'Covered' : 'Sponsor one &middot; ' + money(p.closet)) + '</button>' +
-          '<small>' + money(p.closet) + ' sends two to the closet</small>' +
+          '<small>' + money(p.closet) + ' puts two in the closet</small>' +
         '</div>';
       host.appendChild(el);
     });
@@ -512,7 +513,7 @@
       var pairs = Math.floor(amt / byKey.aj.closet) * 2;
       var c = document.createElement('button');
       c.type = 'button'; c.className = 'chip';
-      c.innerHTML = money(amt) + '<small>' + (pairs >= 2 ? 'about ' + pairs + ' pairs, matched' : 'toward the next pair') + '</small>';
+      c.innerHTML = money(amt) + '<small>' + (pairs >= 2 ? 'about ' + pairs + ' pairs in the closet, or ' + Math.floor(amt / 24) + ' delivered' : 'toward the next pair') + '</small>';
       c.addEventListener('click', function () {
         state.gifts += amt; save();
         toast('Thank you! ' + money(amt) + ' toward ' + possessive(state.org) + ' next box.');
