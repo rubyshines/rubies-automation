@@ -210,7 +210,7 @@
       <div class="rule"></div>
       <div class="way" id="apply">
         <h3>If money is tight, apply for a free pair</h3>
-        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, usually within a day or two, and RUBIES sends it. Nobody at the closet sees your order.</p>
+        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, and once a sponsor or the closet's funds cover it, RUBIES sends it. Nobody at the closet sees your order.</p>
         <form id="apply-form" class="form">
           <div class="items" id="items"></div>
           <button type="button" class="add-item" id="add-item">+ Add another item</button>
@@ -218,7 +218,7 @@
             <legend>How would you like it?</legend>
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
-            <p class="fine">Picking up saves the closet the cost of shipping. Choose shipping if getting there is hard.</p>
+            <p class="fine">Shipping gets it to you sooner, as soon as your request is covered. Picking up saves the closet the cost of shipping, but waits for the closet's next box.</p>
           </fieldset>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
@@ -228,7 +228,7 @@
         </form>
         <div class="sent" id="apply-done" hidden>
           <b>Request sent</b>
-          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order in your size.</p>
+          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When your request is approved and covered you will get an email with a one-time code and a link to order in your size. Shipped requests usually go out within days of being covered. Pickups are ready when the closet's next box arrives.</p>
         </div>
       </div>
     </div>
@@ -269,7 +269,7 @@
     <div class="how">
       <div class="col">
         <h3>Community</h3>
-        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair, and <span class="org-name">Uniting Pride</span> approves it.</p>
+        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair: <span class="org-name">Uniting Pride</span> approves it, and once it is covered RUBIES sends it.</p>
       </div>
       <div class="col">
         <h3>Closet</h3>
@@ -440,7 +440,7 @@
       el.innerHTML =
         '<img alt="" src="' + IMG[first.img] + '">' +
         '<div class="what"><b>Someone asked for ' + askLabel(a) + '</b>' +
-          '<span>' + (a.how === 'ship' ? 'Shipped to their door' : 'Picked up at the closet') + (a.covered ? '. Covered, thank you.' : '') + '</span></div>' +
+          '<span>' + (a.how === 'ship' ? (a.covered ? 'Covered. RUBIES is shipping it to them, thank you.' : 'Cover it and RUBIES ships it to their door') : (a.covered ? 'Covered. It goes in the closet\'s next box, thank you.' : 'Picked up at the closet, from the next box')) + '</span></div>' +
         '<div class="act">' +
           '<button type="button" class="btn btn-line btn-small" data-id="' + a.id + '" ' + (a.covered ? 'disabled' : '') + '>' + (a.covered ? 'Covered' : 'Cover it, ' + money(askCost(a))) + '</button>' +
           '<small>' + (a.how === 'ship' ? 'half price plus delivery, RUBIES matches the rest' : 'half its price, RUBIES matches the rest') + '</small>' +
@@ -452,7 +452,7 @@
         var a = state.asks.filter(function (x) { return String(x.id) === b.getAttribute('data-id'); })[0];
         if (!a) return;
         a.covered = true; save();
-        toast('Thank you. RUBIES matched it, and their ' + (a.items.length > 1 ? 'items are' : 'pair is') + ' on the way.');
+        toast(a.how === 'ship' ? 'Thank you. RUBIES matched it, and it ships to them within days.' : 'Thank you. RUBIES matched it, and it goes in the closet\'s next box.');
         renderAsks(); renderProgress();
       });
     });
