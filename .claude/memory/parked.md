@@ -262,12 +262,13 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Use AI (not heuristics) to separate customer text from boilerplate/quoted chains
 - Parked: 2026-06-14
-- Last touched: 2026-08-18
+- Last touched: 2026-09-14
 - Type: idea
 - Domains: cs
 - Priority: high
 - Notes: The dashboard and intake separate the customer's free text from form metadata, bot-flow markup and quoted chains with regex heuristics (`isHelpCenterForm`/`splitHelpCenterForm`/the email-branch boilerplate strip in `dashboard/public/intakeParse.js`, plus `extractCleanBody`/`cleanHelpCenterBody` in `intake/processGorgiasTickets.js`). Four shape-specific fixes have shipped (form-then-metadata ordering, chat offline-capture subject line, help-center `<br>` read as a flow marker that corrupted stored `conversation_history`, first-contact forward rendered blank); each was another special case, and the failure mode escalated from "operator sees less" to "the stored record is wrong". Jamie's call: this is exactly what the AI-first principle says shouldn't be regex. Replace the split with an AI pass (Haiku is acceptable; it is pre-extraction, not customer-facing) returning {customer_message, order_metadata, quoted_history}. Scope whether it belongs at intake (one parse, stored structured) vs render time. The parsers now have unit tests, which lowers the cost of porting.
 - Required scope: **first-contact forwards.** Gorgias's stripper drops the quoted block, which is right for a normal reply and wrong when the customer forwards or quotes a prior message on first contact ("following up on the below"). The render side now recovers the customer's words and offers the forwarded block behind a toggle; the ADVISOR half is not fixed. The AI pass must return the forwarded/quoted block as usable background on a first customer message. Closed PR #32 (unmerged, on Jamie's call) is the reference implementation and its `extractForwardedContext.test.js` a ready-made behaviour spec; recover from `gh pr diff 32`.
+- Fifth shape (2026-09-14): a customer signs off and pastes content underneath; Gorgias's stripper reads the sign-off as a signature and drops the paste. Patched by preferring our quote split over Gorgias's cut when ours keeps more (`SIGNATURE_CUT_SLACK` in `processGorgiasTickets.js`), which is one more heuristic layered on another. Survey over 45 days: 1 real loss in 389 messages, 7 boilerplate false positives now admitted. The AI pass would replace both cuts.
 
 ## Event donation follow-up: photo collection → collaborations page + Instagram
 - Parked: 2026-05-29
@@ -311,10 +312,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Watch: does extractCleanBody's reply-parser path drop customer content?
 - Parked: 2026-04-27
-- Last touched: 2026-08-05
+- Last touched: 2026-09-14
 - Type: bug-watch
 - Domains: cs
 - Notes: `extractCleanBody` runs email-reply-parser on the raw body and, when the library strips something, writes the parsed text to `body` and nulls `body_html`, and `body` is what the advisor reads. If a future report says "the advisor missed an address the customer clearly typed" or "exchange shipping address was wrong", compare raw `body_text` from `gorgias.getTicketMessages(ticketId)` against the stored `conversation_history[].body`. If the raw has it and the stored doesn't, the reply-parser ate it; the fix is a lazy raw-fetch in the tool that needs the address (refund_order, create_exchange_order), not a change to the shared parser.
+- 2026-09-14: the sibling path fired first. Gorgias's OWN stripper (non-empty `stripped_text`) cuts at a sign-off, so anything a customer pastes under "Best, <name>" vanished from the snapshot and the advisor's input, and the advisor replied as if it had read it. Fixed in `extractCleanBody`: when the dashboard's `splitAtQuote` keeps materially more of the raw body than Gorgias did, the raw own-part wins. The watch above (library path eating an address) is still open.
 
 ## Bundle dynamic pricing — adult variants check out at youth (lowest) price
 - Parked: 2026-04-28

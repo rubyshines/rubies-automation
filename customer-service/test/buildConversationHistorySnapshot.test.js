@@ -354,3 +354,72 @@ describe('buildConversationHistorySnapshot — help-center bodies', () => {
     assert.ok(!/\bNo\b/.test(snap.body), 'button label leaked in');
   });
 });
+
+// ---------------------------------------------------------------------------
+// extractCleanBody — Gorgias's stripper cuts at a sign-off, so content the
+// customer pastes UNDER "Best, Bea" is missing from stripped_text/stripped_html.
+// Our own quote splitter decides where the customer's words really end.
+// ---------------------------------------------------------------------------
+
+const { extractCleanBody } = require('../intake/processGorgiasTickets');
+
+const PASTED_PIECE = [
+  '**Subject:** Burgundy linen and the first day back',
+  '',
+  'Walking into the office as a woman for the first time after socially transitioning was a life-changing moment for me. '
+  + 'I had spent decades building a successful career in biotech.',
+  '',
+  'Warmly,',
+  'Elizabeth',
+].join('\n');
+
+const QUOTED_CHAIN = [
+  'On 13 Sep 2026, at 13:45, RUBIES Customer Care <care@rubyshines.com> wrote:',
+  '',
+  'Hi,',
+  'I am following up on this.',
+].join('\n');
+
+describe('extractCleanBody — content pasted under a sign-off', () => {
+  const greeting = 'Hi Jamie:\n\nPlease have a look at the draft below and let me know your thoughts.';
+  const signatureCutMessage = {
+    id: 10,
+    from_agent: false,
+    channel: 'email',
+    via: 'email',
+    created_datetime: '2026-09-13T16:01:16+00:00',
+    stripped_text: greeting,
+    stripped_html: `<div>${greeting}</div>`,
+    body_text: `${greeting}\n\nBest,\n\nBea\n\n${PASTED_PIECE}\n\n${QUOTED_CHAIN}`,
+    body_html: `<div>${greeting}<p>Best,</p><p>Bea</p><p>${PASTED_PIECE}</p><blockquote>${QUOTED_CHAIN}</blockquote></div>`,
+  };
+
+  it('keeps what the customer pasted under their sign-off, and still drops the quoted chain', () => {
+    const { text, libraryStripped } = extractCleanBody(signatureCutMessage);
+    assert.ok(text.includes('Burgundy linen'), 'pasted piece missing from extracted text');
+    assert.ok(text.includes('career in biotech'), 'pasted body missing from extracted text');
+    assert.ok(!text.includes('I am following up on this'), 'quoted chain leaked into extracted text');
+    assert.equal(libraryStripped, true, 'caller must know the text is our cut, not Gorgias\'s');
+  });
+
+  it('stores the recovered text as the snapshot body and drops the truncated HTML', () => {
+    const [snapshot] = buildConversationHistorySnapshot([signatureCutMessage]);
+    assert.ok(snapshot.body.includes('Burgundy linen'), 'stored body lost the pasted piece');
+    assert.equal(snapshot.body_html, null, 'truncated stripped_html would hide the piece on render');
+  });
+
+  it('keeps Gorgias\'s cleaner cut when the only surplus is sign-off boilerplate', () => {
+    const own = 'Thanks, size 14 for both please.';
+    const m = {
+      ...signatureCutMessage,
+      stripped_text: own,
+      stripped_html: `<div>${own}</div>`,
+      body_text: `${own}\n\nBest,\nLily H.\n\n${QUOTED_CHAIN}`,
+    };
+    const { text, libraryStripped } = extractCleanBody(m);
+    assert.equal(text, own);
+    assert.equal(libraryStripped, false);
+    const [snapshot] = buildConversationHistorySnapshot([m]);
+    assert.equal(snapshot.body_html, `<div>${own}</div>`);
+  });
+});

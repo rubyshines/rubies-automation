@@ -29,6 +29,14 @@ const { hasOrderHistory } = require('../lib/knownCustomer');
 const { shouldAutoCloseJunk, junkCloseNote } = require('../lib/junkDisposition');
 const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
+const { splitAtQuote } = require('../dashboard/public/messageBody');
+
+// How much more of the raw body our quote splitter must keep, beyond what
+// Gorgias's stripper kept, before we conclude Gorgias cut real customer text
+// rather than a signature. Calibrated on 45 days of customer email (389
+// messages): the only genuine loss was 2.5KB; the boilerplate false positives
+// sit at 170-450 chars but hide nothing a customer wrote. See extractCleanBody.
+const SIGNATURE_CUT_SLACK = 150;
 const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
 const { attachmentOnlyPlaceholder, fetchImagesAsBlocks } = require('../lib/attachmentImages');
 const { isAwayModeActive, isFirstContact, sendAwayAck } = require('../lib/awayMode');
@@ -55,8 +63,26 @@ function extractCleanBody(m) {
     return { text: cleanHelpCenterBody(raw), libraryStripped: true };
   }
   const stripped = (m.stripped_text || '').trim() || gorgias.stripHtml(m.stripped_html || '').trim();
-  if (stripped) return { text: stripped, libraryStripped: false };
   const raw = (m.body_text || '').trim() || gorgias.stripHtml(m.body_html || '').trim();
+  if (stripped) {
+    // Gorgias's stripper also cuts at what it takes for a signature, so a
+    // customer who signs off ("Best, Bea") and pastes something underneath
+    // loses the paste from stripped_text AND stripped_html — and with it from
+    // the stored snapshot and the advisor's input (ticket 3511: a full
+    // newsletter piece vanished and the advisor replied "I read through it").
+    // Our own quote splitter is what the dashboard already trusts for where
+    // the customer's words end; when it keeps materially more of the raw body
+    // than Gorgias did, the surplus is customer text, not quoted chain, and
+    // the raw own-part wins. The slack keeps ordinary sign-off boilerplate
+    // (name, phone, "Sent from Yahoo Mail" links) on Gorgias's cleaner cut.
+    // Exposure on non-English quote headers our splitter misses is the same
+    // as the library path below already has for empty stripped_text.
+    const own = splitAtQuote(raw).own;
+    if (own.length > stripped.length + SIGNATURE_CUT_SLACK) {
+      return { text: own, libraryStripped: true };
+    }
+    return { text: stripped, libraryStripped: false };
+  }
   const cleaned = stripQuotedContent(raw);
   return { text: cleaned, libraryStripped: cleaned.length < raw.length };
 }
