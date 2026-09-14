@@ -129,6 +129,24 @@
   .code-card p { color: var(--ink); font-size: 16px; }
   .code-card .fine { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
 
+  .two-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .way { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 22px; display: grid; gap: 14px; align-content: start; }
+  .way-buy { border-top: 4px solid var(--violet); }
+  .way-apply { border-top: 4px solid var(--yellow); }
+  .way .code-card { margin-bottom: 0; grid-template-columns: 1fr; padding: 18px 20px; }
+  .way .code { font-size: 28px; width: fit-content; }
+  .way-lede { color: var(--ink-soft); font-size: 15px; }
+  .apply-form { display: grid; gap: 12px; }
+  .apply-form label { display: grid; gap: 4px; font-size: 13.5px; font-weight: 700; color: var(--ink-soft); }
+  .apply-form select, .apply-form input[type="email"] { font: inherit; font-size: 15px; color: var(--ink); padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); }
+  .apply-form select:focus, .apply-form input:focus { outline: 3px solid var(--tint); border-color: var(--violet); }
+  .apply-form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .apply-form legend { font-size: 13.5px; font-weight: 700; color: var(--ink-soft); padding: 0; margin-bottom: 4px; }
+  .apply-form .radio { display: flex; gap: 8px; align-items: center; font-weight: 600; color: var(--ink); font-size: 15px; }
+  .apply-form .btn { justify-content: center; width: fit-content; }
+  .apply-form .fine, .apply-done p { font-size: 13.5px; color: var(--ink-soft); }
+  .apply-done { background: #EAF8F1; border: 1px solid #BFE8D3; border-radius: 16px; padding: 16px 18px; display: grid; gap: 6px; }
+  .apply-done b { color: #0F5C3D; }
   .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
   .product { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
   .product img { width: 100%; aspect-ratio: 1 / 1.05; object-fit: cover; display: block; background: #F6F3EE; }
@@ -196,6 +214,7 @@
     .aside { position: static; }
     .how { grid-template-columns: 1fr; }
     .code-card { grid-template-columns: 1fr; }
+    .two-ways { grid-template-columns: 1fr; }
   }
   @media (prefers-reduced-motion: reduce) {
     .bar > span, .toast, .btn { transition: none; }
@@ -230,43 +249,76 @@
       <h1><span id="org-name-title">Uniting Pride</span>'s Closet</h1>
       <p class="lede">Free no-tuck underwear and swimwear for anyone in our community who needs it, through <span id="closet-name">Uniting Pride's Up and Away closet</span>. Stocked by the community, powered by RUBIES.</p>
       <div class="fork">
-        <a class="btn btn-primary" href="#need">I need a pair</a>
-        <a class="btn btn-pink" href="#fill">Send a pair to the closet</a>
+        <a class="btn btn-primary" href="#need">Buy a pair, 15% off</a>
+        <a class="btn btn-ghost" href="#apply">Apply for a free pair</a>
+        <a class="btn btn-pink" href="#fill">Sponsor the closet</a>
       </div>
     </div>
     <div class="hero-card" aria-live="polite">
-      <div class="eyebrow">The next box</div>
-      <div class="big"><span id="hero-amount">$0</span> <small>of $300</small></div>
+      <div class="eyebrow">The closet's next box</div>
+      <div class="big"><span id="hero-amount">$0</span> <small>raised of $300</small></div>
       <div class="bar" id="hero-bar"><span></span></div>
       <div class="split">
-        <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way, after RUBIES doubles it</span></div>
-        <div class="stat"><b id="hero-orders">0</b><span>orders through the code so far</span></div>
+        <div class="stat"><b id="hero-pairs">0</b><span>pairs on the way to the closet</span></div>
+        <div class="stat"><b id="hero-people">0</b><span>free pairs requested this month</span></div>
       </div>
-      <p class="note">When the box is full, <span class="org-name">Uniting Pride</span> picks the sizes and styles at closet prices, and RUBIES sends two of everything.</p>
+      <p class="note">Filled by sponsors and by every pair bought with the code. When it is full it ships to <span class="org-name">Uniting Pride</span>, and RUBIES doubles it.</p>
     </div>
   </header>
 
   <section id="need">
     <div class="sec-head">
       <div class="eyebrow">For you</div>
-      <h2>Need a pair? Ask at the desk, or use the code.</h2>
-      <p>The closet keeps a run of sizes to try on. When you order online, this code takes 15% off, and every pair you buy sends a pair back to the closet.</p>
+      <h2>Need a pair? Two ways to get one.</h2>
+      <p>If you can buy one, please do: your order sends a pair to the closet for someone who cannot. If money is tight right now, apply and the closet will cover it.</p>
     </div>
-    <div class="code-card">
-      <div class="code" id="code-display">UPRIDE15</div>
-      <div>
-        <p><b>15% off</b> anything at rubyshines.com, and <b>one pair to the closet for every pair you buy</b>.</p>
-        <p class="fine">Enter it at checkout, or scan the QR on the card from the desk and it is applied for you. No account needed. Free exchanges if the size is not right.</p>
+    <div class="two-ways">
+      <div class="way way-buy">
+        <h3>If you can, buy one</h3>
+        <div class="code-card">
+          <div class="code" id="code-display">UPRIDE15</div>
+          <div>
+            <p><b>15% off</b> at rubyshines.com, and <b>one pair to the closet for every pair you buy</b>.</p>
+            <p class="fine">Enter it at checkout. No account needed. Free exchanges if the size is not right.</p>
+          </div>
+        </div>
+      </div>
+      <div class="way way-apply" id="apply">
+        <h3>If money is tight, apply for a free pair</h3>
+        <p class="way-lede">Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, usually within a day or two, and RUBIES sends it. Nobody at the closet sees your order.</p>
+        <form id="apply-form" class="apply-form">
+          <label>Style
+            <select id="ap-style"></select>
+          </label>
+          <label>Size
+            <select id="ap-size"></select>
+          </label>
+          <fieldset>
+            <legend>How would you like it?</legend>
+            <label class="radio"><input type="radio" name="how" value="ship" checked> Ship it to me, free</label>
+            <label class="radio"><input type="radio" name="how" value="pickup"> I'll pick it up at the closet</label>
+          </fieldset>
+          <label>Email, so we can send you the code
+            <input type="email" id="ap-email" placeholder="you@example.com" required>
+          </label>
+          <button type="submit" class="btn btn-primary">Send my request</button>
+          <p class="fine">Up to two pairs a year per person, so the closet can help everyone who asks. Not sure about size? The closet keeps a run of sizes to try on.</p>
+        </form>
+        <div class="apply-done" id="apply-done" hidden>
+          <b>Request sent.</b>
+          <p><span class="org-name">Uniting Pride</span> will take a quick look. When it is approved you will get an email with a one-time code and a link to order your pair in your size.</p>
+        </div>
       </div>
     </div>
+    <h3 style="margin:34px 0 14px">What the closet stocks</h3>
     <div class="products" id="products"></div>
   </section>
 
   <section id="fill">
     <div class="sec-head">
       <div class="eyebrow">For the closet</div>
-      <h2>What the closet needs right now</h2>
-      <p>Sponsor a pair at the closet's price, half of retail. RUBIES matches every one, so each pair you sponsor arrives as two. Nothing ships until the box is full, then it all goes at once.</p>
+      <h2>Sponsor a pair for someone who asked</h2>
+      <p>These are the sizes the closet needs most. Sponsor a pair at the closet's price, half of retail. Picked up at the closet, RUBIES doubles it. Shipped to someone's home, RUBIES covers the delivery.</p>
     </div>
     <div class="registry-grid">
       <div>
@@ -277,12 +329,12 @@
       </div>
       <aside class="aside">
         <div class="hero-card">
-          <div class="eyebrow">Box progress</div>
-          <div class="big"><span class="amount">$0</span> <small>of $300</small></div>
+          <div class="eyebrow">The closet's next box</div>
+          <div class="big"><span class="amount">$0</span> <small>raised of $300</small></div>
           <div class="bar side-bar"><span></span></div>
-          <div class="box-full" id="box-full">The box is full. <span class="org-name">Uniting Pride</span> chooses the mix, and RUBIES sends double.</div>
+          <div class="box-full" id="box-full">Full. This box is on its way to <span class="org-name">Uniting Pride</span>, doubled by RUBIES.</div>
           <ul class="ontheway" id="ontheway"></ul>
-          <p class="note">Every sponsored pair and every order through the code lands here. The box ships when it reaches $300, or after six months, whichever comes first.</p>
+          <p class="note">Ships when it reaches $300, or after six months, whichever comes first.</p>
         </div>
       </aside>
     </div>
@@ -296,7 +348,7 @@
     <div class="how">
       <div class="col">
         <h3>For your community</h3>
-        <p>Anyone who needs a pair asks at the desk or uses the code. 15% off, and each pair they buy earns the closet a pair.</p>
+        <p>Those who can buy get 15% off, and each pair they buy sends one to the closet. Those who cannot apply for a free pair, and the closet approves it.</p>
         <ul>
           <li>Sizes to try on at the closet</li>
           <li>Free exchanges if the size is off</li>
@@ -305,10 +357,10 @@
       </div>
       <div class="col">
         <h3>For the closet</h3>
-        <p>Sponsored pairs, orders through the code, and the org's own budget all fill one box. At $300 it ships, doubled.</p>
+        <p>Sponsors, community orders and the org's own budget all fill one box. At $300 it ships to the closet, doubled by RUBIES.</p>
         <ul>
-          <li><span class="org-name">Uniting Pride</span> chooses the styles and sizes</li>
-          <li>RUBIES sends two of everything chosen</li>
+          <li>Free pairs picked up at the closet come out of the box</li>
+          <li>Free pairs shipped to a home go straight from RUBIES, delivery on us</li>
           <li>Returned and exchanged RUBIES items still arrive as donations, as today</li>
         </ul>
       </div>
@@ -317,7 +369,7 @@
         <p>Nothing to log, count or update. This page runs on RUBIES data.</p>
         <ul>
           <li>Share this link with your community</li>
-          <li>Hand out the code to anyone who asks</li>
+          <li>Approve free-pair requests from an email, one click, or set a monthly auto-approve</li>
           <li>Tell us the sizes when the box is ready</li>
         </ul>
       </div>
@@ -364,7 +416,7 @@
   var DEFAULT_STATE = {
     org: 'Uniting Pride', closet: 'Up and Away', city: 'Champaign-Urbana, IL', code: 'UPRIDE15',
     // example starting point: 4 orders through the code (25% of retail each), 3 pairs already sponsored
-    orders: 4, orderCredit: 32, sponsored: { 'aj|M': 2, 'aj|L': 1 }, gifts: 0
+    orders: 4, orderCredit: 32, sponsored: { 'aj|M': 2, 'aj|L': 1 }, gifts: 0, requests: 3
   };
   var state = load();
 
@@ -477,7 +529,7 @@
     var full = total >= BOX;
     document.getElementById('hero-amount').textContent = money(Math.min(total, BOX));
     document.getElementById('hero-pairs').textContent = pairsOnTheWay();
-    document.getElementById('hero-orders').textContent = state.orders;
+    document.getElementById('hero-people').textContent = state.requests || 0;
     Array.prototype.forEach.call(document.querySelectorAll('.amount'), function (el) { el.textContent = money(Math.min(total, BOX)); });
     Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) {
       bar.classList.toggle('full', full);
@@ -493,7 +545,7 @@
       var p = byKey[k.split('|')[0]];
       rows.push({ label: n + ' &times; ' + p.name.replace(/No-Tuck |Shaping /g, '') + ' ' + k.split('|')[1] + ' sponsored', amt: n * p.closet });
     });
-    if (state.orders) rows.push({ label: state.orders + ' orders through the code', amt: state.orderCredit });
+    if (state.orders) rows.push({ label: state.orders + ' community orders with the code (a pair per two orders)', amt: state.orderCredit });
     if (state.gifts) rows.push({ label: 'Gifts toward the box', amt: state.gifts });
     rows.forEach(function (r) {
       var li = document.createElement('li');
@@ -533,6 +585,7 @@
     var keep = { org: state.org, closet: state.closet, city: state.city, code: state.code };
     state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), keep);
     save(); renderRegistry(); renderProgress();
+    document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
     toast('Progress reset to the example starting point.');
   });
   document.getElementById('demo-fill').addEventListener('click', function () {
@@ -542,6 +595,26 @@
     toast('Box full. This is what the org sees when it is time to choose sizes.');
     document.getElementById('fill').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  // apply form
+  (function () {
+    var style = document.getElementById('ap-style');
+    var size = document.getElementById('ap-size');
+    PRODUCTS.forEach(function (p) { var o = document.createElement('option'); o.value = p.key; o.textContent = p.name; style.appendChild(o); });
+    function fillSizes() {
+      size.innerHTML = '';
+      byKey[style.value].sizes.forEach(function (sz) { var o = document.createElement('option'); o.value = sz; o.textContent = sz; size.appendChild(o); });
+    }
+    style.addEventListener('change', fillSizes); fillSizes();
+    document.getElementById('apply-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      state.requests = (state.requests || 0) + 1; save();
+      document.getElementById('apply-form').hidden = true;
+      document.getElementById('apply-done').hidden = false;
+      renderProgress();
+      toast('Request sent to ' + state.org + ' for approval.');
+    });
+  })();
 
   renderOrg(); renderProducts(); renderRegistry(); renderChips(); renderProgress();
 })();
