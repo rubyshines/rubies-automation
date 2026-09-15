@@ -30,6 +30,15 @@ async function resolveTheirTimeZone(sb, { company_id, their_timezone }) {
   return resolveCompanyTimeZone(data);
 }
 
+// Every MCP handler must return the content envelope. Returning a bare data
+// object passes the client's "is it an object?" check and then renders as
+// nothing at all, so the tool looks like it ran and said something empty.
+// Asserted for every tool by test/mcpToolShape.test.js.
+function envelope(text, data) {
+  const payload = data === undefined ? text : `${text}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
+  return { content: [{ type: 'text', text: payload }] };
+}
+
 async function handleAvailability(args = {}) {
   const sb = getSupabaseClient();
   const tz = await resolveTheirTimeZone(sb, args);
@@ -53,19 +62,25 @@ async function handleAvailability(args = {}) {
     return `${day.label}: ${shown.join(', ')}${free.length > 8 ? `, +${free.length - 8} more` : ''}${notes}`;
   });
 
-  return {
+  const header = [
+    `## Availability (${grid.durationMinutes} min slots, ${grid.timeZone})`,
+    tz.timeZone ? `Their timezone: ${timeZoneLabel(tz.timeZone)} (${tz.source})` : null,
+    tz.split ? `Note: ${tz.reason}` : null,
+    `Calendars checked: ${(grid.calendars || []).join(', ') || 'none'}`,
+    '',
+  ].filter(Boolean).join('\n');
+
+  const summary = (fits.length ? `Best fits, next to a call already booked:\n${fits.join('\n')}\n\n` : '') + lines.join('\n');
+
+  return envelope(header + summary, {
     ok: true,
     timezone: grid.timeZone,
     their_timezone: tz.timeZone,
     their_timezone_source: tz.source,
     their_timezone_warning: tz.split ? tz.reason : null,
-    their_timezone_label: tz.timeZone ? timeZoneLabel(tz.timeZone) : null,
     duration_minutes: grid.durationMinutes,
-    calendars_checked: grid.calendars,
-    summary: (fits.length ? `Best fits, next to a call already booked:\n${fits.join('\n')}\n\n` : '') + lines.join('\n'),
     best_fits: grid.bestFits || [],
-    days: grid.days,
-  };
+  });
 }
 
 async function handleReadProposedTimes(args = {}) {
@@ -85,7 +100,7 @@ async function handleReadProposedTimes(args = {}) {
     message = data?.body_text || null;
     sentAt = data?.sent_at || null;
   }
-  if (!message) return { ok: false, error: 'No message to read — pass `message`, or a company_id with an inbound message.' };
+  if (!message) return envelope('No message to read — pass `message`, or a company_id with an inbound message.');
 
   const res = await extractProposedTimes({
     message,
@@ -93,13 +108,20 @@ async function handleReadProposedTimes(args = {}) {
     fallbackTimeZone: tz.timeZone,
     company_id: args.company_id || null,
   });
-  return {
+  const payload = {
     ok: !res.error,
     error: res.error,
     their_timezone: tz.timeZone,
     their_timezone_source: tz.source,
     ...res,
   };
+  const times = Array.isArray(res.times) ? res.times : [];
+  const head = res.error
+    ? `Could not read proposed times: ${res.error}`
+    : times.length
+      ? `## Proposed times read from their message (${times.length})`
+      : 'No specific times were proposed in that message.';
+  return envelope(head, payload);
 }
 
 async function handleSchedule(args = {}) {

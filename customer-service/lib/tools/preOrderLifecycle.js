@@ -16,12 +16,18 @@ const {
   sendPreOrderUpdateNotices,
 } = require('../merchandising/preOrderLifecycle');
 
+// Every MCP handler must return the content envelope, never a bare string —
+// the server hands the return value straight back and a string fails result
+// validation at the client, so the tool is unusable from Claude Code while
+// its CLI twin works fine. Asserted for every tool by mcpToolShape.test.js.
+const text = (t) => ({ content: [{ type: 'text', text: t }] });
+
 async function handleHygiene({ fix_attributes, fix_closed_drift } = {}) {
   const report = await preOrderHygiene({
     fixAttributes: fix_attributes ?? false,
     fixClosedDrift: fix_closed_drift ?? false,
   });
-  return hygieneReportMarkdown(report);
+  return text(hygieneReportMarkdown(report));
 }
 
 function noticeSummaryMarkdown(summary) {
@@ -69,7 +75,7 @@ async function handleUpdateNotice(args = {}) {
     testRecipient: args.test_recipient || undefined,
     resend: args.resend ?? false,
   });
-  return noticeSummaryMarkdown(summary);
+  return text(noticeSummaryMarkdown(summary));
 }
 
 module.exports = [
