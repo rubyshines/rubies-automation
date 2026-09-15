@@ -30,10 +30,23 @@ function formatPreOrderDate(dateStr) {
 }
 
 /**
- * Attribute value for a pre-order line — app-identical when the variant has a
- * restock date, generic fallback otherwise.
+ * Attribute value for a pre-order line — app-identical when a date is known,
+ * generic fallback otherwise.
+ *
+ * `targetDate` (YYYY-MM-DD) is an operator-stated availability date and wins
+ * over the variant's own pre-order date: the variant metafield is the promise
+ * shown at checkout, and an order re-issued as a pre-order after the fact is
+ * routinely stamped with a date the variant never carried (a free replacement
+ * on a product not on web pre-order, say). An unparseable targetDate throws
+ * rather than degrading to the fallback, because "Will ship when in stock" on
+ * a line the operator just dated is a silent broken promise.
  */
-function preOrderAttrValue(sku) {
+function preOrderAttrValue(sku, { targetDate } = {}) {
+  if (targetDate != null && targetDate !== '') {
+    const formatted = formatPreOrderDate(targetDate);
+    if (!formatted) throw new Error(`Invalid pre-order target date "${targetDate}" — expected YYYY-MM-DD.`);
+    return `Target availability ${formatted}.`;
+  }
   const variant = sku ? productCache.getVariantBySku(sku) : null;
   const formatted = formatPreOrderDate(variant?.preOrderDate);
   return formatted ? `Target availability ${formatted}.` : PRE_ORDER_FALLBACK_VALUE;

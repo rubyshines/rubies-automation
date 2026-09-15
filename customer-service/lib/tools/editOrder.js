@@ -155,6 +155,7 @@ const tools = [
       'Lines added in an edit do not inherit bundle pricing, and the order\'s discount code may or may not auto-apply to them (it can also STACK on top of a custom discount) — after staging, verify the added line\'s calculated net price rather than assuming.',
       'Discounts from original items are automatically preserved on replacement items. You can also apply a custom discount (percent or fixed amount) to any added item — e.g. discount: { percent: 100 } to make it free.',
       'Use dry_run=true to test without committing (safe on any order).',
+      'CANNOT write line-item properties: Shopify\'s order-edit API has no input for customAttributes, so this tool cannot stamp a `Pre-order` target-availability date on a line (nor carry one over on a swap). To show the customer a pre-order date on an order that has already been placed, use split_shipment with split_kind="pre_order" and target_availability_date — it works when the item is the only line on the order (the whole order is re-issued as the $0 pre-order).',
     ].join(' '),
     inputSchema: {
       type: 'object',

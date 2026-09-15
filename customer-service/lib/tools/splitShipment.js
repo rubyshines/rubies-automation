@@ -24,6 +24,17 @@
  * "these must not ship yet" is the whole reason that split exists, and the new
  * order is live in the warehouse queue within seconds of being created.
  *
+ * The held items may be the ENTIRE order. Shopify's order-edit API has no
+ * input for line-item properties (customAttributes are set at checkout and
+ * never editable afterwards), so re-issuing the line on a new order is the
+ * only way to put a customer-visible `Pre-order` date on an order that has
+ * already been placed. A single-item order that turned out to be out of stock
+ * is therefore split against its only line: the original becomes fully
+ * placeholder-fulfilled and the new $0 order IS the pre-order. An operator can
+ * state the date with `target_availability_date`; it beats the variant's own
+ * pre-order date because the variant routinely has none (a free replacement
+ * on a product that is not on web pre-order, say).
+ *
  * Merge mode (`ship_with_order`): when the specified items are ALREADY part of
  * another existing order (e.g. a free replacement order was created containing
  * them so everything leaves the warehouse in one box), pass that order's
@@ -124,6 +135,17 @@ function allocateSplitLineItems(allFoLineItems, items, attrValueForSku = () => '
   return { byFo, matchedSummary, newOrderLineItems, errors };
 }
 
+/**
+ * The distinct `Pre-order` values carried by the new order's lines, quoted, for
+ * the preview and the phase 2 report — so the operator sees the exact text the
+ * customer will see rather than "date where known".
+ */
+function describeStampedValues(lineItems) {
+  const values = [...new Set((lineItems || [])
+    .flatMap(li => (li.customAttributes || []).filter(a => a.key === 'Pre-order').map(a => a.value)))];
+  return values.length ? values.map(v => `"${v}"`).join(', ') : '(none)';
+}
+
 const PRE_ORDER_PENDING_TAG = 'pre-order-pending';
 const NEW_ORDER_TAGS = ['pre-order', 'cs-mcp'];
 
@@ -190,6 +212,7 @@ const tools = [
       'Split an order so some items ship now and the rest ship separately later. Marks the specified held line items as fulfilled (placeholder, no tracking, no customer notification) on the original order so the warehouse can release the rest, AND immediately creates a new $0 order containing the held items. The customer pays nothing extra and receives nothing less — this only splits the shipment timing.',
       'REQUIRED: split_kind says WHY the items are held, and the two kinds behave differently. Use "pre_order" when the held items are genuinely out of stock / on pre-order and should ship as soon as inventory arrives: every new line is stamped with a `Pre-order` line-item property carrying its target-availability date, the original is tagged `pre-order-pending`, the new order is tagged `pre-order` + `pre-order-from-<original>`, and nothing holds it back. Use "hold" when the items are in stock but must NOT ship yet — waiting on the customer to confirm a size, a pending address fix, anything the customer has to answer first: no `Pre-order` properties are stamped, the tags are `split-pending` / `split-from-<original>`, and a Warehance warehouse hold is placed on the new order using hold_reason.',
       'Do NOT use "pre_order" for an item that is merely being held. The `Pre-order` property is the signal our pre-order sweeps key on AND it renders on the customer\'s order status page, so it publishes an availability date we never promised and files the customer into the pre-order population.',
+      'The held items may be the WHOLE order, including a single-item order: the original becomes fully placeholder-fulfilled and the new $0 order is the pre-order the customer sees. This is the ONLY way to put a `Pre-order` target-availability date on an order that has already been placed — Shopify cannot write line-item properties on an existing line, so edit_order cannot do it. Pass target_availability_date (YYYY-MM-DD) to state the date; it is rendered exactly as the storefront app writes it ("Target availability end of November, 2026.").',
       'Two-phase: phase 1 (confirmed omitted/false) previews; phase 2 (confirmed=true) executes.',
       'You MUST present the phase 1 preview to the operator and receive explicit confirmation before calling phase 2.',
       'Pass the SKUs of the HELD items (the ones being moved to the new order), not the items being shipped now.',
@@ -204,6 +227,10 @@ const tools = [
           type: 'string',
           enum: SPLIT_KINDS,
           description: 'Why the items are being held. "pre_order" = genuinely out of stock, ships when inventory arrives (stamps `Pre-order` line properties + pre-order tags, no hold). "hold" = in stock but must not ship yet, e.g. awaiting the customer\'s size confirmation (no `Pre-order` properties, `split-*` tags, warehouse hold placed on the new order). Required unless ship_with_order is set.',
+        },
+        target_availability_date: {
+          type: 'string',
+          description: 'Pre-order splits only. YYYY-MM-DD date the held items are expected to be available (e.g. "end of November 2026" → "2026-11-30"). Stamped on every new line as the customer-visible `Pre-order` property in the storefront app\'s wording: "Target availability <beginning|middle|end> of <Month>, <Year>." Omit to use the variant\'s own web pre-order date, or "Will ship when in stock" when it has none.',
         },
         hold_reason: {
           type: 'string',
@@ -234,7 +261,7 @@ const tools = [
       },
       required: ['order_number', 'items'],
     },
-    handler: async ({ order_number, items, staff_note, split_kind, hold_reason, ship_with_order, confirmed, _fulfill_data }) => {
+    handler: async ({ order_number, items, staff_note, split_kind, hold_reason, target_availability_date, ship_with_order, confirmed, _fulfill_data }) => {
       // --- Phase 2: execute ---
       if (confirmed && _fulfill_data) {
         const {
@@ -370,6 +397,7 @@ const tools = [
 
         const newOrderUrl = newOrder?.id ? getAdminUrl(newOrder.id) : '(no admin url)';
         const newOrderName = newOrder?.name || '(no order name returned)';
+        const stampedValues = describeStampedValues(new_order_line_items);
 
         // Step 4 (hold splits only): the new order is already live in the
         // Warehance queue, so the hold is part of the split rather than a
@@ -397,7 +425,7 @@ const tools = [
                 ? (hold?.placed
                   ? `  - Warehouse hold: PLACED — ${holdReason || 'customer response'}`
                   : `  - ⚠️ Warehouse hold: **NOT PLACED** (${hold?.detail || 'unknown error'}). This order will ship as soon as the warehouse picks it up — place the hold now with \`warehouse_hold\` on ${newOrderName}.`)
-                : '  - Every line stamped with a `Pre-order` property (target availability date where known).',
+                : `  - Every line stamped with a \`Pre-order\` property: ${stampedValues}`,
               '',
               isHoldSplit
                 ? `Warehance will ship the remaining items on ${order_name} now. ${newOrderName} stays put until its hold is released.`
@@ -428,6 +456,23 @@ const tools = [
       }
       if (isHoldSplit && !hold_reason) {
         return { content: [{ type: 'text', text: 'Error: hold_reason is required when split_kind="hold" — say what the new order is waiting on (e.g. "waiting on customer to confirm the L fits"). It becomes the Warehance hold reason and the staff note.' }] };
+      }
+
+      // An operator-stated date only means something on a pre-order split, and a
+      // date that does not parse must fail here rather than quietly becoming
+      // "Will ship when in stock" on a line the operator just dated.
+      const targetDate = target_availability_date ? String(target_availability_date).trim() : null;
+      if (targetDate && (isHoldSplit || ship_with_order)) {
+        return { content: [{ type: 'text', text: 'Error: target_availability_date only applies to split_kind="pre_order" — a hold split and a merge stamp no `Pre-order` property, so there is no date to show the customer.' }] };
+      }
+      let attrValueForSku = null;
+      if (!isHoldSplit) {
+        try {
+          attrValueForSku = sku => preOrderAttrValue(sku, { targetDate });
+          if (targetDate) attrValueForSku(null); // validate once, up front
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Error: ${err.message}` }] };
+        }
       }
 
       const order = await getOrderWithFulfillmentOrders(order_number);
@@ -477,7 +522,7 @@ const tools = [
 
       // A hold split passes null: no `Pre-order` line properties at all.
       const { byFo, matchedSummary, newOrderLineItems, errors } =
-        allocateSplitLineItems(allFoLineItems, items, isHoldSplit ? null : preOrderAttrValue);
+        allocateSplitLineItems(allFoLineItems, items, attrValueForSku);
 
       if (errors.length) {
         return { content: [{ type: 'text', text: `Error preparing fulfillment:\n${errors.map(e => `- ${e}`).join('\n')}` }] };
@@ -597,7 +642,7 @@ const tools = [
             isHoldSplit ? '**New held order to create:**' : '**New pre-order to create:**',
             isHoldSplit
               ? `  Items: ${itemSummary} — NO "Pre-order" line-item properties (these items are in stock, the customer is shown no availability date)`
-              : `  Items: ${itemSummary} — each tagged with a "Pre-order" line-item property (target availability date when known)`,
+              : `  Items: ${itemSummary} — each stamped with a "Pre-order" line-item property the customer sees on their order page: ${describeStampedValues(newOrderLineItems)}`,
             `  Total: $0 (already paid via ${order.name})`,
             `  Tags: \`${newOrderTags.join('`, `')}\``,
             `  Customer: ${order.customer?.email || customerName}`,
@@ -606,7 +651,7 @@ const tools = [
             `  Tag to add on original: \`${isHoldSplit ? SPLIT_PENDING_TAG : PRE_ORDER_PENDING_TAG}\``,
             '',
             staff_note ? `**Staff note (added to both orders):** ${staff_note}\n` : '',
-            `To confirm, call split_shipment again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, split_kind="${split_kind}", and _fulfill_data=${JSON.stringify(fulfillData)}.`,
+            `To confirm, call split_shipment again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, split_kind="${split_kind}"${targetDate ? `, target_availability_date="${targetDate}"` : ''}, and _fulfill_data=${JSON.stringify(fulfillData)}.`,
           ].filter(Boolean).join('\n'),
         }],
       };
@@ -616,5 +661,6 @@ const tools = [
 
 module.exports = tools;
 module.exports.allocateSplitLineItems = allocateSplitLineItems;
+module.exports.describeStampedValues = describeStampedValues;
 module.exports.holdNewOrder = holdNewOrder;
 module.exports.SPLIT_KINDS = SPLIT_KINDS;
