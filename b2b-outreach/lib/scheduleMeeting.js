@@ -632,6 +632,57 @@ async function rescheduleMeeting(p = {}, deps = {}) {
 
   // --- 3. move the event (Google emails them the update) ----------------------
   const cal = deps.cal || await getCalendar();
+
+  // Is the call on record still on the calendar? Jamie deleted an event by
+  // hand and then rescheduled from the panel (Lumenus, 2026-09-14): the patch
+  // landed on the deleted event without an error, the row "moved", the reply
+  // promised an invite, and nobody held one. A deleted event is retrievable
+  // but cancelled, or gone (404/410); either way the record is stale, so the
+  // row is closed and this becomes a fresh booking, whose reply says "sent an
+  // invite" rather than "moved".
+  let onCalendar = true;
+  try {
+    const cur = await cal.events.get({ calendarId, eventId: meeting.google_event_id });
+    if (cur?.data?.status === 'cancelled') onCalendar = false;
+  } catch (e) {
+    const code = e?.code || e?.response?.status;
+    if (code === 404 || code === 410) onCalendar = false;
+    else return { ok: false, error: `Could not read the calendar event: ${e.message}. Nothing was sent.` };
+  }
+  if (!onCalendar) {
+    const { error: cErr2 } = await sb.from('b2b_meetings')
+      .update({ status: 'cancelled', updated_at: now.toISOString() }).eq('id', meeting.id);
+    if (cErr2) console.error(`[rescheduleMeeting] could not close stale call #${meeting.id}: ${cErr2.message}`);
+    // Booked fresh through scheduleMeeting: same recipient, same thread, same
+    // reply text, and its own row. `deps.scheduleMeeting` is for tests.
+    const fresh = await (deps.scheduleMeeting || scheduleMeeting)({
+      company_id, start, thread_id: thread_id || meeting.thread_id || undefined, subject, body,
+      duration_minutes: duration, their_timezone: theirTz, title: meeting.title,
+      confirmed, force, skip_reply, message_type, cc, notes: p.notes,
+    });
+    return { ...fresh, replaced_meeting_id: meeting.id, replaced_reason: 'event_deleted_from_calendar' };
+  }
+
+  // Whoever is on the conversation is on the call, for a move as for a
+  // booking: the reply's To and Cc and the thread's audience join the
+  // attendees the event already has (never dropped — they hold the invite).
+  const splitAddrs = v => String(v || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  let audience = [];
+  const replyThreadId = thread_id || pendingDraft?.thread_id || meeting.thread_id || null;
+  if (replyThreadId) {
+    try {
+      const { threadAudience } = require('./replyCc');
+      audience = await threadAudience(sb, { thread_id: replyThreadId, our_email: FROM_EMAIL });
+    } catch (e) {
+      console.warn(`[rescheduleMeeting] thread audience skipped for ${company_id}: ${e.message}`);
+    }
+  }
+  const attendees = [...new Set([
+    ...(meeting.attendee_emails || []).map(a => String(a).toLowerCase()),
+    ...splitAddrs(delivery.email), ...splitAddrs(ccList), ...audience,
+  ])];
+  const added = attendees.filter(a => !(meeting.attendee_emails || []).map(x => String(x).toLowerCase()).includes(a));
+
   let event;
   try {
     const res = await cal.events.patch({
@@ -639,6 +690,7 @@ async function rescheduleMeeting(p = {}, deps = {}) {
       requestBody: {
         start: { dateTime: startDate.toISOString(), timeZone: BUSINESS_TIMEZONE },
         end: { dateTime: endDate.toISOString(), timeZone: BUSINESS_TIMEZONE },
+        ...(added.length ? { attendees: attendees.map(email => ({ email })) } : {}),
       },
     });
     event = res.data || {};
@@ -652,12 +704,19 @@ async function rescheduleMeeting(p = {}, deps = {}) {
     starts_at: startDate.toISOString(),
     ends_at: endDate.toISOString(),
     duration_minutes: duration,
+    ...(added.length ? { attendee_emails: attendees } : {}),
     ...(theirTz && !meeting.their_timezone ? { their_timezone: theirTz, their_timezone_source: 'operator' } : {}),
     updated_at: stamp,
   }).eq('id', meeting.id);
   if (mErr) console.error(`[rescheduleMeeting] b2b_meetings update failed (event IS moved): ${mErr.message}`);
 
   // --- 5. the reply, down the one send path ---------------------------------
+  // Cc'd to everyone on the invite besides the To, so email and invite agree.
+  const moveCc = (() => {
+    const toAddrs = splitAddrs(delivery.email);
+    const extra = attendees.filter(a => !toAddrs.includes(a));
+    return extra.length ? extra.join(', ') : ccList;
+  })();
   let send;
   if (skip_reply) {
     send = { ok: true, phase: 'no_reply_sent', thread_id: thread_id || meeting.thread_id || null };
@@ -669,9 +728,9 @@ async function rescheduleMeeting(p = {}, deps = {}) {
         ? await sendDraftById(sb, {
           ...common, draft_id: pendingDraft.id, body, subject,
           thread_id: thread_id || pendingDraft.thread_id || meeting.thread_id || undefined,
-          message_type, cc: ccList ?? undefined,
+          message_type, cc: moveCc ?? undefined,
         })
-        : await sendB2bEmail({ ...common, company_id, thread_id: thread_id || meeting.thread_id || undefined, subject, body, cc: ccList ?? undefined, message_type });
+        : await sendB2bEmail({ ...common, company_id, thread_id: thread_id || meeting.thread_id || undefined, subject, body, cc: moveCc ?? undefined, message_type });
     } catch (e) {
       send = { ok: false, error: e.message };
     }
@@ -704,6 +763,8 @@ async function rescheduleMeeting(p = {}, deps = {}) {
     thread_id: send.thread_id,
     gmail_message_id: send.gmail_message_id,
     double_booked_over: clashInfo ? clashInfo.summary : null,
+    invited: attendees,
+    newly_invited: added,
     record_written: !mErr,
   };
 }
