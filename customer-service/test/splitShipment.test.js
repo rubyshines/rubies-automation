@@ -590,3 +590,96 @@ describe('holdNewOrder — waits for Warehance to ingest the new order', () => {
     assert.match(result.detail, /shipped/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// target_availability_date — the operator states the date the customer sees.
+// Shopify cannot write line-item properties on a placed order, so this split
+// is the only way to date a line after the fact, including on a single-item
+// order where the "held" item is the whole order.
+// ---------------------------------------------------------------------------
+
+describe('split_shipment — target_availability_date', () => {
+  beforeEach(() => { mockOrder = makeOrder(); resetCalls(); });
+
+  it('preview shows the exact Pre-order text the customer will see', async () => {
+    const preview = await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'HLA-BLK-M' }],
+      target_availability_date: '2026-11-30',
+    });
+    const text = preview.content[0].text;
+    assert.match(text, /"Target availability end of November, 2026\."/);
+    assert.match(text, /target_availability_date="2026-11-30"/);
+    const fulfillData = previewFulfillData(text);
+    assert.deepEqual(fulfillData.new_order_line_items[0].customAttributes, [
+      { key: 'Pre-order', value: 'Target availability end of November, 2026.' },
+    ]);
+  });
+
+  it('phase 2 stamps the stated date on the new order line and reports it', async () => {
+    const preview = await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'HLA-BLK-M' }],
+      target_availability_date: '2026-11-30',
+    });
+    const result = await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'HLA-BLK-M' }],
+      confirmed: true, _fulfill_data: previewFulfillData(preview.content[0].text),
+    });
+    assert.deepEqual(createDraftOrderCalls[0].lineItems[0].customAttributes, [
+      { key: 'Pre-order', value: 'Target availability end of November, 2026.' },
+    ]);
+    assert.match(result.content[0].text, /Pre-order.*"Target availability end of November, 2026\."/);
+    assert.equal(holdCalls.length, 0);
+  });
+
+  it('dates the whole order when the held item is the only line (single-item pre-order)', async () => {
+    mockOrder = makeOrder({
+      fulfillmentOrders: [{
+        id: 'gid://shopify/FulfillmentOrder/fo-1', status: 'OPEN',
+        lineItems: [
+          { id: 'gid://shopify/FulfillmentOrderLineItem/foli-gaff', remainingQuantity: 1, totalQuantity: 1, lineItem: { id: 'gid://shopify/LineItem/li-1', title: 'Naomi Gaff', variantTitle: 'Black / 1X', sku: 'GAF-BLK-XL', variant: { id: 'gid://shopify/ProductVariant/v-gaff' } } },
+        ],
+      }],
+    });
+    const preview = await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'GAF-BLK-XL' }],
+      target_availability_date: '2026-11-30',
+    });
+    assert.match(preview.content[0].text, /Remaining on original:\*\* none/);
+    await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'GAF-BLK-XL' }],
+      confirmed: true, _fulfill_data: previewFulfillData(preview.content[0].text),
+    });
+    // The original is placeholder-fulfilled in full; the new order carries the dated line.
+    assert.equal(createFulfillmentCalls.length, 1);
+    assert.deepEqual(createFulfillmentCalls[0].lineItemsByFulfillmentOrder[0].fulfillmentOrderLineItems, [
+      { id: 'gid://shopify/FulfillmentOrderLineItem/foli-gaff', quantity: 1 },
+    ]);
+    assert.deepEqual(createDraftOrderCalls[0].lineItems, [{
+      variantId: 'gid://shopify/ProductVariant/v-gaff', quantity: 1,
+      customAttributes: [{ key: 'Pre-order', value: 'Target availability end of November, 2026.' }],
+    }]);
+    assert.deepEqual(createDraftOrderCalls[0].tags, ['pre-order', 'cs-mcp', 'pre-order-from-30267']);
+  });
+
+  it('refuses an unparseable date instead of stamping "Will ship when in stock"', async () => {
+    const result = await handler({
+      order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'HLA-BLK-M' }],
+      target_availability_date: 'end of Nov 2026',
+    });
+    assert.match(result.content[0].text, /Invalid pre-order target date/);
+    assert.equal(createFulfillmentCalls.length, 0);
+  });
+
+  it('refuses a date on a hold split — there is no property to carry it', async () => {
+    const result = await handler({
+      order_number: '30267', split_kind: 'hold', hold_reason: 'waiting on size', items: [{ sku: 'HLA-BLK-M' }],
+      target_availability_date: '2026-11-30',
+    });
+    assert.match(result.content[0].text, /only applies to split_kind="pre_order"/);
+  });
+
+  it('without a date the variant fallback still applies', async () => {
+    const preview = await handler({ order_number: '30267', split_kind: 'pre_order', items: [{ sku: 'HLA-BLK-M' }] });
+    assert.match(preview.content[0].text, /"Will ship when in stock"/);
+  });
+});

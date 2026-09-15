@@ -60,6 +60,25 @@ describe('preOrderAttrValue', () => {
     assert.equal(preOrderAttrValue('NOPE-XX-1'), PRE_ORDER_FALLBACK_VALUE);
     assert.equal(preOrderAttrValue(null), PRE_ORDER_FALLBACK_VALUE);
   });
+
+  it('an operator-stated target date wins over the variant\'s own date', () => {
+    assert.equal(preOrderAttrValue('CKY-BLK-L', { targetDate: '2026-11-30' }), 'Target availability end of November, 2026.');
+  });
+
+  it('an operator-stated target date dates a line whose variant has none', () => {
+    assert.equal(preOrderAttrValue('HLA-SND-M', { targetDate: '2026-11-05' }), 'Target availability beginning of November, 2026.');
+    assert.equal(preOrderAttrValue(null, { targetDate: '2026-11-15' }), 'Target availability middle of November, 2026.');
+  });
+
+  it('an unparseable target date throws rather than degrading to the fallback', () => {
+    assert.throws(() => preOrderAttrValue('CKY-BLK-L', { targetDate: 'end of Nov' }), /Invalid pre-order target date/);
+    assert.throws(() => preOrderAttrValue('CKY-BLK-L', { targetDate: '2026-13-40' }), /Invalid pre-order target date/);
+  });
+
+  it('an empty target date is the same as none', () => {
+    assert.equal(preOrderAttrValue('CKY-BLK-L', { targetDate: '' }), 'Target availability end of August, 2026.');
+    assert.equal(preOrderAttrValue('HLA-SND-M', { targetDate: null }), PRE_ORDER_FALLBACK_VALUE);
+  });
 });
 
 describe('preOrderLineAttributes', () => {
