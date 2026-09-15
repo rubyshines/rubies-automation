@@ -221,6 +221,7 @@ async function handleTriage(input = {}) {
     const detail = {
       keep: `admitted to the outreach queue (vetted ${res.vetted_at})`,
       drop: `marked lost — ${res.triage_reason}`,
+      misfit: `marked lost as a misfit — ${res.triage_reason}${res.discovery?.updated ? ` (discovery row #${res.discovery.prospect_id} dismissed with the note)` : res.discovery?.error ? ` (discovery row NOT updated: ${res.discovery.error})` : ''}`,
       snooze: `snoozed until ${res.snoozed_until} — no outreach until then, and any reply already sitting there stops showing as waiting on us`,
       pause: `outreach paused — ${res.outreach_paused_reason}. Still fully visible and searchable; nothing will be drafted or chased, but a NEW reply still surfaces.`,
       // Was missing, so `on_me` rendered "undefined" — the one action whose
@@ -780,13 +781,13 @@ module.exports = [
   },
   {
     name: 'b2b_triage',
-    description: "Vet a company for outreach WITHOUT generating a draft. keep (admit it to the Tier-4 first-touch queue), drop (they are gone or said no — marks lost), snooze (come back on a date: 'we just spoke, not yet'), pause (indefinite, ours to reverse: 'not working this market right now'), on_me (Jamie owes them an answer but not today — moves it out of the queue onto his own list, where it keeps ageing and shows the relationship's suggested next step; the pending draft is kept, unlike snooze and pause which clear it, and the claim is cleared only by sending or by resume, never by them writing back), resume (put it back in the queue, lifting whichever of the three is set). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted, cohort by cohort. All three deferrals leave the company fully visible and searchable and stop it being chased; none of them can hide a reply that arrives afterwards.",
+    description: "Vet a company for outreach WITHOUT generating a draft. keep (admit it to the Tier-4 first-touch queue), drop (they are gone or said no — marks lost), misfit (should never have been on the list at all: drops it AND writes your note back to the discovery table so the next research pass learns what 'qualified' got wrong — the reason IS the note), snooze (come back on a date: 'we just spoke, not yet'), pause (indefinite, ours to reverse: 'not working this market right now'), on_me (Jamie owes them an answer but not today — moves it out of the queue onto his own list, where it keeps ageing and shows the relationship's suggested next step; the pending draft is kept, unlike snooze and pause which clear it, and the claim is cleared only by sending or by resume, never by them writing back), resume (put it back in the queue, lifting whichever of the three is set). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted, cohort by cohort. All three deferrals leave the company fully visible and searchable and stop it being chased; none of them can hide a reply that arrives afterwards.",
     inputSchema: {
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'b2b_companies id.' },
-        action: { type: 'string', description: "'keep' | 'drop' | 'restore' | 'snooze' | 'pause' | 'on_me' | 'resume' | 'clear_due'. restore = undo a drop (back to active / in_contact / prospect as the record supports; still unvetted). clear_due = nothing to send now: clears the reminder date that put a company at Tier 5 and leaves the cadence to bring it back." },
-        reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise, and ignored on on_me (that row explains itself with the relationship's suggested next step)." },
+        action: { type: 'string', description: "'keep' | 'drop' | 'misfit' | 'restore' | 'snooze' | 'pause' | 'on_me' | 'resume' | 'clear_due'. restore = undo a drop (back to active / in_contact / prospect as the record supports; still unvetted). clear_due = nothing to send now: clears the reminder date that put a company at Tier 5 and leaves the cadence to bring it back." },
+        reason: { type: 'string', description: "Why. Required on drop, misfit and pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise, and ignored on on_me (that row explains itself with the relationship's suggested next step)." },
         until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
       },
       required: ['company_id', 'action'],

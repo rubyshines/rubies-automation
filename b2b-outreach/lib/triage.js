@@ -10,6 +10,8 @@
  * The vetting decisions, deliberately small:
  *   keep   → vetted_at = now         (admit to the queue)
  *   drop   → relationship_state=lost (never surfaces again; reason recorded)
+ *   misfit → drop, plus the note goes back to the discovery table so the
+ *            research pass learns what "qualified" got wrong
  *   snooze → snoozed_until = date    (out of the queue until then)
  *
  * And the dispositions on a company already in play, which share this path so
@@ -40,6 +42,14 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
     case 'drop':
       if (!reason) throw new Error('drop requires a reason — an unexplained lost row gets re-litigated later');
       return { relationship_state: 'lost', triage_reason: reason, vetted_at: null };
+    case 'misfit':
+      // "This should never have been on the list." A louder drop: the same
+      // write as drop (lost, reason recorded, never surfaces again), plus a
+      // note that goes back to the discovery table so the next research pass
+      // can learn from it (triageCompany does that half — it needs the row's
+      // provenance, which a pure patch cannot see). The reason is the note.
+      if (!reason) throw new Error("misfit requires a note — say what made it not belong, that is the whole point");
+      return { relationship_state: 'lost', triage_reason: `doesn't belong: ${reason}`, vetted_at: null };
     case 'snooze':
       // DEPRECATED 2026-08-27. Snooze asked the operator to invent a date for a
       // question the cadence already answers, and every real use turned out to
@@ -126,7 +136,7 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
       // pending draft (if any) is left where it is.
       return { next_action_date: null };
     default:
-      throw new Error(`unknown triage action '${action}' — expected keep, drop, restore, snooze, pause, on_me, resume or clear_due`);
+      throw new Error(`unknown triage action '${action}' — expected keep, drop, misfit, restore, snooze, pause, on_me, resume or clear_due`);
   }
 }
 
@@ -134,7 +144,7 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
 async function triageCompany(sb, { company_id, action, reason, until, now = new Date(), source = 'operator', note = null } = {}) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
-    .select('id, name, relationship_state, order_count, last_outbound_at, relationship_next_step').eq('id', company_id).maybeSingle();
+    .select('id, name, relationship_state, order_count, last_outbound_at, relationship_next_step, source, source_id, metadata').eq('id', company_id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!company) throw new Error(`company '${company_id}' not found`);
 
@@ -143,9 +153,28 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
   // never got past prospect.
   const restoreTo = action === 'restore' ? restoredState(company) : null;
   const patch = computeTriage(action, { reason, until, now, source, note, restoreTo });
+  // A misfit note lives on the company too, so the drop's provenance survives
+  // a restore and a later reader can tell "we gave up" from "wrong list".
+  if (action === 'misfit') {
+    const meta = readMeta(company.metadata);
+    patch.metadata = { ...meta, discovery_misfit: { note: reason, at: now.toISOString() } };
+  }
   const { error: uErr } = await sb.from('b2b_companies')
     .update({ ...patch, updated_at: now.toISOString() }).eq('id', company_id);
   if (uErr) throw new Error(uErr.message);
+
+  // The half of misfit that improves discovery: the row this company came from
+  // is dismissed in the discovery table with the note as its reason, so the
+  // next importer run cannot bring it back and the next research pass has a
+  // labelled example of what "qualified" got wrong. Fail-soft: the company is
+  // already dropped, and a discovery-table hiccup must not undo that.
+  let discovery = null;
+  if (action === 'misfit' && company.source === 'discovery' && company.source_id) {
+    const { error: pErr } = await sb.from('retailer_prospects')
+      .update({ status: 'dismissed', analysis_status: 'operator_misfit', irrelevant_reason: reason })
+      .eq('id', Number(company.source_id));
+    discovery = pErr ? { updated: false, error: pErr.message } : { updated: true, prospect_id: Number(company.source_id) };
+  }
 
   // A pending draft is a chase waiting to be sent, so deciding not to chase has
   // to clear it. Leaving it behind does not merely look untidy: the panel merges
@@ -161,7 +190,7 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
   // company out of the queue is what stops that surviving draft dragging the row
   // back in — see mergePendingDraftEntries.
   let draftsCleared = 0;
-  if (action === 'pause' || action === 'snooze' || action === 'drop') {
+  if (action === 'pause' || action === 'snooze' || action === 'drop' || action === 'misfit') {
     const { data, error: dErr } = await sb.from('b2b_drafts')
       .update({ status: 'superseded' })
       .eq('company_id', company_id).eq('status', 'pending').select('id');
@@ -193,7 +222,12 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
     }
   }
 
-  return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch, ...(commitment ? { commitment } : {}) };
+  return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch, ...(commitment ? { commitment } : {}), ...(discovery ? { discovery } : {}) };
+}
+
+function readMeta(m) {
+  if (typeof m === 'string') { try { return JSON.parse(m) || {}; } catch { return {}; } }
+  return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
 }
 
 /** The relationship_state a dropped row returns to. Pure. */

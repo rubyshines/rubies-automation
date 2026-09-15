@@ -6091,9 +6091,16 @@ async function loadOutreachOnMe() {
 
 // ── Vetting ─────────────────────────────────────────────────────────────────
 // The admission gate as a list. Tier 4 only surfaces prospects a human has
-// kept, so an imported cohort waits here. Two decisions, both through the
-// same triage endpoint the console uses; keep needs no reason, drop does.
-// Keyboard-driven: 119 rows at a time should take seconds each.
+// kept, so an imported cohort waits here. Every row is the whole decision —
+// name and site, place and type, how we can reach them, the researcher's
+// angle — and the three answers sit on the row: Keep, Drop, and "Doesn't
+// belong", which is a louder drop that sends the note back to the discovery
+// table so the next research pass learns. Rows never open the detail pane:
+// nothing in it helps decide, and loading it per row made the list crawl.
+// Keyboard-driven, because a cohort is a hundred rows at a time.
+
+let outreachVetSelected = null;   // highlighted row, the keyboard's target
+let outreachVetReason = null;     // { id, kind: 'drop' | 'misfit' } — the open reason box
 
 async function fetchVettingRows() {
   const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
@@ -6108,14 +6115,16 @@ async function loadOutreachVetting() {
     renderOutreachSidebar(`Failed to load vetting: ${esc(err.message)}`);
     return;
   }
-  rememberOutreachEntries(outreachVetting.map(c => ({
-    company_id: c.id,
-    company_name: c.name,
-    channel: c.relationship_type,
-    tier: null,
-    message_type: null,
-    reason: outreachVettingSubtitle(c),
-  })));
+  if (!outreachVetting.some(c => c.id === outreachVetSelected)) outreachVetSelected = outreachVetting[0]?.id || null;
+  outreachVetReason = null;
+  // The pane on the right is for conversations; a company being vetted has
+  // none. Clear whatever was open so the list is the only thing on screen.
+  outreachSelectedId = null;
+  outreachDraft = null;
+  const detail = document.getElementById('outreach-detail');
+  const placeholder = document.getElementById('outreach-placeholder');
+  if (detail) detail.style.display = 'none';
+  if (placeholder) placeholder.style.display = 'flex';
   renderOutreachSidebar();
 }
 
@@ -6133,38 +6142,115 @@ function outreachVettingSubtitle(c) {
   return [kind, where].filter(Boolean).join(' · ') || 'new prospect';
 }
 
+function siteHost(url) {
+  return String(url || '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[/?#].*$/, '');
+}
+
 function outreachVettingRowHtml(c) {
+  const id = esc(c.id);
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
   const [label, cls, title] = OUTREACH_CONTACT_STATUS[c.contact_status] || [c.contact_status, 'badge-muted', ''];
   const score = c.discovery?.score;
+  const reasonOpen = outreachVetReason?.id === c.id ? outreachVetReason.kind : null;
+  const contactLine = c.contact_email
+    ? `${esc(c.contact_email)}${c.contact_name ? ` &middot; ${esc(c.contact_name)}` : ''}`
+    : c.contact_form_url
+      ? `<a href="${esc(c.contact_form_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">contact page &#8599;</a>`
+      : '';
   return `
-  <div class="queue-item outreach-row ${c.id === outreachSelectedId ? 'active' : ''}"
-       data-company-id="${esc(c.id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+  <div class="queue-item outreach-row vet-row ${c.id === outreachVetSelected ? 'active' : ''}"
+       data-company-id="${id}" onclick="vetSelect(this.dataset.companyId)">
     <div class="queue-item-inner">
       <div class="queue-item-row1">
         <span class="queue-item-name">${esc(c.name)}</span>
+        ${c.website ? `<a class="vet-site" href="${esc(c.website)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(c.website)}">${esc(siteHost(c.website))} &#8599;</a>` : '<span class="vet-site vet-site-none">no website</span>'}
         <span class="outreach-channel-chip outreach-channel-${esc(c.relationship_type)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${esc(outreachVettingSubtitle(c))}</div>
-      <div class="queue-item-row2">
+      <div class="outreach-row-reason">${esc(outreachVettingSubtitle(c))}${score != null ? ` &middot; score ${esc(String(score))}` : ''}</div>
+      <div class="queue-item-row2 vet-contact">
         <span class="badge ${cls}" title="${esc(title)}">${esc(label)}</span>
         ${c.verification === 'undeliverable' ? '<span class="badge badge-warn" title="Kickbox says this mailbox does not exist. A send would be refused; fix the address or drop.">address dead</span>' : ''}
-        ${score != null ? `<span class="badge badge-muted" title="Discovery score, 1 to 10">score ${esc(String(score))}</span>` : ''}
+        ${contactLine ? `<span class="vet-contact-line">${contactLine}</span>` : ''}
       </div>
-      ${c.discovery?.angle ? `<div class="outreach-row-snippet">${esc(c.discovery.angle)}</div>` : ''}
+      ${c.discovery?.angle ? `<div class="vet-angle">${esc(c.discovery.angle)}</div>` : ''}
+      <div class="vet-actions" onclick="event.stopPropagation()">
+        <button class="btn btn-ghost vet-keep" onclick="vetKeep('${id}')"
+          title="Admit to the queue. The intro drafts tonight on the locked template; you review it before it sends. (k)">Keep</button>
+        <button class="btn btn-ghost" onclick="vetAskReason('${id}', 'drop')"
+          title="A real store, just not one for us now. Marks lost with your reason; Restore brings it back. (d)">Drop</button>
+        <button class="btn btn-ghost btn-ghost-danger" onclick="vetAskReason('${id}', 'misfit')"
+          title="Should never have been on the list. Drops it AND sends your note back to the discovery table so the next research pass learns. (x)">Doesn't belong</button>
+      </div>
+      ${reasonOpen ? `
+      <div class="vet-reason" onclick="event.stopPropagation()">
+        <input type="text" id="vet-reason-input" class="vet-reason-input" autocomplete="off"
+          placeholder="${reasonOpen === 'misfit' ? 'What made it not belong? e.g. a barbershop, not a clothing store' : 'Why drop? e.g. chain, closed, not our customer'}"
+          onkeydown="vetReasonKey(event, '${id}')">
+        <button class="btn btn-primary" onclick="vetConfirmReason('${id}')">${reasonOpen === 'misfit' ? "Doesn't belong" : 'Drop'}</button>
+        <button class="btn btn-ghost" onclick="vetCancelReason()">Cancel</button>
+      </div>` : ''}
     </div>
   </div>`;
 }
 
-// Keep needs no reason ("yes, this one is fine" needs no essay). In Vet mode
-// the decision advances to the next row the way a send does in the queue —
-// this is a worklist you burn down, not a directory you browse.
-function keepOutreach() {
-  (outreachMode === 'vetting' ? vetOutreach : applyOutreachTriage)({ action: 'keep' }, 'Kept — the intro drafts tonight');
+function vetScrollIntoView() {
+  const row = document.querySelector('.vet-row.active');
+  if (row) row.scrollIntoView({ block: 'nearest' });
 }
 
-async function vetOutreach(body, okMessage) {
-  const companyId = outreachSelectedId;
+function vetSelect(companyId) {
+  if (outreachVetSelected === companyId) return;
+  outreachVetSelected = companyId;
+  if (outreachVetReason && outreachVetReason.id !== companyId) outreachVetReason = null;
+  renderOutreachList();
+  vetScrollIntoView();
+}
+
+function vetKeep(companyId) {
+  vetOutreach(companyId, { action: 'keep' }, 'Kept — the intro drafts tonight');
+}
+
+// The detail pane's Keep (a prospect opened from the directory or the queue).
+function keepOutreach() {
+  applyOutreachTriage({ action: 'keep' }, 'Kept — the intro drafts tonight');
+}
+
+function vetAskReason(companyId, kind) {
+  outreachVetSelected = companyId;
+  outreachVetReason = { id: companyId, kind };
+  renderOutreachList();
+  vetScrollIntoView();
+  const input = document.getElementById('vet-reason-input');
+  if (input) input.focus();
+}
+
+function vetCancelReason() {
+  outreachVetReason = null;
+  renderOutreachList();
+}
+
+function vetReasonKey(e, companyId) {
+  if (e.key === 'Enter') { e.preventDefault(); vetConfirmReason(companyId); }
+  else if (e.key === 'Escape') { e.preventDefault(); vetCancelReason(); }
+}
+
+function vetConfirmReason(companyId) {
+  const kind = outreachVetReason?.kind;
+  const input = document.getElementById('vet-reason-input');
+  const reason = (input?.value || '').trim();
+  if (!kind) return;
+  if (!reason) {
+    showToast(kind === 'misfit' ? 'Say what made it not belong — that note is the whole point' : 'A drop needs a reason', 'error');
+    if (input) input.focus();
+    return;
+  }
+  vetOutreach(companyId, { action: kind, reason },
+    kind === 'misfit' ? 'Dropped — note sent back to discovery' : 'Dropped');
+}
+
+// The decision advances to the next row the way a send does in the queue —
+// this is a worklist you burn down, not a directory you browse.
+async function vetOutreach(companyId, body, okMessage) {
   if (!companyId) return;
   try {
     await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/triage`, { method: 'POST', body });
@@ -6176,15 +6262,10 @@ async function vetOutreach(body, okMessage) {
   const idx = outreachVetting.findIndex(c => c.id === companyId);
   const next = outreachVetting[idx + 1] || outreachVetting[idx - 1] || null;
   outreachVetting = outreachVetting.filter(c => c.id !== companyId);
-  outreachDraft = null;
-  renderOutreachSidebar();
-  if (next) {
-    selectOutreachEntry(next.id);
-  } else {
-    outreachSelectedId = null;
-    document.getElementById('outreach-detail').style.display = 'none';
-    document.getElementById('outreach-placeholder').style.display = 'flex';
-  }
+  outreachVetSelected = next ? next.id : null;
+  outreachVetReason = null;
+  renderOutreachSidebar();     // the count on the Vet button changes too
+  vetScrollIntoView();
 }
 
 document.addEventListener('keydown', (e) => {
@@ -6193,24 +6274,29 @@ document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
   if (!outreachVetting.length) return;
-  const idx = outreachVetting.findIndex(c => c.id === outreachSelectedId);
+  const idx = outreachVetting.findIndex(c => c.id === outreachVetSelected);
   if (e.key === 'j' || e.key === 'ArrowDown') {
     e.preventDefault();
     const n = outreachVetting[idx < 0 ? 0 : Math.min(idx + 1, outreachVetting.length - 1)];
-    if (n && n.id !== outreachSelectedId) selectOutreachEntry(n.id);
+    if (n) vetSelect(n.id);
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     const n = outreachVetting[Math.max(idx - 1, 0)];
-    if (n && n.id !== outreachSelectedId) selectOutreachEntry(n.id);
+    if (n) vetSelect(n.id);
   } else if (e.key === 'k' && idx >= 0) {
     e.preventDefault();
-    keepOutreach();
+    vetKeep(outreachVetSelected);
   } else if (e.key === 'd' && idx >= 0) {
     e.preventDefault();
-    dropOutreach();
+    vetAskReason(outreachVetSelected, 'drop');
+  } else if (e.key === 'x' && idx >= 0) {
+    e.preventDefault();
+    vetAskReason(outreachVetSelected, 'misfit');
   } else if (e.key === 'o' && idx >= 0) {
     const site = outreachVetting[idx].website;
     if (site) window.open(site, '_blank', 'noopener');
+  } else if (e.key === 'Escape' && outreachVetReason) {
+    vetCancelReason();
   }
 });
 
@@ -6466,7 +6552,7 @@ function renderOutreachList(errorHtml) {
       el.innerHTML = `<div class="outreach-loading">Nothing waiting to be vetted.<br><span class="outreach-list-note">Import a cohort with <code>scripts/importRetailerProspects.js</code> and it lands here.</span></div>`;
       return;
     }
-    el.innerHTML = `<div class="outreach-list-note">Keyboard: <strong>k</strong> keep &middot; <strong>d</strong> drop &middot; <strong>j</strong> / &darr; next &middot; &uarr; back &middot; <strong>o</strong> open their site</div>`
+    el.innerHTML = `<div class="outreach-list-note">Keyboard: <strong>k</strong> keep &middot; <strong>d</strong> drop &middot; <strong>x</strong> doesn't belong &middot; <strong>j</strong> / &darr; next &middot; &uarr; back &middot; <strong>o</strong> open their site</div>`
       + outreachVetting.map(outreachVettingRowHtml).join('');
     return;
   }
@@ -7372,7 +7458,7 @@ function resumeOutreach() {
 function dropOutreach() {
   const reason = prompt('Why are we dropping this company?\n\n(e.g. "said no to carrying inventory", "store closed", "dead address, no alternate")');
   if (!reason || !reason.trim()) return;
-  (outreachMode === 'vetting' ? vetOutreach : applyOutreachTriage)({ action: 'drop', reason: reason.trim() }, 'Dropped');
+  applyOutreachTriage({ action: 'drop', reason: reason.trim() }, 'Dropped');
 }
 
 function restoreOutreach() {

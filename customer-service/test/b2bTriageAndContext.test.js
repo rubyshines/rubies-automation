@@ -282,3 +282,36 @@ test('the latest deferral judges staleness when more than one is set', () => {
   assert.equal(deferredSince(co, NOW), '2026-08-01T00:00:00Z');
   assert.equal(computeQueueEntry(co, { lastInboundAt: '2026-07-25T00:00:00Z' }, NOW), null);
 });
+
+// ── misfit: the noisier drop ────────────────────────────────────────────────
+
+test('misfit drops like drop, prefixes the reason, and demands a note', () => {
+  const upd = computeTriage('misfit', { reason: 'a barbershop, not a clothing store', now: NOW });
+  assert.equal(upd.relationship_state, 'lost');
+  assert.equal(upd.vetted_at, null);
+  assert.equal(upd.triage_reason, "doesn't belong: a barbershop, not a clothing store");
+  assert.throws(() => computeTriage('misfit', { now: NOW }), /requires a note/);
+});
+
+test('triageCompany misfit writes the note on the company and dismisses the discovery row it came from', async () => {
+  const { triageCompany } = require('../../b2b-outreach/lib/triage');
+  const writes = [];
+  const chain = (table) => {
+    const c = {};
+    for (const m of ['select', 'eq', 'is', 'in', 'order']) c[m] = () => c;
+    c.maybeSingle = async () => ({ data: { id: 'barber', name: 'Barber', relationship_state: 'prospect', source: 'discovery', source_id: '77', metadata: { seeded: 'x' } }, error: null });
+    c.update = (patch) => { writes.push([table, patch]); return c; };
+    c.then = (res, rej) => Promise.resolve({ data: [], error: null }).then(res, rej);
+    return c;
+  };
+  const sb = { from: (table) => chain(table) };
+  const res = await triageCompany(sb, { company_id: 'barber', action: 'misfit', reason: 'a barbershop', now: NOW });
+  const company = writes.find(([t, p]) => t === 'b2b_companies' && p.relationship_state === 'lost');
+  assert.ok(company, 'the company is dropped');
+  assert.equal(company[1].metadata.seeded, 'x', 'existing metadata kept');
+  assert.equal(company[1].metadata.discovery_misfit.note, 'a barbershop');
+  const prospect = writes.find(([t]) => t === 'retailer_prospects');
+  assert.ok(prospect, 'the discovery row is dismissed');
+  assert.deepEqual(prospect[1], { status: 'dismissed', analysis_status: 'operator_misfit', irrelevant_reason: 'a barbershop' });
+  assert.deepEqual(res.discovery, { updated: true, prospect_id: 77 });
+});
