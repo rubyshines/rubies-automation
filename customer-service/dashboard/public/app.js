@@ -8795,7 +8795,11 @@ async function openSchedulePanel(duration, timezone) {
     if (outreachSelectedId !== companyId) return; // moved on while loading
     scheduleState = data;
     scheduleSelected = null;
-    scheduleWeek = 0;
+    // Open on the week they named, when they named one. The grid is read far
+    // enough to include it, and a panel that opens on this week while their
+    // day sits three clicks to the right is the panel hiding the answer.
+    const named = (data.proposed_times || []).map(t => t.date).filter(Boolean).sort()[0];
+    scheduleWeek = named ? scheduleWeekIndexForDate(named) : 0;
     renderSchedulePanel();
     syncSendButtonsForSchedule();
   } catch (err) {
@@ -8971,6 +8975,9 @@ function renderSchedulePanel() {
   const lead = {
     offered: 'Times that fit what they offered',
     counter: 'None of their times are free',
+    beyond: 'Their day is past the calendar window',
+    // The read is capped at the engine's max lookahead; a date past that is
+    // reported as unread, never as "not open".
     unplaced: 'Set their timezone to use the times they gave',
     open: 'Times to offer',
   }[s.bestFitsScope || 'open'];
@@ -8980,6 +8987,7 @@ function renderSchedulePanel() {
     counter: offerText.length
       ? `They said ${offerText.join(', ')}, and none of it is open. Counter with one of these.`
       : 'Counter with one of these.',
+    beyond: `They said ${offerText.join(', ')}, past the ${(s.days || []).length} business days read, so it was not checked. Counter with one of these, or book it in Google Calendar.`,
     unplaced: offerText.length
       ? `They said ${offerText.join(', ')}, which needs their timezone to place. Counter with one of these meanwhile.`
       : 'Counter with one of these.',
@@ -9097,7 +9105,7 @@ function renderSchedulePanel() {
       ${booked}
       ${proposedHtml}
       ${grid}
-      <div class="schedule-hint" title="${esc((s.calendars || []).join(', '))}">Checked ${(s.calendars || []).length} calendar${(s.calendars || []).length === 1 ? '' : 's'} · 9-5 Eastern, weekdays, from tomorrow</div>
+      <div class="schedule-hint" title="${esc((s.calendars || []).join(', '))}">Checked ${(s.calendars || []).length} calendar${(s.calendars || []).length === 1 ? '' : 's'} · 9-5 Eastern, weekdays, tomorrow through ${esc((s.days || []).length ? s.days[s.days.length - 1].label : 'the lookahead')}</div>
       ${footer}
     </div>`;
 }
@@ -9185,6 +9193,13 @@ function scheduleWeeks(s) {
     weeks.push({ monday: mon, days });
   }
   return weeks;
+}
+
+/** Which week index holds a calendar date; 0 when the grid does not reach it. */
+function scheduleWeekIndexForDate(iso) {
+  const s = scheduleState;
+  if (!s || !iso) return 0;
+  return Math.max(0, scheduleWeeks(s).findIndex(w => w.days.some(d => d.date === iso && !d.placeholder)));
 }
 
 /** Which week index holds a slot start. */

@@ -21,6 +21,9 @@ const BUSINESS_END_HOUR = 17;    // 17:00 local — a meeting must END by this
 const SLOT_GRANULARITY_MIN = 30;
 const DEFAULT_DURATION_MIN = 30;
 const DEFAULT_LOOKAHEAD_DAYS = 10; // business days
+// The furthest the grid will read when the other side names a date: twelve
+// weeks. Past this the caller says so rather than the read quietly stopping.
+const MAX_LOOKAHEAD_DAYS = 60;    // business days
 
 // ---------------------------------------------------------------------------
 // Timezone primitives (pure)
@@ -534,6 +537,36 @@ async function fetchCalendarEvents({ timeMin, timeMax, calendarIds = BUSY_CALEND
 }
 
 /**
+ * How many business days the grid must run to include every date in `dates`
+ * (YYYY-MM-DD), never fewer than `minimum`. Counts the way buildSlots does:
+ * from tomorrow, weekends skipped, so a weekend date is covered once the
+ * Monday after it is in. Their offer sets the window: a partner who names the
+ * 30th was answered "none of it is open" about a day the ten-day read never
+ * reached. Capped at `max`; `covered: false` says a date is past even that,
+ * so the caller can report it instead of dropping it. Pure.
+ */
+function lookaheadToCover(dates, {
+  now = new Date(),
+  timeZone = BUSINESS_TIMEZONE,
+  minimum = DEFAULT_LOOKAHEAD_DAYS,
+  max = MAX_LOOKAHEAD_DAYS,
+} = {}) {
+  const todayIso = zonedDateParts(now, timeZone).iso;
+  const target = (dates || []).filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().pop();
+  if (!target || target <= todayIso) return { days: minimum, covered: true };
+  let cursor = addDaysToIso(todayIso, 1);
+  let count = 0;
+  while (count < max) {
+    if (!isWeekendIso(cursor)) {
+      count++;
+      if (cursor >= target) return { days: Math.max(minimum, count), covered: true };
+    }
+    cursor = addDaysToIso(cursor, 1);
+  }
+  return { days: max, covered: false };
+}
+
+/**
  * The read the panel and the `calendar_availability` tool both use.
  * @returns buildSlots() output plus the raw busy list (for a later re-check).
  */
@@ -543,10 +576,12 @@ async function fetchAvailability({
   theirTimeZone = null,
   now = new Date(),
 } = {}) {
-  // Widen the fetch window generously past the business days requested —
-  // weekends and holidays mean N business days can span well over N calendar days.
+  // Widen the fetch window past the business days requested — weekends and
+  // holidays mean N business days span at least 7N/5 calendar days, and a
+  // fixed +14 stopped covering the grid once a named date pushed it past a
+  // month, leaving its last days drawn free with nothing read.
   const timeMin = new Date(now.getTime() - 24 * 3600 * 1000);
-  const timeMax = new Date(now.getTime() + (days + 14) * 24 * 3600 * 1000);
+  const timeMax = new Date(now.getTime() + (Math.ceil(days * 7 / 5) + 14) * 24 * 3600 * 1000);
   const { busy, allDay } = await fetchCalendarEvents({ timeMin, timeMax });
   const grid = buildSlots({ now, busy, allDay, durationMinutes, days, theirTimeZone });
   return { ...grid, busy, calendars: BUSY_CALENDAR_IDS };
@@ -554,6 +589,9 @@ async function fetchAvailability({
 
 module.exports = {
   buildSlots,
+  lookaheadToCover,
+  DEFAULT_LOOKAHEAD_DAYS,
+  MAX_LOOKAHEAD_DAYS,
   sameWallClock,
   scoreAgainstBlocks,
   pickBestFits,

@@ -9,7 +9,8 @@ const assert = require('node:assert');
 
 const {
   buildSlots, checkSlotFree, wallClockToUtc, zoneOffsetMinutes,
-  addDaysToIso, isWeekendIso, formatTimeInZone,
+  addDaysToIso, isWeekendIso, formatTimeInZone, lookaheadToCover,
+  DEFAULT_LOOKAHEAD_DAYS, MAX_LOOKAHEAD_DAYS,
 } = require('../../b2b-outreach/lib/availability');
 
 const ET = 'America/Toronto';
@@ -361,4 +362,33 @@ test('bestFits inside their offer: only slots in their windows, grouping breaks 
   assert.strictEqual(slotWithin(at('2:00 PM'), '2026-09-10', within), true);
   assert.strictEqual(slotWithin(at('2:30 PM'), '2026-09-10', within), false);
   assert.strictEqual(slotWithin(at('9:00 AM'), '2026-09-11', within), false); // wrong day
+});
+
+test('lookaheadToCover: the read reaches every date they named, counted in business days from tomorrow', () => {
+  const now = new Date('2026-09-14T15:00:00Z'); // Monday, 11am Eastern
+  // Nothing named, or a date already in the default window: the default.
+  assert.deepStrictEqual(lookaheadToCover([], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-17'], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  // Wed Sept 30 is the 12th business day after Monday the 14th: the 10-day
+  // read stopped at the 28th and reported a day it never looked at as not open.
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], { now }), { days: 12, covered: true });
+  // The furthest date wins, whatever order they were said in.
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30', '2026-09-22'], { now }), { days: 12, covered: true });
+  // A weekend date is covered once the Monday after it is in (Sat 26 → Mon 28 = 10th).
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-26'], { now }), { days: 10, covered: true });
+  // Today and the past never widen the read.
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-14', '2026-09-01'], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  // Past the cap: the cap, and an honest flag rather than a silent stop.
+  assert.deepStrictEqual(lookaheadToCover(['2027-01-15'], { now }), { days: MAX_LOOKAHEAD_DAYS, covered: false });
+  // Junk is ignored, not counted.
+  assert.deepStrictEqual(lookaheadToCover([null, 'tomorrow', undefined], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  // An explicit larger minimum is kept.
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], { now, minimum: 20 }), { days: 20, covered: true });
+});
+
+test('the grid actually runs as far as lookaheadToCover asks', () => {
+  const now = new Date('2026-09-14T15:00:00Z');
+  const { days } = lookaheadToCover(['2026-09-30'], { now });
+  const grid = buildSlots({ now, days, durationMinutes: 30 });
+  assert.strictEqual(grid.days[grid.days.length - 1].date, '2026-09-30');
 });
