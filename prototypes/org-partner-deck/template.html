@@ -72,6 +72,9 @@
   .door p { color: var(--ink-2); font-size: clamp(16px, 1.4vw, 20px); }
   .door .who { font-size: 14px; font-weight: 800; letter-spacing: 0.02em; color: var(--ink-2); }
 
+  .demo-link { display: inline-flex; align-items: center; font-weight: 800; font-size: clamp(17px, 1.6vw, 22px); padding: 16px 26px; border-radius: 999px; background: var(--magenta); color: #fff; text-decoration: none; width: fit-content; }
+  .demo-link:hover { background: #B000B8; }
+  .demo-link:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
   .contact { display: grid; gap: 10px; font-size: clamp(20px, 2vw, 28px); }
   .contact a { color: var(--magenta); text-decoration: none; font-weight: 800; }
 
@@ -161,7 +164,7 @@
       <ul>
         <li>Share your closet's link with your community.</li>
         <li>Approve requests from an email, one click. Or set a monthly auto-approve.</li>
-        <li>Tell us the sizes when a box is ready.</li>
+        <li>When a box is ready, pick what fills it, or let it fill itself.</li>
       </ul>
     </div>
     <div class="big">3<small>things, and the closet runs itself</small></div>
@@ -169,15 +172,18 @@
 </section>
 
 <section class="slide">
-  <span class="n">Alongside</span>
-  <div class="stack">
-    <span class="pill">Running today</span>
-    <h2>Donations keep coming, and your budget goes twice as far</h2>
-    <ul>
-      <li>Customers near you who exchange an item have it routed to your closet, washed and in original condition, with your centre on our partner map.</li>
-      <li>Anything your centre buys directly is matched the same way: order $300, receive $600 of product.</li>
-      <li>Anyone in your community can apply for a free bikini bottom on our site, no partnership needed.</li>
-    </ul>
+  <span class="n">See it</span>
+  <div class="two">
+    <div class="stack">
+      <h2>What your community would see</h2>
+      <p class="lede">A working page for one centre: the code, the free-pair request, and the box filling up.</p>
+      <a class="demo-link" href="https://claude.ai/code/artifact/c5a5cdea-7258-4fc8-b060-7f288c277a5e" target="_blank" rel="noopener">Open the Virtual Closet page</a>
+    </div>
+    <div class="art" aria-hidden="true">
+      <div class="blob" style="background: var(--lime)"></div>
+      <img class="main" id="art-main-3" alt="">
+      <img class="second" id="art-second-3" alt="">
+    </div>
   </div>
 </section>
 
@@ -226,6 +232,8 @@
   document.getElementById('art-main').src = IMG['the-aj-shaping-underwear'];
   document.getElementById('art-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
   document.getElementById('art-main-2').src = IMG['the-brooke-bra'];
+  document.getElementById('art-main-3').src = IMG['the-extra-cute-shaping-underwear'];
+  document.getElementById('art-second-3').src = IMG['the-ava-seamless-shaping-bra'];
   document.getElementById('art-second-2').src = IMG['the-sassy-no-tuck-shaping-underwear'];
 
   var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
