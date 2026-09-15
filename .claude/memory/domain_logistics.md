@@ -22,13 +22,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Production Inbound Receiving:** Supplier packing-list ingest → `inbound_shipments` → `production_lots` → 3-way reconcile (ordered/produced/shipped/received) → founder review tab in the production sheet → Warehance ASN, with receipt quantities polled back. MCP tools in `inboundReceiving.js`.
 
-**QC Ingest:** Inspector's QC Master .xlsx and AQL PDF parsed into `qc_inspections` / `qc_measurements` / `qc_issues`; `review_production_qc` summarizes on demand, `approve_production_qc` gates the balance payment.
+**QC Sheets:** `generate_qc_sheet` writes the blank QC Master .xlsx for the inspector from the order's SKUs and `tech_pack_specs` (one tab per product, size blocks, colour sample columns, live Diff formulas); the completed workbook and AQL PDF are parsed back into `qc_inspections` / `qc_measurements` / `qc_issues`; `review_production_qc` summarizes on demand, `approve_production_qc` gates the balance payment. The product ↔ tab ↔ tech-pack mapping lives in `qcProducts.js`, shared by generator and ingest.
 
 **Supplier Communication:** `export_supplier_lot_list` emits per-lot ordered-vs-produced .xlsx; `draft_supplier_order_email` creates a Gmail draft with the order file attached (draft only, never sends).
 
 ## Current Status
 
-- **Production:** Daily unfulfilled order alerts and shipping-delay detection across all carriers. Address hold auto-resolution. Hourly Passport scrape. Delivery time estimation and pre-purchase shipping info tool. Passport claims tracking. Inbound receiving live against the Warehance API (ASNs post, receipts poll back). QC ingest and supplier lot list/email tools.
+- **Production:** Daily unfulfilled order alerts and shipping-delay detection across all carriers. Address hold auto-resolution. Hourly Passport scrape. Delivery time estimation and pre-purchase shipping info tool. Passport claims tracking. Inbound receiving live against the Warehance API (ASNs post, receipts poll back). QC sheet generation and ingest, supplier lot list/email tools.
 
 ## Key Files
 
@@ -38,7 +38,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `reports/lib/shippingDelays.js`, `reports/lib/unfulfilled.js` — daily alert analyzers.
 - `reports/lib/warehanceClient.js` — Warehance (Nitro) API client.
 - `webhooks/handlers/shopifyFulfillments.js`, `webhooks/handlers/shopifyOrders.js` — webhook handlers that preserve fulfillment events on merge.
-- `customer-service/lib/merchandising/{packingListParser,skuCanonical,inboundReceiving,reconcileSheet,qcSheetParser,qcResults,supplierLotList,supplierEmail}.js` — receiving, QC, and supplier libs; schema in `customer-service/schema/merchandising_v3.sql`.
+- `customer-service/lib/merchandising/{packingListParser,skuCanonical,inboundReceiving,reconcileSheet,qcProducts,qcSheetWriter,qcSheetParser,qcResults,supplierLotList,supplierEmail}.js` — receiving, QC, and supplier libs; schema in `customer-service/schema/merchandising_v3.sql`.
 - `customer-service/lib/tools/inboundReceiving.js`, `customer-service/lib/tools/qcInspection.js` — receiving/supplier and QC MCP tools.
 
 ## Key Decisions

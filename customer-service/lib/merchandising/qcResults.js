@@ -22,25 +22,9 @@ const { MODELS } = require('../../../shared/aiPricing');
 const { loadCatalogSkus } = require('./skuCanonical');
 const { parseQcWorkbook, flattenMeasurements } = require('./qcSheetParser');
 
-// QC Master tab -> tech-pack handle(s). Sky's grading is split youth/adult, so
-// the tab maps to both and the size picks the handle at validation time.
-const TAB_HANDLES = {
-  'AJ Underwear': 'aj',
-  'Sassy Underwear': 'sassy',
-  'Flo Dance Underwear': 'flo',
-  'Charlie Underwear': 'charlie',
-  'Brooke Bra': 'brooke',
-  'Ava Seamless Bra': 'ava',
-  'Evey Sports Bra': 'sportsbra',
-  'Cami Top': 'cami',
-  'Quinn Boxers': 'boxer',
-  'Ruby Bikini Bottom': 'ruby',
-  'Cheeky Bikini Bottom': 'cheeky',
-  'Mia Halter Bikini Top': 'mia',
-  'Sunny Tankini': 'tankini',
-  'Serena Shorty Shorts': 'shorty',
-  'Sky One Piece': ['sky_youth', 'sky_reg'],
-};
+// QC Master tab -> tech-pack handle(s), from the shared product list so the
+// generator and the ingest agree on every tab name.
+const { TAB_HANDLES } = require('./qcProducts');
 
 // Tab -> catalog SKU prefix, where the sheet's labels don't match the catalog.
 // Both the Ava and Evey tabs are labeled AVA-*; the catalog products are SB-*

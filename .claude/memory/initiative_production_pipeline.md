@@ -3,7 +3,7 @@ name: Production Pipeline
 description: End-to-end manufacturing workflow — inventory projections, production orders, pre-orders, QC, Warehance receiving
 type: project
 domains: [product_design, inventory, logistics]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 ---
 
 ## Goal
@@ -13,13 +13,14 @@ Connect the various scripts and processes into one cohesive production pipeline:
 1. Inventory projection engine + supplier registry — **design complete, ready to build** (algorithm locked below; the separate plan file was retired)
 2. Production order generation — design complete (part of Phase 1 plan above)
 3. Pre-order setup — **sheet→web push built** (`sync_pre_orders`); remaining: auto-populate `us-YYYY-MM-DD` tabs from a confirmed production order
-4. QC spreadsheet generation for third-party inspector — **ingest side built + run live on KALI-2601 (PR #48); remaining: generate_qc_sheet for the next order**
+4. QC spreadsheet generation for third-party inspector — **built both ways**: `generate_qc_sheet` writes the blank QC Master from the order + tech-pack specs (first used for KALI-2606's Naomi tab, Sept 2026); ingest run live on KALI-2601
 5. Warehance receiving upload + received vs ordered reconciliation — **run live end-to-end (Aug 2026)**: packing-list → inbound shipment → lots (ship/held) → 3-way reconcile → founder review sheet → ASN posted to Warehance → receipts polled back per SKU
 6. Graded spec collection — started (shared with product design initiatives)
 
 ## Current Status
 Phases 1+2 design locked June 2026 (algorithm below); the existing `rubies-utilities` projection script is the baseline and the rebuild targets Supabase with OOS-adjusted velocity, a supplier registry, and `get_at_risk_skus`. Phase 3: the sheet→Shopify pre-order push is built and run live (`sync_pre_orders`); auto-populating the incoming-inventory tabs from a confirmed production order remains. Phases 4 and 5 are built and have run live end to end on a real supplier shipment: packing-list ingest → inbound shipment → lots (ship/held) → 3-way reconcile → founder review sheet → Warehance ASN → receipts polled back per SKU, and QC ingest (inspector's measurements + AQL report) with per-category approval gating the balance payment. Detail lives in `domain_logistics.md`.
 
+- **September 2026:** QC Master generation built on top of the digitized grading, so the inspector's sheet is produced from the same specs the ingest validates against. Digitizing gaps surface here first (Naomi's waist POM was missing until the first sheet was drawn).
 - **August 2026:** two ASNs live at the 3PL; one ran the full cycle including receipts. The receipt poll had never matched an ASN line to a SKU until it was fixed, so earlier reconciles had an empty received column.
 - **July 2026:** receiving and QC built on the first real shipment. Learnings folded into logistics Key Decisions: create the Shopify product before a product's first run (a new style shipped barcoded under another product's prefix); catalog-validated SKU correction; held-quality lots recorded per batch.
 - **June 2026:** schema v2 (suppliers extended, `tech_packs`/`tech_pack_specs`, QC tables, `production_payments`, `inbound_shipments`), the order loop (`draft_production_order` → edit tab → `submit_production_order`, record-only), vendor registry with bank details captured from Gmail PI attachments, grading digitized into tech-pack specs (first pass, refine before first shipment), and four years of order history backfilled into `production_orders` for cadence and size-spread analysis.

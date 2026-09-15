@@ -1,6 +1,7 @@
 /**
  * MCP tools for QC inspection — Phase 4 of the production pipeline.
  *
+ *   generate_qc_sheet    — order + tech-pack specs -> blank QC Master .xlsx for the inspector
  *   ingest_qc_results    — completed QC Master .xlsx -> qc_measurements + flags
  *   ingest_qc_report     — inspector's AQL PDF -> qc_issues
  *   review_production_qc — pass/fail summary + coverage vs the order
@@ -8,6 +9,7 @@
  */
 
 const { ingestQcResults, ingestQcReport, reviewProductionQc, approveProductionQc } = require('../merchandising/qcResults');
+const { generateQcSheet } = require('../merchandising/qcSheetWriter');
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
 const err = (text) => ({ content: [{ type: 'text', text: `Error: ${text}` }] });
@@ -52,6 +54,33 @@ function ingestSummary(res) {
 }
 
 module.exports = [
+  {
+    name: 'generate_qc_sheet',
+    description: 'Generate the blank QC Master workbook (.xlsx) the third-party inspector fills in for a production order: one tab per product on the order, size blocks from the order\'s SKUs, target measurements and tolerances from the current tech_pack_specs, sample columns per colour, live Diff formulas with in/out-of-tolerance colouring. Same geometry ingest_qc_results reads, so the completed sheet round-trips. Records a draft qc_inspections row. Optionally restrict to some products (SKU prefix, tech-pack handle or tab name).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        production_code: { type: 'string', description: 'Production order code, e.g. KALI-2606' },
+        products: { type: 'array', items: { type: 'string' }, description: 'Only these products, e.g. ["naomi"] or ["GAF", "AJ"]; omit for every QC product on the order' },
+        samples_per_color: { type: 'integer', description: 'Sample columns per colour per size (default: the tech pack\'s samples_per_color, normally 3)' },
+        out_path: { type: 'string', description: 'Where to write the .xlsx (default ~/Downloads/<code> <Category> QC Master.xlsx)' },
+      },
+      required: ['production_code'],
+    },
+    handler: async (args) => {
+      try {
+        const r = await generateQcSheet(args);
+        const lines = [
+          `**QC Master generated** — ${r.order.production_code}${r.category ? ` · ${r.category}` : ''}${r.inspection_id ? ` · inspection #${r.inspection_id} (draft)` : ''}`,
+          `File: ${r.path}`,
+          ...r.tabs.map((t) => `- ${t.name} (${t.prefix}): sizes ${t.sizes.join(', ')} · colours ${t.colours.join('/')} × ${t.samples_per_color} samples · POMs ${t.poms.join(', ')}${t.sizes_without_spec.length ? ` · ⚠️ no spec for ${t.sizes_without_spec.join(', ')} (blank targets)` : ''}`),
+        ];
+        if (r.not_on_order.length) lines.push(`Requested but not on this order: ${r.not_on_order.join(', ')}`);
+        if (r.skipped_prefixes.length) lines.push(`On the order, no QC tab (accessories / unmapped): ${r.skipped_prefixes.join(', ')}`);
+        return ok(lines.join('\n'));
+      } catch (e) { return err(e.message); }
+    },
+  },
   {
     name: 'ingest_qc_results',
     description: 'Ingest a third-party inspector\'s completed QC Master workbook (.xlsx) for a production order. Parses every product tab (size blocks × color samples), resolves SKUs against the catalog, writes per-sample qc_measurements with in/out-of-tolerance flags, and cross-validates the sheet\'s targets against the digitized grading (tech_pack_specs). Idempotent — safe to re-run on a corrected file.',
