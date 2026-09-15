@@ -3314,7 +3314,10 @@ async function apiB2bAvailability(companyId, params) {
   const { extractProposedTimes } = require('../../b2b-outreach/lib/proposedTimes');
 
   const duration = Math.max(5, parseInt(params?.get('duration'), 10) || 30);
-  const days = Math.min(30, Math.max(1, parseInt(params?.get('days'), 10) || 10));
+  // `days` is business days; the panel asks for more when the operator pages
+  // past the end of the grid. Capped at the engine's furthest read.
+  const { DEFAULT_LOOKAHEAD_DAYS, MAX_LOOKAHEAD_DAYS } = require('../../b2b-outreach/lib/availability');
+  const days = Math.min(MAX_LOOKAHEAD_DAYS, Math.max(1, parseInt(params?.get('days'), 10) || DEFAULT_LOOKAHEAD_DAYS));
   const override = params?.get('timezone');
 
   // select('*'): the timezone columns arrive by a hand-applied migration, and
@@ -3359,7 +3362,7 @@ async function apiB2bAvailability(companyId, params) {
   // about a day the engine had never looked at. Read far enough to include
   // every date they gave; past the cap, say so (`beyond` below).
   const { lookaheadToCover } = require('../../b2b-outreach/lib/availability');
-  const reach = lookaheadToCover((proposed.times || []).map(t => t.date), { minimum: days });
+  const reach = lookaheadToCover((proposed.times || []).map(t => t.date), { minimum: days, wholeWeeks: true });
   const grid = await fetchAvailability({ durationMinutes: duration, days: reach.days, theirTimeZone: tz.timeZone });
 
   // Best fits answer THEIR offer when they made one. Deterministic: the
@@ -3371,12 +3374,15 @@ async function apiB2bAvailability(companyId, params) {
   //   unplaced  — they named times but their zone is unknown, so nothing can
   //               be placed; these are to counter-propose
   //   open      — they named nothing; tightest against what is already booked
-  const { pickBestFits, sameWallClock } = require('../../b2b-outreach/lib/availability');
-  const offered = (proposed.times || []).filter(t => !t.needsTimeZone).map(t => ({
+  const { pickBestFits, sameWallClock, clampWindowToTheirWorkday } = require('../../b2b-outreach/lib/availability');
+  // An open-ended offer ("until 4:45", "the 30th") runs over THEIR working
+  // day, 9 to 5 their time, never from midnight: the same windows go to the
+  // panel (`offered_windows`) so the grid marks exactly what the list used.
+  const offered = (proposed.times || []).filter(t => !t.needsTimeZone).map(t => clampWindowToTheirWorkday({
     date: t.date,
     start: t.start || null,
     end: t.end || (t.start && !t.isRange ? new Date(Date.parse(t.start) + duration * 60000).toISOString() : null),
-  }));
+  }, tz.timeZone));
   const unplaced = (proposed.times || []).some(t => t.needsTimeZone);
   let bestFits = grid.bestFits || [];
   let bestFitsScope = 'open';
@@ -3424,6 +3430,8 @@ async function apiB2bAvailability(companyId, params) {
     // narrowed to their offer when they made one (see bestFitsScope above).
     bestFits,
     bestFitsScope,
+    // The windows the list was constrained to, clamped to their working day.
+    offered_windows: offered.length ? offered : null,
     // True when their clock reads the same as ours, so every surface can drop
     // the "(9:00 AM your time)" half rather than each deciding for itself.
     same_wall_clock: sameClock,
