@@ -14,9 +14,12 @@
  *             sample cells, Diff = average(samples) - Orig (live formula)
  *   two blank rows, next band …
  *
- * Blocks run 3 across (one band = 3 sizes), samples per block = colours ×
- * samples-per-colour, Diff cells carry the same conditional fill the inspector
- * already knows (green within tolerance, red outside).
+ * Blocks run 3 across (one band = up to 3 sizes, breaking where the house
+ * tolerance steps up, since the Tolerance column is shared across a band),
+ * samples per block = colours × samples-per-colour, Diff cells carry the same
+ * conditional fill the inspector already knows (green within tolerance, red
+ * outside). A points-of-measure sketch sits to the right of the blocks when
+ * customer-service/assets/qc-pom/<tech-pack handle>.png exists.
  *
  * buildQcTab is pure (order SKUs + tech-pack specs in, grid + block geometry
  * out); writeQcWorkbook styles and saves; generateQcSheet loads the order and
@@ -27,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
-const { extractSizeFromSku } = require('../sizeUtils');
+const { extractSizeFromSku, normalizeSize, parseSizeVariant, NUMERIC_TO_LETTER_UPPER } = require('../sizeUtils');
 const { sizeSort } = require('./reconcileSheet');
 const { resolveOrder } = require('./inboundReceiving');
 const { fetchCurrentSpecs } = require('./gradingSpecs');
@@ -36,6 +39,28 @@ const { QC_PRODUCTS, qcProductForPrefix, findQcProducts } = require('./qcProduct
 const BLOCKS_PER_BAND = 3;
 const DEFAULT_SAMPLES_PER_COLOR = 3;
 const UNIT_NOTE = 'Note measurements are in cms';
+const POM_IMAGE_DIR = path.join(__dirname, '..', '..', 'assets', 'qc-pom');
+const POM_IMAGE_MAX_WIDTH = 600;
+
+/**
+ * House QC tolerance, by size — the convention every prior QC Master used
+ * (checked across all 24 tabs of the May 2026 underwear + swimwear workbooks):
+ *
+ *   youth numerics and XXS..S(+)   ±0.75 cm
+ *   M (16), L, 1X                  ±1.00 cm
+ *   2X, 3X, 4X                     ±1.25 cm
+ *
+ * Tall variants follow their base size. The tech packs carry no tolerances and
+ * tech_pack_specs.tolerance_cm is the digitizer's 0.75 default, so this rule is
+ * the source, not the spec row.
+ */
+function toleranceForSize(size) {
+  const { base } = parseSizeVariant(String(size || '').toUpperCase());
+  const canon = base ? (NUMERIC_TO_LETTER_UPPER[base] || normalizeSize(base) || base) : '';
+  if (['2X', '3X', '4X'].includes(canon)) return 1.25;
+  if (['M', 'L', '1X'].includes(canon)) return 1.0;
+  return 0.75;
+}
 
 // Colour order on the sheet: BLK first (the SKU label is always written in
 // BLK), then the rest in the order they appear on the order.
@@ -64,7 +89,7 @@ function specSizeKey(specSizes, size) {
  * @param {number} [p.samplesPerColor=3]
  * @param {number} [p.blocksPerBand=3]
  */
-function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SAMPLES_PER_COLOR, blocksPerBand = BLOCKS_PER_BAND }) {
+function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SAMPLES_PER_COLOR, blocksPerBand = BLOCKS_PER_BAND, pomImage = null }) {
   const parsed = [...new Set(skus)].map((sku) => ({
     sku,
     colour: String(sku).split('-')[1] || 'BLK',
@@ -83,6 +108,15 @@ function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SA
     const g = groups.find((x) => x.key === key);
     if (g) g.sizes.push(size); else groups.push({ key, sizes: [size], hasSpec: specSizes.includes(key) });
   }
+  for (const g of groups) g.tolerance = Math.max(...g.sizes.map(toleranceForSize));
+
+  // Bands: up to blocksPerBand blocks across, and a new band whenever the
+  // tolerance steps up, because the Tolerance column is shared across a band.
+  const bands = [];
+  for (const g of groups) {
+    const cur = bands[bands.length - 1];
+    if (cur && cur.length < blocksPerBand && cur[0].tolerance === g.tolerance) cur.push(g); else bands.push([g]);
+  }
 
   // POM order: the spec's sort_order, then code — one row set shared by every block.
   const pomsByCode = new Map();
@@ -100,20 +134,14 @@ function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SA
 
   set(0, FIRST_ANCHOR, UNIT_NOTE);
   let r = 2;
-  for (let gi = 0; gi < groups.length; gi += blocksPerBand) {
-    const band = groups.slice(gi, gi + blocksPerBand);
+  for (const band of bands) {
     const sizeRow = r, skuRow = r + 1, colourRow = r + 2, headerRow = r + 3, firstPom = r + 4;
+    const tolerance = band[0].tolerance;
     set(headerRow, 0, 'POM #'); set(headerRow, 1, 'Garment Specification'); set(headerRow, 2, 'Tolerance');
-    // Tolerance column is shared across the band; take the first block's.
-    const bandTol = (pom) => {
-      for (const g of band) { const s = specFor(g.key, pom.pom_code); if (s && s.tolerance_cm != null) return Number(s.tolerance_cm); }
-      return null;
-    };
     poms.forEach((pom, pi) => {
       set(firstPom + pi, 0, pom.pom_code);
       set(firstPom + pi, 1, pom.pom_name || '');
-      const tol = bandTol(pom);
-      set(firstPom + pi, 2, tol == null ? '' : `+/-${tol}`);
+      set(firstPom + pi, 2, `+/-${tolerance}`);
     });
     band.forEach((g, bi) => {
       const anchor = FIRST_ANCHOR + bi * blockWidth;
@@ -137,9 +165,9 @@ function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SA
         const s = specFor(g.key, pom.pom_code);
         const target = s && s.target_cm != null ? Number(s.target_cm) : null;
         set(firstPom + pi, anchor, target);
-        return { row: firstPom + pi, pom_code: pom.pom_code, target_cm: target, tolerance_cm: s && s.tolerance_cm != null ? Number(s.tolerance_cm) : bandTol(pom) };
+        return { row: firstPom + pi, pom_code: pom.pom_code, target_cm: target, tolerance_cm: tolerance };
       });
-      blocks.push({ sizes: g.sizes, specSize: g.hasSpec ? g.key : null, sizeRow, skuRow, colourRow, headerRow, anchor, sampleCols, diffCol, pomRows });
+      blocks.push({ sizes: g.sizes, specSize: g.hasSpec ? g.key : null, tolerance, sizeRow, skuRow, colourRow, headerRow, anchor, sampleCols, diffCol, pomRows });
     });
     r = firstPom + poms.length + 2;
   }
@@ -157,6 +185,7 @@ function buildQcTab({ tabName, prefix, skus, specs, samplesPerColor = DEFAULT_SA
     blocks,
     merges,
     lastRow: r,
+    pomImage,
   };
 }
 
@@ -181,16 +210,20 @@ function addTab(wb, tab) {
   ws.getCell(1, 5).font = BOLD;
   ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 0 }];
 
-  for (const m of tab.merges) ws.mergeCells(m.row + 1, m.from + 1, m.row + 1, m.to + 1);
-
   for (const b of tab.blocks) {
     const cells = (r, c) => ws.getCell(r + 1, c + 1);
     const span = [b.anchor, ...b.sampleCols.map((s) => s.col), b.diffCol];
-    const size = cells(b.sizeRow, b.anchor); size.font = BOLD; size.alignment = { horizontal: 'center' }; size.border = { top: THIN, left: THIN, right: THIN };
-    const sku = cells(b.skuRow, b.anchor); sku.font = BOLD; sku.alignment = { horizontal: 'center' }; sku.border = { left: THIN, right: THIN };
-    for (const s of b.sampleCols) { const c = cells(b.colourRow, s.col); c.font = BOLD; c.alignment = { horizontal: 'center' }; }
+    // One continuous box per block, size row down to the last POM row. Borders go
+    // on every cell in the span (not just a merged cell's master) so Google Sheets
+    // and Numbers draw the outline the same way Excel does.
+    const edge = (c, extra = {}) => ({ ...extra, left: c === b.anchor ? THIN : undefined, right: c === b.diffCol ? THIN : undefined });
+    for (const c of span) {
+      const size = cells(b.sizeRow, c); size.font = BOLD; size.alignment = { horizontal: 'center' }; size.border = edge(c, { top: THIN });
+      const sku = cells(b.skuRow, c); sku.font = BOLD; sku.alignment = { horizontal: 'center' }; sku.border = edge(c);
+      const col = cells(b.colourRow, c); col.font = BOLD; col.alignment = { horizontal: 'center' }; col.border = edge(c);
+      const h = cells(b.headerRow, c); h.font = BOLD; h.alignment = { horizontal: 'center' }; h.border = edge(c, { bottom: THIN });
+    }
     for (const c of [0, 1, 2]) { const h = cells(b.headerRow, c); h.font = BOLD; h.border = BOX; }
-    for (const c of span) { const h = cells(b.headerRow, c); h.font = BOLD; h.border = { bottom: THIN, left: c === b.anchor ? THIN : undefined, right: c === b.diffCol ? THIN : undefined }; h.alignment = { horizontal: 'center' }; }
 
     const first = b.pomRows[0].row, last = b.pomRows[b.pomRows.length - 1].row;
     const sampleFrom = colLetter(b.sampleCols[0].col), sampleTo = colLetter(b.sampleCols[b.sampleCols.length - 1].col);
@@ -215,7 +248,31 @@ function addTab(wb, tab) {
       ],
     });
   }
+
+  // Merge after styling, and give the merged master both outer edges — a merged
+  // range draws from its master cell, and styling cells inside a merge would
+  // otherwise let the last write (the right edge) clobber the left edge.
+  for (const m of tab.merges) {
+    ws.mergeCells(m.row + 1, m.from + 1, m.row + 1, m.to + 1);
+    const master = ws.getCell(m.row + 1, m.from + 1);
+    master.border = { ...(master.border || {}), left: THIN, right: THIN };
+  }
+
+  // Points-of-measure sketch to the right of the blocks, like the prior workbooks.
+  if (tab.pomImage && fs.existsSync(tab.pomImage)) {
+    const buffer = fs.readFileSync(tab.pomImage);
+    const { width, height } = pngSize(buffer);
+    const scale = Math.min(1, POM_IMAGE_MAX_WIDTH / width);
+    const imageId = wb.addImage({ buffer, extension: 'png' });
+    ws.addImage(imageId, { tl: { col: maxCol + 2, row: 0 }, ext: { width: Math.round(width * scale), height: Math.round(height * scale) } });
+  }
   return ws;
+}
+
+// PNG pixel size from the IHDR chunk (bytes 16..23). Enough to keep aspect ratio.
+function pngSize(buffer) {
+  if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') throw new Error('POM image must be a PNG');
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
 async function writeQcWorkbook({ tabs, outPath }) {
@@ -274,7 +331,8 @@ async function generateQcSheet({ production_code, products, samples_per_color, o
     const specs = (await Promise.all([].concat(p.handles).map((h) => fetchCurrentSpecs(h)))).flat();
     const skus = items.filter((i) => String(i.sku).split('-')[0] === p.prefix).map((i) => i.sku);
     const spc = samples_per_color || await samplesPerColorFor(sb, [].concat(p.handles)[0]);
-    tabs.push(buildQcTab({ tabName: p.tab, prefix: p.prefix, skus, specs, samplesPerColor: spc }));
+    const pomImage = path.join(POM_IMAGE_DIR, `${[].concat(p.handles)[0]}.png`);
+    tabs.push(buildQcTab({ tabName: p.tab, prefix: p.prefix, skus, specs, samplesPerColor: spc, pomImage: fs.existsSync(pomImage) ? pomImage : null }));
   }
 
   const categories = [...new Set(wanted.map((p) => p.category))];
@@ -304,10 +362,10 @@ async function generateQcSheet({ production_code, products, samples_per_color, o
     order: { id: order.id, production_code: order.production_code },
     category,
     inspection_id,
-    tabs: tabs.map((t) => ({ name: t.name, prefix: t.prefix, sizes: t.sizes, colours: t.colours, samples_per_color: t.samplesPerColor, poms: t.poms, sizes_without_spec: t.sizesWithoutSpec })),
+    tabs: tabs.map((t) => ({ name: t.name, prefix: t.prefix, sizes: t.sizes, colours: t.colours, samples_per_color: t.samplesPerColor, poms: t.poms, sizes_without_spec: t.sizesWithoutSpec, tolerances: [...new Set(t.blocks.map((b) => b.tolerance))], pom_image: !!t.pomImage })),
     not_on_order: notOnOrder,
     skipped_prefixes: skipped,
   };
 }
 
-module.exports = { buildQcTab, writeQcWorkbook, generateQcSheet, colourOrder, specSizeKey };
+module.exports = { buildQcTab, writeQcWorkbook, generateQcSheet, colourOrder, specSizeKey, toleranceForSize, POM_IMAGE_DIR };

@@ -6,7 +6,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 
-const { buildQcTab, writeQcWorkbook, colourOrder, specSizeKey } = require('../lib/merchandising/qcSheetWriter');
+const { buildQcTab, writeQcWorkbook, colourOrder, specSizeKey, toleranceForSize } = require('../lib/merchandising/qcSheetWriter');
 const { QC_PRODUCTS, TAB_HANDLES, qcProductForPrefix, findQcProducts } = require('../lib/merchandising/qcProducts');
 const { parseSheet, flattenMeasurements } = require('../lib/merchandising/qcSheetParser');
 
@@ -32,7 +32,7 @@ const SKUS = ['GAF-BLK-M', 'GAF-BLK-XS', 'GAF-BLK-XL', 'GAF-BLK-S', 'GAF-BLK-L']
 
 // --- pure layout -----------------------------------------------------------------
 
-test('buildQcTab lays sizes out in chart order, 3 blocks per band, 1X label for the XL SKU', () => {
+test('buildQcTab lays sizes out in chart order, bands break where the tolerance steps up, 1X label for the XL SKU', () => {
   const tab = buildQcTab({ tabName: 'Naomi Gaff', prefix: 'GAF', skus: SKUS, specs: specs(), samplesPerColor: 3 });
   assert.deepEqual(tab.sizes, ['XS', 'S', 'M', 'L', '1X']);
   assert.deepEqual(tab.colours, ['BLK']);
@@ -40,13 +40,15 @@ test('buildQcTab lays sizes out in chart order, 3 blocks per band, 1X label for 
   assert.deepEqual(tab.poms, ['A', 'B']);
   assert.deepEqual(tab.sizesWithoutSpec, []);
 
-  // Band 1 holds XS/S/M, band 2 holds L/1X below it.
+  // Band 1 holds XS/S (±0.75); M/L/1X (±1) start a new band below it.
   const [xs, s, m, l, x1] = tab.blocks;
   assert.equal(xs.sizeRow, s.sizeRow);
-  assert.equal(m.sizeRow, xs.sizeRow);
-  assert.ok(l.sizeRow > xs.headerRow);
-  assert.equal(l.anchor, xs.anchor);
-  assert.equal(x1.anchor, s.anchor);
+  assert.ok(m.sizeRow > xs.headerRow);
+  assert.equal(m.sizeRow, l.sizeRow);
+  assert.equal(x1.sizeRow, m.sizeRow);
+  assert.equal(m.anchor, xs.anchor);
+  assert.equal(l.anchor, s.anchor);
+  assert.deepEqual(tab.blocks.map((b) => b.tolerance), [0.75, 0.75, 1, 1, 1]);
 
   // Geometry the parser relies on: size at H-3, SKU at H-2, colours at H-1, header at H.
   assert.equal(tab.rows[xs.headerRow][0], 'POM #');
@@ -68,6 +70,7 @@ test('buildQcTab lays sizes out in chart order, 3 blocks per band, 1X label for 
   assert.equal(tab.rows[waist.row][2], '+/-0.75');
   assert.equal(tab.rows[waist.row][xs.anchor], 30.03);
   assert.equal(tab.rows[x1.pomRows[0].row][x1.anchor], 40.03); // 1X sits in the second band, on its own waist row
+  assert.equal(tab.rows[x1.pomRows[0].row][2], '+/-1');
   assert.equal(tab.rows[xs.pomRows[1].row][xs.anchor], 22.27);
   assert.equal(tab.rows[0][xs.anchor], 'Note measurements are in cms');
 });
@@ -100,6 +103,20 @@ test('buildQcTab: sizes sharing one spec size ("12 / XS") share a block; sizes w
   assert.equal(fourteen.pomRows[0].target_cm, 34.1);
 });
 
+test('toleranceForSize follows the house convention across youth, plus and tall sizes', () => {
+  for (const s of ['4', '8', '10', '12', '14', 'XXS', 'XXS+', 'XS', 'XS+', 'S', 'S Tall', 'ST']) assert.equal(toleranceForSize(s), 0.75, s);
+  for (const s of ['16', 'M', 'L', '1X', 'XL', 'M Tall', 'LT', 'XLT']) assert.equal(toleranceForSize(s), 1, s);
+  for (const s of ['2X', '3X', '4X', '2XL', '4XL', '2X Tall']) assert.equal(toleranceForSize(s), 1.25, s);
+});
+
+test('a full adult run bands as XS/S | M/L/1X | 2X/3X/4X, never more than 3 across', () => {
+  const skus = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'].map((s) => `GAF-BLK-${s}`);
+  const tab = buildQcTab({ tabName: 'Naomi Gaff', prefix: 'GAF', skus, specs: [], samplesPerColor: 3 });
+  const bands = [...new Set(tab.blocks.map((b) => b.sizeRow))].map((row) => tab.blocks.filter((b) => b.sizeRow === row).map((b) => b.sizes[0]));
+  assert.deepEqual(bands, [['XS', 'S'], ['M', 'L', '1X'], ['2X', '3X', '4X']]);
+  assert.deepEqual(tab.sizesWithoutSpec, ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X']);
+});
+
 test('colourOrder puts BLK first and keeps the rest in order of appearance', () => {
   assert.deepEqual(colourOrder(['SND', 'PNK', 'BLK', 'PNK']), ['BLK', 'SND', 'PNK']);
   assert.deepEqual(colourOrder(['PNK']), ['PNK']);
@@ -114,8 +131,11 @@ test('specSizeKey matches a plain size or a token of a combined size', () => {
 // --- xlsx round trip -------------------------------------------------------------
 
 test('a written workbook round-trips through the parser and resolves to catalog SKUs', async () => {
-  const tab = buildQcTab({ tabName: 'Naomi Gaff', prefix: 'GAF', skus: SKUS, specs: specs(), samplesPerColor: 3 });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-'));
+  // 1×1 transparent PNG stands in for the points-of-measure sketch.
+  const png = path.join(dir, 'naomi.png');
+  fs.writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
+  const tab = buildQcTab({ tabName: 'Naomi Gaff', prefix: 'GAF', skus: SKUS, specs: specs(), samplesPerColor: 3, pomImage: png });
   const out = path.join(dir, 'KALI-TEST Underwear QC Master.xlsx');
   await writeQcWorkbook({ tabs: [tab], outPath: out });
 
@@ -127,6 +147,16 @@ test('a written workbook round-trips through the parser and resolves to catalog 
   const waistRow = xs.pomRows[0].row + 1;
   assert.equal(ws.getCell(waistRow, xs.diffCol + 1).value.formula.startsWith('IF(COUNTA('), true, 'Diff is a live formula');
   assert.ok(ws.conditionalFormattings.length >= 5, 'one conditional-fill range per block');
+  // One continuous box per block: left edge on the anchor column and right edge
+  // on the Diff column from the size row to the last POM row.
+  const lastRow = xs.pomRows[xs.pomRows.length - 1].row + 1;
+  for (const r of [xs.sizeRow + 1, xs.skuRow + 1, xs.colourRow + 1, xs.headerRow + 1, waistRow, lastRow]) {
+    assert.equal(ws.getCell(r, xs.anchor + 1).border.left.style, 'thin', `left edge row ${r}`);
+    assert.equal(ws.getCell(r, xs.diffCol + 1).border.right.style, 'thin', `right edge row ${r}`);
+  }
+  assert.equal(ws.getCell(xs.sizeRow + 1, xs.anchor + 1).border.top.style, 'thin');
+  assert.equal(ws.getCell(lastRow, xs.anchor + 1).border.bottom.style, 'thin');
+  assert.equal(ws.getImages().length, 1, 'POM sketch embedded');
   ws.getCell(waistRow, xs.sampleCols[0].col + 1).value = 30.5;
   ws.getCell(waistRow, xs.sampleCols[1].col + 1).value = 29.0;
   await wb.xlsx.writeFile(out);

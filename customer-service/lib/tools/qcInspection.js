@@ -73,7 +73,7 @@ module.exports = [
         const lines = [
           `**QC Master generated** — ${r.order.production_code}${r.category ? ` · ${r.category}` : ''}${r.inspection_id ? ` · inspection #${r.inspection_id} (draft)` : ''}`,
           `File: ${r.path}`,
-          ...r.tabs.map((t) => `- ${t.name} (${t.prefix}): sizes ${t.sizes.join(', ')} · colours ${t.colours.join('/')} × ${t.samples_per_color} samples · POMs ${t.poms.join(', ')}${t.sizes_without_spec.length ? ` · ⚠️ no spec for ${t.sizes_without_spec.join(', ')} (blank targets)` : ''}`),
+          ...r.tabs.map((t) => `- ${t.name} (${t.prefix}): sizes ${t.sizes.join(', ')} · colours ${t.colours.join('/')} × ${t.samples_per_color} samples · POMs ${t.poms.join(', ')} · tolerance ±${t.tolerances.join('/±')} · POM sketch ${t.pom_image ? 'embedded' : 'missing (add customer-service/assets/qc-pom/<handle>.png)'}${t.sizes_without_spec.length ? ` · ⚠️ no spec for ${t.sizes_without_spec.join(', ')} (blank targets)` : ''}`),
         ];
         if (r.not_on_order.length) lines.push(`Requested but not on this order: ${r.not_on_order.join(', ')}`);
         if (r.skipped_prefixes.length) lines.push(`On the order, no QC tab (accessories / unmapped): ${r.skipped_prefixes.join(', ')}`);
