@@ -67,7 +67,7 @@ const START = new Date(Date.now() + 5 * 86400 * 1000).toISOString();
  * Chainable fake covering the query shapes this path uses. `draft` is the
  * company's pending draft, or null for "no draft exists" (console / MCP).
  */
-function fakeSb({ draft }) {
+function fakeSb({ draft, messages = [] }) {
   const updates = [];
   const inserts = [];
   const sb = {
@@ -78,6 +78,10 @@ function fakeSb({ draft }) {
         _table: table,
         select() { return builder; },
         eq() { return builder; },
+        order() { return builder; },
+        limit() { return builder; },
+        // The audience read (replyCc.threadAudience) awaits the builder itself.
+        then(resolve) { resolve({ data: table === 'b2b_messages' ? messages : [], error: null }); },
         insert(row) { inserts.push({ table, row }); return builder; },
         update(fields) { updates.push({ table, fields }); return { eq: async () => ({ error: null }) }; },
         async maybeSingle() {
@@ -176,6 +180,36 @@ test('a Cc on the draft is invited too', async () => {
     ['jess@unityconejo.org', 'sadie@rubyshines.com'],
   );
   assert.equal(lastSendArgs.cc, 'sadie@rubyshines.com');
+});
+
+// Whoever is on the conversation is on the call: the thread's newest real
+// message names its audience, and a colleague the contact copied is invited
+// and cc'd rather than told about the call by the one person we picked.
+test('the thread\'s audience is invited too, and cc\'d on the reply', async () => {
+  currentSb = fakeSb({
+    draft: { ...PENDING, structured: {} },
+    messages: [
+      { direction: 'outbound', message_type: 'operator_message', from_email: 'jamie@rubyshines.com', to_email: 'jess@unityconejo.org', cc_email: null, sent_at: '2026-08-20T12:00:00Z' },
+      { direction: 'inbound', message_type: null, from_email: 'jess@unityconejo.org', to_email: 'jamie@rubyshines.com',
+        cc_email: '"Frandsen, Ash" <ash@unityconejo.org>, director@unityconejo.org', sent_at: '2026-08-21T12:00:00Z' },
+    ],
+  });
+  await scheduleMeeting({ ...BOOK });
+  assert.deepEqual(
+    lastEventRequest.requestBody.attendees.map(a => a.email),
+    ['jess@unityconejo.org', 'ash@unityconejo.org', 'director@unityconejo.org'],
+  );
+  assert.equal(lastSendArgs.cc, 'ash@unityconejo.org, director@unityconejo.org');
+});
+
+test('a thread whose audience is only the recipient adds nobody', async () => {
+  currentSb = fakeSb({
+    draft: { ...PENDING, structured: {} },
+    messages: [{ direction: 'inbound', message_type: null, from_email: 'jess@unityconejo.org', to_email: 'jamie@rubyshines.com', cc_email: null, sent_at: '2026-08-21T12:00:00Z' }],
+  });
+  await scheduleMeeting({ ...BOOK });
+  assert.deepEqual(lastEventRequest.requestBody.attendees.map(a => a.email), ['jess@unityconejo.org']);
+  assert.ok(!lastSendArgs.cc, `expected no cc, got ${JSON.stringify(lastSendArgs.cc)}`);
 });
 
 // The console and the MCP tool can book for a company with nothing pending.

@@ -29,9 +29,43 @@ function extractName(headerValue) {
   return match ? match[1].trim() : '';
 }
 
+/**
+ * Split a To/Cc header into its mailboxes. The list is comma-separated, but a
+ * display name may itself hold a comma inside quotes — Outlook writes every
+ * name "Last, First" — and a split on every comma turned '"Musquiz, Alicia"
+ * <a@x>' into the fragment '"musquiz' plus the address, so half of a cc list
+ * was word fragments (2026-09-14). Commas inside quotes or angle brackets
+ * never split. Pure.
+ */
+function splitHeaderList(headerValue) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let depth = 0;
+  for (const ch of String(headerValue || '')) {
+    if (ch === '"') { quoted = !quoted; cur += ch; continue; }
+    if (!quoted && ch === '<') depth++;
+    if (!quoted && ch === '>') depth = Math.max(0, depth - 1);
+    if (ch === ',' && !quoted && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map(s => s.trim()).filter(Boolean);
+}
+
+/** Every mailbox on a header, with its display name where one was given:
+ *  [{ email, name }]. A token holding no address (a stray name fragment from a
+ *  malformed header) is dropped rather than kept as an "address". Pure. */
+function parseMailboxes(headerValue) {
+  return splitHeaderList(headerValue).map(tok => {
+    const email = extractAddress(tok);
+    if (!email || !email.includes('@')) return null;
+    return { email, name: extractName(tok) || null };
+  }).filter(Boolean);
+}
+
 function parseAddressList(headerValue) {
-  if (!headerValue) return [];
-  return headerValue.split(',').map(addr => extractAddress(addr)).filter(Boolean);
+  return parseMailboxes(headerValue).map(m => m.email);
 }
 
 /**
@@ -245,6 +279,10 @@ async function fetchMessage(gmail, messageId) {
     from_name: extractName(fromRaw),
     to_addresses: parseAddressList(getHeader(headers, 'To')),
     cc_addresses: parseAddressList(getHeader(headers, 'Cc')),
+    // The same people with their display names, for the contact harvest. Not
+    // a stored column: email_messages keeps addresses only.
+    to_people: parseMailboxes(getHeader(headers, 'To')),
+    cc_people: parseMailboxes(getHeader(headers, 'Cc')),
     date: new Date(parseInt(res.data.internalDate)).toISOString(),
     body_text: bodyText,
     labels: res.data.labelIds || [],
@@ -278,6 +316,9 @@ async function fetchMessages(gmail, messageIds, { batchSize = 20, onProgress } =
 }
 
 module.exports = {
+  splitHeaderList,
+  parseMailboxes,
+  parseAddressList,
   listMessages,
   fetchMessage,
   fetchMessages,

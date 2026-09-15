@@ -279,6 +279,24 @@ async function correlateInbound(msg) {
     if (cErr) console.warn(`[correlate] contact auto-add ${sender}: ${cErr.message}`);
   }
 
+  // 3c. Everyone else on the message. The people a contact copies were on
+  // every reply and on file nowhere (The Q Corner: four people, zero contacts).
+  // Non-primary, attributed by domain, names filled only where the header
+  // names them — the rules are in threadContacts.js. Only the worker that
+  // inserted the message harvests, and only from a person's mail (an
+  // auto-responder's cc list belongs to whoever set it up). Fail-soft: a
+  // harvest never blocks a correlation.
+  let thread_contacts = null;
+  if (!duplicate && !inboundType) {
+    try {
+      const { harvestThreadContacts, peopleFromMessage } = require('./threadContacts');
+      thread_contacts = await harvestThreadContacts(sb, { company_id: companyId, sender, people: peopleFromMessage(msg) });
+      if (thread_contacts.added.length) console.log(`[correlate] ${companyId}: added ${thread_contacts.added.join(', ')} from the To/Cc`);
+    } catch (e) {
+      console.warn(`[correlate] thread contact harvest skipped for ${companyId}: ${e.message}`);
+    }
+  }
+
   // 4. State updates
   const nowIso = new Date().toISOString();
   await sb.from('b2b_threads').update({ last_message_at: received_at || nowIso }).eq('id', threadId);
@@ -430,6 +448,7 @@ async function correlateInbound(msg) {
     thankyou_closed,
     reopened,
     contact_details,
+    thread_contacts,
     read_state,
     looks_like_order: looksLikeOrder(body_text || ''),
   };

@@ -51,6 +51,41 @@ function computeReplyCc(anchor, ourEmail) {
 }
 
 /**
+ * Everyone on the conversation besides us: the anchor's From, To and Cc. For
+ * an inbound anchor that includes the sender (the reply goes to them); for an
+ * outbound one, whoever we wrote to. Lowercased, deduplicated. Pure.
+ */
+function computeThreadAudience(anchor, ourEmail) {
+  if (!anchor) return [];
+  const exclude = new Set(splitAddresses(ourEmail));
+  const pool = [
+    ...splitAddresses(anchor.from_email),
+    ...splitAddresses(anchor.to_email),
+    ...splitAddresses(anchor.cc_email),
+  ];
+  return [...new Set(pool)].filter(a => !exclude.has(a) && !a.endsWith('@rubyshines.com'));
+}
+
+/**
+ * The audience of `thread_id` from its stored messages (see
+ * computeThreadAudience). Fail-soft: a lookup error means nobody extra,
+ * never a blocked booking.
+ */
+async function threadAudience(sb, { thread_id, our_email }) {
+  if (!thread_id) return [];
+  const { data, error } = await sb.from('b2b_messages')
+    .select('direction, message_type, from_email, to_email, cc_email, sent_at')
+    .eq('thread_id', thread_id)
+    .order('sent_at', { ascending: false })
+    .limit(20);
+  if (error) {
+    console.warn(`[replyCc] thread ${thread_id} lookup failed: ${error.message} — no audience`);
+    return [];
+  }
+  return computeThreadAudience(pickReplyAnchor(data || []), our_email);
+}
+
+/**
  * Default cc for a new draft on `thread_id`, from the thread's stored messages.
  * Returns a comma-joined string or null. Fail-soft: a lookup error means no
  * default, never a blocked draft.
@@ -85,4 +120,4 @@ function replySubject(threadSubject) {
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { splitAddresses, pickReplyAnchor, computeReplyCc, defaultReplyCc, replySubject };
+module.exports = { splitAddresses, pickReplyAnchor, computeReplyCc, defaultReplyCc, replySubject, computeThreadAudience, threadAudience };
