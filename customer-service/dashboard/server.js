@@ -3354,12 +3354,20 @@ async function apiB2bAvailability(companyId, params) {
     tz = { timeZone: proposed.statedTimeZone, source: 'stated in their message', split: false, reason: null };
   }
 
-  const grid = await fetchAvailability({ durationMinutes: duration, days, theirTimeZone: tz.timeZone });
+  // Their offer sets the window. The default read stops ten business days
+  // out, and a date named past it was reported as "none of it is open" —
+  // about a day the engine had never looked at. Read far enough to include
+  // every date they gave; past the cap, say so (`beyond` below).
+  const { lookaheadToCover } = require('../../b2b-outreach/lib/availability');
+  const reach = lookaheadToCover((proposed.times || []).map(t => t.date), { minimum: days });
+  const grid = await fetchAvailability({ durationMinutes: duration, days: reach.days, theirTimeZone: tz.timeZone });
 
   // Best fits answer THEIR offer when they made one. Deterministic: the
   // windows come straight off the extracted times; the engine intersects.
   //   offered   — inside what they offered, grouping as the tiebreak
   //   counter   — none of their times are free; these are to counter-propose
+  //   beyond    — every date they named is past the furthest the grid reads,
+  //               so nothing was checked; these are to counter-propose
   //   unplaced  — they named times but their zone is unknown, so nothing can
   //               be placed; these are to counter-propose
   //   open      — they named nothing; tightest against what is already booked
@@ -3374,7 +3382,9 @@ async function apiB2bAvailability(companyId, params) {
   let bestFitsScope = 'open';
   if (offered.length) {
     const inside = pickBestFits(grid.days, { respectTheirWorkday: !!tz.timeZone, within: offered });
-    if (inside.length) { bestFits = inside; bestFitsScope = 'offered'; } else bestFitsScope = 'counter';
+    const lastRead = grid.days.length ? grid.days[grid.days.length - 1].date : null;
+    const allBeyond = !reach.covered && lastRead && offered.every(o => o.date > lastRead);
+    if (inside.length) { bestFits = inside; bestFitsScope = 'offered'; } else bestFitsScope = allBeyond ? 'beyond' : 'counter';
   } else if (unplaced) {
     bestFitsScope = 'unplaced';
   }
