@@ -7691,6 +7691,12 @@ async function loadOutreachContext(companyId, allowRefetch) {
       const actEl = document.getElementById('outreach-actions');
       if (actEl) actEl.outerHTML = outreachActionsHtml(entryNow, outreachDraft);
     }
+    // The Subject box is filled from this payload too (compose_target /
+    // thread reply_subject), and the detail rendered before it landed, so the
+    // box was still blank — "Re: <their subject>" only appeared on a re-render.
+    // Fill it now, but never over something the operator has already typed.
+    const subjEl = document.getElementById('outreach-subject-editor');
+    if (subjEl && !subjEl.value) subjEl.value = outreachDraft?.subject || outreachReplySubject();
   }
   renderOutreachSidebarContext();
   // Both branches above can replace the div the panel lives in.
@@ -8301,7 +8307,7 @@ function outreachActionsHtml(entry, draft) {
   const draftGhosts = [
     booked
       ? `<button class="btn btn-ghost" onclick="openSchedulePanel()"
-          title="A call is booked for ${esc(fmtDateTimeET(booked.starts_at))}. Picking a new time moves that call (the invite updates in place); nothing new is created.">Move call</button>`
+          title="A call is booked for ${esc(fmtDateTimeET(booked.starts_at))}. Picking a new time reschedules that call (the invite updates in place); nothing new is created.">Reschedule</button>`
       : `<button class="btn btn-ghost" onclick="openSchedulePanel()"
           title="See when you are free across all your calendars, or book a call.">Schedule</button>`,
     draft ? `<button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
@@ -8934,7 +8940,7 @@ function renderSchedulePanel() {
         <button class="btn btn-ghost btn-xs" onclick="cancelBookedCall(${s.booked.id})"
           title="Deletes the calendar event — Google tells them. No email of ours goes out.">Cancel call</button>
       </span>
-      <span class="schedule-hint">Pick a new time below to move this call. The invite updates in place, and the reply says so.</span>
+      <span class="schedule-hint">Pick a new time below to reschedule this call. The invite updates in place, and the reply says so.</span>
     </div>` : '';
 
   // Where their timezone came from is always on screen: an inference must never
@@ -9051,15 +9057,15 @@ function renderSchedulePanel() {
     <div class="schedule-footer${scheduleSelected ? '' : ' schedule-footer-lookup'}">
       <div class="schedule-chosen">
         ${scheduleSelected
-          ? (s.booked ? `<span class="schedule-hint-inline">Moving from ${esc(fmtDateTimeET(s.booked.starts_at))} to</span> ` : '')
+          ? (s.booked ? `<span class="schedule-hint-inline">Rescheduling from ${esc(fmtDateTimeET(s.booked.starts_at))} to</span> ` : '')
             + `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
             + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
             + `<span class="schedule-hint">${esc((scheduleTitle ?? s.title) || s.title)} · ${s.duration_minutes} min</span>`
-          : `<span class="schedule-hint">Looking only — pick a time above to ${s.booked ? 'move the call' : 'book it'}, or read the week and type your own times into the draft.</span>`}
+          : `<span class="schedule-hint">Looking only — pick a time above to ${s.booked ? 'reschedule the call' : 'book it'}, or read the week and type your own times into the draft.</span>`}
       </div>
       <div class="btn-row btn-row-primary">
         <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()"
-          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>${s.booked ? 'Move &amp; Send' : 'Book &amp; Send'}</button>
+          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>${s.booked ? 'Reschedule &amp; Send' : 'Book &amp; Send'}</button>
         ${testBtn}
       </div>
     </div>`;
