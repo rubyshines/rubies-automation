@@ -195,6 +195,21 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Thread Contacts',
+    // Everyone on the From/To/Cc of the last week's B2B mail becomes a contact
+    // of the company the mail belongs to — non-primary, attributed by domain
+    // (threadContacts.js). The push path does this live for inbound; this is
+    // its catch-up and the only path for outbound cc and manual sends.
+    run: async () => {
+      const { getSupabaseClient } = require('./shared/supabaseClient');
+      const r = await require('./b2b-outreach/lib/threadContacts').sweep(getSupabaseClient(), { days: 7, write: true });
+      return {
+        sources: { thread_contacts: { success: true, companies: r.companies, added: r.added.length, skipped: r.skipped.length, errors: r.errors } },
+        status: r.errors.length ? 'warn' : 'ok',
+      };
+    },
+  },
+  {
     name: 'Calendar Meetings',
     // Google Calendar is the source of truth for every call, ours or partner-
     // booked (Calendly). Before Thread Discovery and Relationship Summaries so

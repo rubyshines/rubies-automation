@@ -229,6 +229,10 @@ async function handle(payload, gmailPush) {
         // reply drafted from the record can keep everyone on the conversation.
         to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
         cc_email: Array.isArray(m.cc_addresses) ? m.cc_addresses.join(', ') : (m.cc_addresses || null),
+        // Display names off the headers, for the contact harvest: a new
+        // contact arrives named rather than as a bare address.
+        from_name: m.from_name || null,
+        people: [...(m.to_people || []), ...(m.cc_people || [])],
         subject: m.subject,
         body_text: m.body_text,
         received_at: m.date,

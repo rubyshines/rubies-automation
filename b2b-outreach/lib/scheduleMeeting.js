@@ -230,10 +230,32 @@ async function scheduleMeeting(p = {}) {
   // A To override may name several people; addressList joins them, so split
   // again for the attendee array — one attendee holding "a@x, b@y" invites
   // nobody and Google reports it as a bad request, after the send has gone.
-  const splitAddrs = v => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+  const splitAddrs = v => String(v || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  // Whoever is on the conversation is on the call (2026-09-14). The thread
+  // being answered has an audience — the newest real message's From, To and
+  // Cc, minus us — and a colleague the contact copied belongs on the invite,
+  // not told about the call afterwards by the one person we picked. The reply
+  // is cc'd to the same people, so the email and the invite never name
+  // different lists.
+  const replyThreadId = thread_id || pendingDraft?.thread_id || null;
+  let audience = [];
+  if (!test_mode && replyThreadId) {
+    try {
+      const { threadAudience } = require('./replyCc');
+      audience = await threadAudience(sb, { thread_id: replyThreadId, our_email: FROM_EMAIL });
+    } catch (e) {
+      // Nobody extra rather than no booking; the To and Cc still go out.
+      console.warn(`[scheduleMeeting] thread audience skipped for ${company_id}: ${e.message}`);
+    }
+  }
+  const toAddrs = splitAddrs(delivery.email);
   const attendees = test_mode
     ? [FROM_EMAIL]
-    : [...splitAddrs(delivery.email), ...splitAddrs(ccList)];
+    : [...new Set([...toAddrs, ...splitAddrs(ccList), ...audience])];
+  const inviteCc = test_mode ? ccList : (() => {
+    const extra = attendees.filter(a => !toAddrs.includes(a));
+    return extra.length ? extra.join(', ') : ccList;
+  })();
 
   const preview = {
     ok: true,
@@ -353,10 +375,10 @@ async function scheduleMeeting(p = {}) {
           message_type,
           // The same list the invite went to, so the two can never name
           // different people.
-          cc: ccList ?? undefined,
+          cc: inviteCc ?? undefined,
         })
         // No draft exists when this is driven from the console or the MCP tool.
-        : await sendB2bEmail({ ...common, company_id, thread_id, subject, body, cc: ccList ?? undefined, message_type });
+        : await sendB2bEmail({ ...common, company_id, thread_id, subject, body, cc: inviteCc ?? undefined, message_type });
     } catch (e) {
       send = { ok: false, error: e.message };
     }
