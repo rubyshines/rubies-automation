@@ -89,7 +89,7 @@ test('preview: a move names the call it moves and writes the moved sentence, tou
 test('confirmed: the existing event is patched with the new time and the row moves in place', async () => {
   const st = fakeSb({ meeting: MEETING });
   const patches = [];
-  const cal = { events: { patch: async (args) => { patches.push(args); return { data: { id: 'ev-colage', htmlLink: 'https://calendar.google.com/x', hangoutLink: 'https://meet.google.com/abc' } }; } } };
+  const cal = { events: { get: async () => ({ data: { status: 'confirmed' } }), patch: async (args) => { patches.push(args); return { data: { id: 'ev-colage', htmlLink: 'https://calendar.google.com/x', hangoutLink: 'https://meet.google.com/abc' } }; } } };
   // The calendar still shows the call at its OLD time: that block must not count as a clash.
   const fetchEvents = async () => ({ busy: [{ start: MEETING.starts_at, end: MEETING.ends_at, summary: 'RUBIES x COLAGE', eventId: 'ev-colage' }] });
   const r = await rescheduleMeeting(
@@ -159,4 +159,67 @@ test('cancel refuses another company\'s meeting and a call that already started'
   await assert.rejects(() => cancelMeeting(st.sb, { meeting_id: 7, company_id: 'lejag', now: NOW }), /not lejag's/);
   await assert.rejects(() => cancelMeeting(st.sb, { meeting_id: 7, now: new Date('2026-09-10T16:05:00Z') }), /already started/);
   assert.equal(st.meeting.status, 'booked');
+});
+
+// Jamie deleted the event by hand and then rescheduled from the panel
+// (Lumenus, 2026-09-14): the patch landed on the deleted event without an
+// error, the row "moved", the reply promised an invite nobody held.
+test('a call whose event is gone from the calendar is closed and booked fresh, not patched', async () => {
+  for (const missing of [
+    { events: { get: async () => ({ data: { status: 'cancelled' } }), patch: async () => { throw new Error('must not patch'); } } },
+    { events: { get: async () => { const e = new Error('Not Found'); e.code = 404; throw e; }, patch: async () => { throw new Error('must not patch'); } } },
+  ]) {
+    const st = fakeSb({ meeting: MEETING });
+    const booked = [];
+    const fetchEvents = async () => ({ busy: [] });
+    const r = await rescheduleMeeting(
+      { company_id: 'colage', start: NEW_START, confirmed: true, body: 'Hi Katy, I just sent an invite.', thread_id: 41 },
+      { sb: st.sb, now: NOW, cal: missing, fetchEvents, scheduleMeeting: async (args) => { booked.push(args); return { ok: true, phase: 'booked', meeting_id: 99 }; } },
+    );
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.phase, 'booked');
+    assert.equal(r.replaced_meeting_id, 7);
+    assert.equal(r.replaced_reason, 'event_deleted_from_calendar');
+    assert.equal(st.meeting.status, 'cancelled');
+    assert.equal(booked.length, 1);
+    assert.equal(booked[0].company_id, 'colage');
+    assert.equal(booked[0].start, NEW_START);
+    assert.equal(booked[0].thread_id, 41);
+    assert.equal(booked[0].body, 'Hi Katy, I just sent an invite.');
+    assert.equal(booked[0].title, 'RUBIES x COLAGE');
+  }
+});
+
+test('a calendar read that fails for any other reason stops the move rather than guessing', async () => {
+  const st = fakeSb({ meeting: MEETING });
+  const cal = { events: { get: async () => { throw new Error('quota'); }, patch: async () => { throw new Error('must not patch'); } } };
+  const r = await rescheduleMeeting({ company_id: 'colage', start: NEW_START, confirmed: true, skip_reply: true }, { sb: st.sb, now: NOW, cal, fetchEvents: async () => ({ busy: [] }) });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Could not read the calendar event: quota/);
+  assert.equal(st.meeting.status, 'booked');
+});
+
+// Whoever is on the conversation is on the call, for a move too: a Cc on the
+// reply joins the invite, and nobody already holding it is dropped.
+test('a move adds the reply\'s Cc to the invite and keeps the existing attendee', async () => {
+  const st = fakeSb({ meeting: MEETING });
+  const patches = [];
+  const cal = { events: { get: async () => ({ data: { status: 'confirmed' } }), patch: async (args) => { patches.push(args); return { data: { id: 'ev-colage' } }; } } };
+  const r = await rescheduleMeeting(
+    { company_id: 'colage', start: NEW_START, confirmed: true, skip_reply: true, cc: 'asha@example.org' },
+    { sb: st.sb, now: NOW, cal, fetchEvents: async () => ({ busy: [] }) },
+  );
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(patches[0].requestBody.attendees.map(a => a.email), ['katy@example.org', 'asha@example.org']);
+  assert.deepEqual(st.meeting.attendee_emails, ['katy@example.org', 'asha@example.org']);
+  assert.deepEqual(r.newly_invited, ['asha@example.org']);
+});
+
+test('a move with nobody new leaves the attendee list alone', async () => {
+  const st = fakeSb({ meeting: MEETING });
+  const patches = [];
+  const cal = { events: { get: async () => ({ data: { status: 'confirmed' } }), patch: async (args) => { patches.push(args); return { data: { id: 'ev-colage' } }; } } };
+  await rescheduleMeeting({ company_id: 'colage', start: NEW_START, confirmed: true, skip_reply: true }, { sb: st.sb, now: NOW, cal, fetchEvents: async () => ({ busy: [] }) });
+  assert.equal(patches[0].requestBody.attendees, undefined);
+  assert.equal(st.updates.some(u => 'attendee_emails' in u), false);
 });
