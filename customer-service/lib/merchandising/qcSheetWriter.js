@@ -261,18 +261,53 @@ function addTab(wb, tab) {
   // Points-of-measure sketch to the right of the blocks, like the prior workbooks.
   if (tab.pomImage && fs.existsSync(tab.pomImage)) {
     const buffer = fs.readFileSync(tab.pomImage);
-    const { width, height } = pngSize(buffer);
+    const { width, height, extension } = imageSize(buffer);
     const scale = Math.min(1, POM_IMAGE_MAX_WIDTH / width);
-    const imageId = wb.addImage({ buffer, extension: 'png' });
+    const imageId = wb.addImage({ buffer, extension });
     ws.addImage(imageId, { tl: { col: maxCol + 2, row: 0 }, ext: { width: Math.round(width * scale), height: Math.round(height * scale) } });
   }
   return ws;
 }
 
-// PNG pixel size from the IHDR chunk (bytes 16..23). Enough to keep aspect ratio.
-function pngSize(buffer) {
-  if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') throw new Error('POM image must be a PNG');
-  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+/**
+ * Pixel size of a PNG or JPEG, without an image library.
+ *
+ * The sheet generator runs in the MCP server, which deliberately has no image
+ * dependency, but it needs the source aspect ratio to scale the sketch. PNG
+ * carries it in the IHDR chunk; JPEG needs a walk over the segment markers to
+ * the frame header. Both formats are in play because tech-pack sketches are
+ * line drawings (PNG) or measured photographs (JPEG).
+ *
+ * @returns {{width:number,height:number,extension:'png'|'jpeg'}}
+ */
+function imageSize(buffer) {
+  if (buffer.length > 24 && buffer.toString('ascii', 1, 4) === 'PNG') {
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20), extension: 'png' };
+  }
+  if (buffer.length > 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buffer.length) {
+      if (buffer[i] !== 0xff) { i++; continue; }          // resync on a stray byte
+      const marker = buffer[i + 1];
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      const len = buffer.readUInt16BE(i + 2);
+      // SOF0..SOF15 carry the frame size; SOF4/SOF8/SOF12 are not frame headers.
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buffer.readUInt16BE(i + 5), width: buffer.readUInt16BE(i + 7), extension: 'jpeg' };
+      }
+      i += 2 + len;
+    }
+  }
+  throw new Error('points-of-measure image must be a PNG or JPEG');
+}
+
+/** The stored sketch for a tech-pack handle, whichever format it was saved in. */
+function pomImagePath(handle, dir = POM_IMAGE_DIR) {
+  for (const ext of ['png', 'jpg', 'jpeg']) {
+    const p = path.join(dir, `${handle}.${ext}`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 async function writeQcWorkbook({ tabs, outPath }) {
@@ -306,12 +341,13 @@ async function samplesPerColorFor(sb, handle) {
  *
  * @param {object} p
  * @param {string} p.production_code   e.g. "KALI-2606"
+ * @param {string} [p.category]        'underwear' | 'swimwear' — one workbook per category is how the inspector works and how the ingest reads them back
  * @param {string[]} [p.products]      restrict to these products (prefix, handle or name); default every QC product on the order
  * @param {number} [p.samples_per_color]
  * @param {string} [p.out_path]
  * @param {boolean} [p.record=true]    write/refresh the draft qc_inspections row
  */
-async function generateQcSheet({ production_code, products, samples_per_color, out_path, record = true } = {}) {
+async function generateQcSheet({ production_code, category: only, products, samples_per_color, out_path, record = true } = {}) {
   if (!production_code) throw new Error('production_code is required');
   const sb = getSupabaseClient();
   const order = await resolveOrder(production_code);
@@ -323,6 +359,12 @@ async function generateQcSheet({ production_code, products, samples_per_color, o
   let wanted = products && products.length ? findQcProducts(products) : QC_PRODUCTS.filter((p) => onOrder.has(p.prefix));
   const notOnOrder = wanted.filter((p) => !onOrder.has(p.prefix)).map((p) => p.tab);
   wanted = wanted.filter((p) => onOrder.has(p.prefix));
+  if (only) {
+    const cat = String(only).toLowerCase();
+    if (!QC_PRODUCTS.some((p) => p.category === cat)) throw new Error(`unknown category "${only}"`);
+    wanted = wanted.filter((p) => p.category === cat);
+    if (!wanted.length) throw new Error(`${order.production_code} has no ${cat} products`);
+  }
   if (!wanted.length) throw new Error(`none of the requested products are on ${order.production_code}${notOnOrder.length ? ` (not on order: ${notOnOrder.join(', ')})` : ''}`);
   const skipped = [...onOrder].filter((pre) => !qcProductForPrefix(pre));
 
@@ -331,8 +373,7 @@ async function generateQcSheet({ production_code, products, samples_per_color, o
     const specs = (await Promise.all([].concat(p.handles).map((h) => fetchCurrentSpecs(h)))).flat();
     const skus = items.filter((i) => String(i.sku).split('-')[0] === p.prefix).map((i) => i.sku);
     const spc = samples_per_color || await samplesPerColorFor(sb, [].concat(p.handles)[0]);
-    const pomImage = path.join(POM_IMAGE_DIR, `${[].concat(p.handles)[0]}.png`);
-    tabs.push(buildQcTab({ tabName: p.tab, prefix: p.prefix, skus, specs, samplesPerColor: spc, pomImage: fs.existsSync(pomImage) ? pomImage : null }));
+    tabs.push(buildQcTab({ tabName: p.tab, prefix: p.prefix, skus, specs, samplesPerColor: spc, pomImage: pomImagePath([].concat(p.handles)[0]) }));
   }
 
   const categories = [...new Set(wanted.map((p) => p.category))];
@@ -368,4 +409,4 @@ async function generateQcSheet({ production_code, products, samples_per_color, o
   };
 }
 
-module.exports = { buildQcTab, writeQcWorkbook, generateQcSheet, colourOrder, specSizeKey, toleranceForSize, POM_IMAGE_DIR };
+module.exports = { buildQcTab, writeQcWorkbook, generateQcSheet, colourOrder, specSizeKey, toleranceForSize, imageSize, pomImagePath, POM_IMAGE_DIR };

@@ -61,6 +61,7 @@ module.exports = [
       type: 'object',
       properties: {
         production_code: { type: 'string', description: 'Production order code, e.g. KALI-2606' },
+        category: { type: 'string', enum: ['underwear', 'swimwear'], description: 'One workbook per category, which is how the inspector receives them and how ingest_qc_results reads them back. Omit only when the order is single-category or you deliberately want one mixed file.' },
         products: { type: 'array', items: { type: 'string' }, description: 'Only these products, e.g. ["naomi"] or ["GAF", "AJ"]; omit for every QC product on the order' },
         samples_per_color: { type: 'integer', description: 'Sample columns per colour per size (default: the tech pack\'s samples_per_color, normally 3)' },
         out_path: { type: 'string', description: 'Where to write the .xlsx (default ~/Downloads/<code> <Category> QC Master.xlsx)' },

@@ -6,7 +6,8 @@ const path = require('path');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 
-const { buildQcTab, writeQcWorkbook, colourOrder, specSizeKey, toleranceForSize } = require('../lib/merchandising/qcSheetWriter');
+const { buildQcTab, writeQcWorkbook, colourOrder, specSizeKey, toleranceForSize, imageSize, pomImagePath, POM_IMAGE_DIR } = require('../lib/merchandising/qcSheetWriter');
+const { pickSketch, isPomSheet } = require('../../scripts/fetchPomSketch');
 const { QC_PRODUCTS, TAB_HANDLES, qcProductForPrefix, findQcProducts } = require('../lib/merchandising/qcProducts');
 const { parseSheet, flattenMeasurements } = require('../lib/merchandising/qcSheetParser');
 
@@ -196,4 +197,60 @@ test('QC product list: every ingest tab still maps, prefixes are unique, lookups
   assert.deepEqual(findQcProducts(['naomi']).map((p) => p.prefix), ['GAF']);
   assert.deepEqual(findQcProducts(['Naomi Gaff', 'AJ']).map((p) => p.prefix), ['AJ', 'GAF']);
   assert.throws(() => findQcProducts(['nope']), /no QC product matches/);
+});
+
+// --- points-of-measure sketches ----------------------------------------------
+
+// Real bytes rather than fixtures: these are the stored assets the generator
+// embeds, and the point of the parser is that it agrees with them.
+test('imageSize reads PNG and JPEG dimensions out of the stored sketches', () => {
+  const png = pomImagePath('naomi');
+  const jpg = pomImagePath('genesis');
+  assert.ok(png && png.endsWith('.png'), 'a PNG sketch is stored');
+  assert.ok(jpg && jpg.endsWith('.jpg'), 'a JPEG sketch is stored');
+
+  const p = imageSize(fs.readFileSync(png));
+  assert.equal(p.extension, 'png');
+  assert.ok(p.width > 100 && p.height > 100, `PNG size looks wrong: ${p.width}x${p.height}`);
+
+  const j = imageSize(fs.readFileSync(jpg));
+  assert.equal(j.extension, 'jpeg');
+  assert.ok(j.width > 100 && j.height > 100, `JPEG size looks wrong: ${j.width}x${j.height}`);
+
+  // Every stored asset must parse — an unreadable one breaks generation silently.
+  for (const f of fs.readdirSync(POM_IMAGE_DIR)) {
+    const got = imageSize(fs.readFileSync(path.join(POM_IMAGE_DIR, f)));
+    assert.ok(got.width > 0 && got.height > 0, `${f} did not parse`);
+  }
+  assert.throws(() => imageSize(Buffer.from('not an image')), /must be a PNG or JPEG/);
+});
+
+test('pomImagePath finds a sketch by handle and returns null when there is none', () => {
+  assert.ok(pomImagePath('naomi'));
+  assert.equal(pomImagePath('no-such-product'), null);
+});
+
+test('pickSketch takes the top-band drawing, not the logo or the photos below it', () => {
+  const img = (row, col, width, height) => ({ imageId: `${row}:${col}`, range: { tl: { nativeRow: row, nativeCol: col }, ext: { width, height } } });
+  const logo = img(0, 0, 51, 21);          // far-left corner, tiny
+  const sketch = img(9, 5, 1307, 534);     // top band, right of the table
+  const photo = img(58, 1, 512, 346);      // reference shot further down
+  const second = img(12, 7, 700, 400);     // another drawing in the same band
+
+  assert.equal(pickSketch([logo, sketch, photo]).image, sketch);
+  assert.equal(pickSketch([photo, sketch, logo]).image, sketch, 'order does not matter');
+  assert.equal(pickSketch([second, sketch]).image, sketch, 'topmost anchor wins');
+  assert.equal(pickSketch([logo, photo]), null, 'nothing in the top band -> no pick');
+  assert.equal(pickSketch([]), null);
+  // A wide image anchored left of the table is the table's own artwork, not the sketch.
+  assert.equal(pickSketch([img(9, 1, 1200, 500)]), null);
+});
+
+test('isPomSheet matches the tech-pack tab name in its real spellings', () => {
+  assert.ok(isPomSheet('Points of Measure'));
+  assert.ok(isPomSheet('POINTS OF MEASURE'));
+  assert.ok(isPomSheet('Point of Measure '));
+  assert.ok(!isPomSheet('Graded Spec'));
+  assert.ok(!isPomSheet(''));
+  assert.ok(!isPomSheet(null));
 });
