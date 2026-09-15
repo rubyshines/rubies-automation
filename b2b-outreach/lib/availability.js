@@ -20,7 +20,11 @@ const BUSINESS_START_HOUR = 9;   // 09:00 local
 const BUSINESS_END_HOUR = 17;    // 17:00 local — a meeting must END by this
 const SLOT_GRANULARITY_MIN = 30;
 const DEFAULT_DURATION_MIN = 30;
-const DEFAULT_LOOKAHEAD_DAYS = 10; // business days
+// Four whole weeks by default (2026-09-14: ten days ended mid-week and hid
+// the day a partner had named; Jamie has few enough calls that a month is a
+// cheap read). Whole weeks, so the week view never shows a "beyond" column
+// inside a week it is drawing.
+const DEFAULT_LOOKAHEAD_DAYS = 20; // business days
 // The furthest the grid will read when the other side names a date: twelve
 // weeks. Past this the caller says so rather than the read quietly stopping.
 const MAX_LOOKAHEAD_DAYS = 60;    // business days
@@ -550,20 +554,51 @@ function lookaheadToCover(dates, {
   timeZone = BUSINESS_TIMEZONE,
   minimum = DEFAULT_LOOKAHEAD_DAYS,
   max = MAX_LOOKAHEAD_DAYS,
+  // Run on to the Friday, so the grid always ends on a complete week.
+  wholeWeeks = false,
 } = {}) {
   const todayIso = zonedDateParts(now, timeZone).iso;
   const target = (dates || []).filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().pop();
-  if (!target || target <= todayIso) return { days: minimum, covered: true };
   let cursor = addDaysToIso(todayIso, 1);
   let count = 0;
+  let last = null;
   while (count < max) {
     if (!isWeekendIso(cursor)) {
       count++;
-      if (cursor >= target) return { days: Math.max(minimum, count), covered: true };
+      last = cursor;
+      const reached = !target || cursor >= target;
+      if (reached && count >= minimum && (!wholeWeeks || isFridayIso(cursor))) return { days: count, covered: true };
     }
     cursor = addDaysToIso(cursor, 1);
   }
-  return { days: max, covered: false };
+  return { days: max, covered: !target || (last !== null && last >= target) };
+}
+
+/** Is this calendar date (YYYY-MM-DD) a Friday? Pure, zone-free. */
+function isFridayIso(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 5;
+}
+
+// Their working day, for clamping an open-ended offer. "Until 4:45" starts
+// at 9 their time, not at midnight: the grid was marking 8:00 AM their time
+// as inside what they gave (2026-09-14). Same hours the slot flags use.
+const THEIR_START_HOUR = 9;
+const THEIR_END_HOUR = 17;
+
+/**
+ * A window they offered with any missing edge set to their working day, when
+ * their zone is known. A window with both edges is returned as it is. Pure.
+ */
+function clampWindowToTheirWorkday(w, theirTimeZone) {
+  if (!w || !w.date || !theirTimeZone || (w.start && w.end)) return w;
+  const [year, month, day] = w.date.split('-').map(Number);
+  const at = hour => wallClockToUtc({ year, month, day, hour }, theirTimeZone).toISOString();
+  return {
+    ...w,
+    start: w.start || at(THEIR_START_HOUR),
+    end: w.end || at(THEIR_END_HOUR),
+  };
 }
 
 /**
@@ -590,6 +625,8 @@ async function fetchAvailability({
 module.exports = {
   buildSlots,
   lookaheadToCover,
+  isFridayIso,
+  clampWindowToTheirWorkday,
   DEFAULT_LOOKAHEAD_DAYS,
   MAX_LOOKAHEAD_DAYS,
   sameWallClock,

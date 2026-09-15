@@ -8766,10 +8766,10 @@ function scheduleDurationOptions(selected) {
  */
 let scheduleOpen = false;
 
-async function openSchedulePanel(duration, timezone) {
+async function openSchedulePanel(duration, timezone, more) {
   const el = document.getElementById('outreach-schedule-panel');
   if (!el || !outreachSelectedId) return;
-  if (scheduleOpen && duration === undefined && timezone === undefined) {
+  if (scheduleOpen && duration === undefined && timezone === undefined && more === undefined) {
     closeSchedulePanel();
     return;
   }
@@ -8791,6 +8791,8 @@ async function openSchedulePanel(duration, timezone) {
     const qs = new URLSearchParams();
     if (duration) qs.set('duration', duration);
     if (timezone) qs.set('timezone', timezone);
+    // Paging past the end of the grid: read further rather than stop.
+    if (more?.days) qs.set('days', more.days);
     const data = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/availability?${qs}`);
     if (outreachSelectedId !== companyId) return; // moved on while loading
     scheduleState = data;
@@ -8799,7 +8801,7 @@ async function openSchedulePanel(duration, timezone) {
     // enough to include it, and a panel that opens on this week while their
     // day sits three clicks to the right is the panel hiding the answer.
     const named = (data.proposed_times || []).map(t => t.date).filter(Boolean).sort()[0];
-    scheduleWeek = named ? scheduleWeekIndexForDate(named) : 0;
+    scheduleWeek = more?.week ?? (named ? scheduleWeekIndexForDate(named) : 0);
     renderSchedulePanel();
     syncSendButtonsForSchedule();
   } catch (err) {
@@ -8886,6 +8888,9 @@ function scheduleOfferText(s) {
  * about which times they can actually do.
  */
 function scheduleOfferedWindows(s) {
+  // The server's windows, clamped to their working day, when it sent them:
+  // "until 4:45" starts at 9 their time, not at midnight.
+  if (Array.isArray(s?.offered_windows)) return s.offered_windows.length ? s.offered_windows : null;
   const duration = (s?.duration_minutes || 30) * 60000;
   const out = (s?.proposed_times || [])
     .filter(t => !t.needsTimeZone && (t.start || t.end))
@@ -9119,6 +9124,15 @@ const SCHEDULE_ROW_PX = 20;   // one 30-minute row
 const SCHEDULE_DAY_MIN = 480; // 9:00 → 17:00
 
 function scheduleWeekStep(delta) {
+  const s = scheduleState;
+  // Past the last week read: read another week rather than stop. A month is
+  // the default; there is no ceiling the operator has to know about short of
+  // the engine's twelve weeks, where the arrow finally goes quiet.
+  if (delta > 0 && s && scheduleWeek + 1 >= scheduleWeeks(s).length) {
+    const tzOverride = s.their_timezone_source === 'set by you' ? s.their_timezone : undefined;
+    openSchedulePanel(s.duration_minutes, tzOverride, { days: (s.days || []).length + 5, week: scheduleWeek + 1 });
+    return;
+  }
   scheduleWeek += delta;
   renderSchedulePanel();
 }
@@ -9292,7 +9306,7 @@ function renderScheduleWeek(s, sameZone) {
         <div class="schedule-week-nav">
           <button type="button" onclick="scheduleWeekStep(-1)" ${scheduleWeek === 0 ? 'disabled' : ''} aria-label="Previous week">&#8249;</button>
           <span class="schedule-week-range">${esc(range)}</span>
-          <button type="button" onclick="scheduleWeekStep(1)" ${scheduleWeek >= weeks.length - 1 ? 'disabled' : ''} aria-label="Next week">&#8250;</button>
+          <button type="button" onclick="scheduleWeekStep(1)" ${scheduleWeek >= weeks.length - 1 && (s.days || []).length >= 60 ? 'disabled' : ''} aria-label="Next week"${scheduleWeek >= weeks.length - 1 ? ' title="Read the next week"' : ''}>&#8250;</button>
         </div>
         <a class="schedule-week-gcal" href="${esc(gcal)}" target="_blank" rel="noopener">Open this week in Google Calendar</a>
       </div>

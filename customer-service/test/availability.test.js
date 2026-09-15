@@ -9,7 +9,7 @@ const assert = require('node:assert');
 
 const {
   buildSlots, checkSlotFree, wallClockToUtc, zoneOffsetMinutes,
-  addDaysToIso, isWeekendIso, formatTimeInZone, lookaheadToCover,
+  addDaysToIso, isWeekendIso, formatTimeInZone, lookaheadToCover, isFridayIso, clampWindowToTheirWorkday,
   DEFAULT_LOOKAHEAD_DAYS, MAX_LOOKAHEAD_DAYS,
 } = require('../../b2b-outreach/lib/availability');
 
@@ -366,29 +366,67 @@ test('bestFits inside their offer: only slots in their windows, grouping breaks 
 
 test('lookaheadToCover: the read reaches every date they named, counted in business days from tomorrow', () => {
   const now = new Date('2026-09-14T15:00:00Z'); // Monday, 11am Eastern
-  // Nothing named, or a date already in the default window: the default.
+  const min = { now, minimum: 10 };
+  // Nothing named, or a date already in the window: the minimum.
+  assert.deepStrictEqual(lookaheadToCover([], min), { days: 10, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-17'], min), { days: 10, covered: true });
   assert.deepStrictEqual(lookaheadToCover([], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
-  assert.deepStrictEqual(lookaheadToCover(['2026-09-17'], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
   // Wed Sept 30 is the 12th business day after Monday the 14th: the 10-day
   // read stopped at the 28th and reported a day it never looked at as not open.
-  assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], { now }), { days: 12, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], min), { days: 12, covered: true });
   // The furthest date wins, whatever order they were said in.
-  assert.deepStrictEqual(lookaheadToCover(['2026-09-30', '2026-09-22'], { now }), { days: 12, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30', '2026-09-22'], min), { days: 12, covered: true });
   // A weekend date is covered once the Monday after it is in (Sat 26 → Mon 28 = 10th).
-  assert.deepStrictEqual(lookaheadToCover(['2026-09-26'], { now }), { days: 10, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-26'], min), { days: 10, covered: true });
   // Today and the past never widen the read.
-  assert.deepStrictEqual(lookaheadToCover(['2026-09-14', '2026-09-01'], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-14', '2026-09-01'], min), { days: 10, covered: true });
   // Past the cap: the cap, and an honest flag rather than a silent stop.
-  assert.deepStrictEqual(lookaheadToCover(['2027-01-15'], { now }), { days: MAX_LOOKAHEAD_DAYS, covered: false });
+  assert.deepStrictEqual(lookaheadToCover(['2027-01-15'], min), { days: MAX_LOOKAHEAD_DAYS, covered: false });
   // Junk is ignored, not counted.
-  assert.deepStrictEqual(lookaheadToCover([null, 'tomorrow', undefined], { now }), { days: DEFAULT_LOOKAHEAD_DAYS, covered: true });
+  assert.deepStrictEqual(lookaheadToCover([null, 'tomorrow', undefined], min), { days: 10, covered: true });
   // An explicit larger minimum is kept.
   assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], { now, minimum: 20 }), { days: 20, covered: true });
 });
 
+test('lookaheadToCover with wholeWeeks runs on to the Friday', () => {
+  const now = new Date('2026-09-14T15:00:00Z'); // Monday
+  // Ten business days from Tue 15 end on Mon 28; whole weeks carry on to Fri Oct 2 (14).
+  assert.deepStrictEqual(lookaheadToCover([], { now, minimum: 10, wholeWeeks: true }), { days: 14, covered: true });
+  // Wed Sept 30 named: same Friday.
+  assert.deepStrictEqual(lookaheadToCover(['2026-09-30'], { now, minimum: 10, wholeWeeks: true }), { days: 14, covered: true });
+  // Already a Friday: nothing added (Tue 15 → Fri 18 is 4 days).
+  assert.deepStrictEqual(lookaheadToCover([], { now, minimum: 4, wholeWeeks: true }), { days: 4, covered: true });
+  assert.strictEqual(isFridayIso('2026-10-02'), true);
+  assert.strictEqual(isFridayIso('2026-09-30'), false);
+});
+
 test('the grid actually runs as far as lookaheadToCover asks', () => {
   const now = new Date('2026-09-14T15:00:00Z');
-  const { days } = lookaheadToCover(['2026-09-30'], { now });
+  const { days } = lookaheadToCover(['2026-09-30'], { now, minimum: 10 });
   const grid = buildSlots({ now, days, durationMinutes: 30 });
   assert.strictEqual(grid.days[grid.days.length - 1].date, '2026-09-30');
+});
+
+test('clampWindowToTheirWorkday: an open edge becomes 9 or 5 their time, a closed window is untouched', () => {
+  const LA = 'America/Los_Angeles';
+  // "Until 4:45 PM PT" on Sept 30 (PDT = UTC-7): starts 9:00 PT = 16:00Z.
+  assert.deepStrictEqual(
+    clampWindowToTheirWorkday({ date: '2026-09-30', start: null, end: '2026-09-30T23:45:00.000Z' }, LA),
+    { date: '2026-09-30', start: '2026-09-30T16:00:00.000Z', end: '2026-09-30T23:45:00.000Z' },
+  );
+  // "From 6:15 PM PT": ends 5:00 PT = 00:00Z next day — an empty window the intersect will find nothing in.
+  assert.deepStrictEqual(
+    clampWindowToTheirWorkday({ date: '2026-09-30', start: '2026-10-01T01:15:00.000Z', end: null }, LA),
+    { date: '2026-09-30', start: '2026-10-01T01:15:00.000Z', end: '2026-10-01T00:00:00.000Z' },
+  );
+  // "The 30th" with no times: their whole working day.
+  assert.deepStrictEqual(
+    clampWindowToTheirWorkday({ date: '2026-09-30', start: null, end: null }, LA),
+    { date: '2026-09-30', start: '2026-09-30T16:00:00.000Z', end: '2026-10-01T00:00:00.000Z' },
+  );
+  const closed = { date: '2026-09-30', start: '2026-09-30T20:00:00.000Z', end: '2026-09-30T21:00:00.000Z' };
+  assert.strictEqual(clampWindowToTheirWorkday(closed, LA), closed);
+  // No zone: nothing to clamp to, the window is returned as it is.
+  const open = { date: '2026-09-30', start: null, end: null };
+  assert.strictEqual(clampWindowToTheirWorkday(open, null), open);
 });
