@@ -92,6 +92,14 @@ describe('inPreOrderSilo', () => {
     assert.equal(inPreOrderSilo(row(SILO, shippingNote)), true);
   });
 
+  it('a resolved note leaves it in the silo — a closed delay-notice ticket is not arrived stock', () => {
+    const closedTicket = { note: 'Conversation closed (ticket #3445) — auto-resolved', resolved: true, author: 'auto' };
+    assert.equal(inPreOrderSilo(row(SILO, closedTicket)), true);
+    assert.equal(isResolvedRow(row(SILO, closedTicket)), false);
+    const reviewed = { note: 'Reviewed by Jamie — nothing to action', resolved: true, author: 'operator' };
+    assert.equal(inPreOrderSilo(row(SILO, reviewed)), true);
+  });
+
   it('a held pre-order is never in the silo', () => {
     assert.equal(inPreOrderSilo(row(classifyWithPreOrder(true, HELD))), false);
   });

@@ -95,17 +95,18 @@ describe('bucketPendingOrders — note + isPreOrder precedence (mirrors daily re
     assert.equal(out.normal.length, 1);
   });
 
-  it('a resolved note on a pre-order does not appear in any actionable bucket', () => {
+  it('a resolved note leaves a pre-order in pre_orders — the conversation ended, the stock did not arrive', () => {
     const r = row({
       orderNumber: 102,
       isPreOrder: true,
-      note: { note: 'Done', resolved: true, author: 'jamie' },
+      note: { note: 'Conversation closed (ticket #3445) — auto-resolved', resolved: true, author: 'auto' },
       severity: 'normal',
     });
     const out = bucket({ results: [r] });
-    assert.equal(out.pre_orders.length, 0);
+    assert.equal(out.pre_orders.length, 1);
     assert.equal(out.waiting_on_response.length, 0);
     assert.equal(out.urgent.length, 0);
+    assert.equal(out.normal.length, 0);
   });
 });
 

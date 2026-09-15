@@ -342,11 +342,16 @@ function classifyWithPreOrder(isPreOrder, base) {
 }
 
 // An unresolved operator note pulls a pre-order out of the silo into the
-// actionable flow (mistaken pre-order, defect outreach). A shipping-update note
-// records a mechanical change already applied (noteLifecycle.isShippingUpdateNote)
-// and never reclassifies — a pre-order expedited "when in stock" stays a pre-order.
+// actionable flow (mistaken pre-order, defect outreach). A resolved note does
+// not: it records that a conversation ended, not that the stock arrived, and a
+// pre-order whose delay-notice ticket closed is still a pre-order. Before
+// 2026-09-15 any note ejected the row, so 18 Naomi Gaff pre-orders vanished
+// into the hidden Resolved section the day their outreach tickets closed.
+// A shipping-update note records a mechanical change already applied
+// (noteLifecycle.isShippingUpdateNote) and never reclassifies — a pre-order
+// expedited "when in stock" stays a pre-order.
 function noteOverridesPreOrder(r) {
-  return !!r.note && !isShippingUpdateNote(r.note);
+  return !!r.note && !r.note.resolved && !isShippingUpdateNote(r.note);
 }
 
 function inPreOrderSilo(r) {
