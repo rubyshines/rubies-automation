@@ -215,18 +215,8 @@
       <div class="way">
         <h3>If you can, buy one</h3>
         <p>20% off your first order at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a>, and for every two pairs bought, the closet gets one.</p>
-        <form id="code-form" class="form">
-          <label>Your email, and we'll send your code
-            <input type="email" id="code-email" placeholder="you@example.com" required>
-          </label>
-          <button type="submit" class="btn btn-fill">Get my 20% off</button>
-          <p class="fine">One code per person, for your first order. It arrives by email and works for 30 days.</p>
-        </form>
-        <div class="sent" id="code-done" hidden>
-          <b>Your code is on its way</b>
-          <p class="soft">Check your inbox. You can also shop now with it already applied:</p>
-          <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com" target="_blank" rel="noopener">Shop with 20% off applied</a>
-        </div>
+        <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com" target="_blank" rel="noopener">Shop with 20% off</a>
+        <p class="fine">The discount is applied for you at checkout, on your first order. Nothing to type, nothing to share.</p>
         <p class="fine">Not sure which style or size? <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">Compare styles</a> or open the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a>.</p>
       </div>
       <div class="rule"></div>
@@ -370,7 +360,7 @@
       { id: 6, items: [ { key: 'aj', color: 'Black', size: 'S' } ], how: 'pickup' }
     ],
     waitlist: [],
-    orders: 4, orderCredit: 32, gifts: 56, sponsors: 3, shipmentsSent: 0, nextId: 7, codes: {}
+    orders: 4, orderCredit: 32, gifts: 56, sponsors: 3, shipmentsSent: 0, nextId: 7, clicks: 0
   };
   var state = load();
   readLink();
@@ -540,7 +530,6 @@
   function resetForms() {
     itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd();
     document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
-    document.getElementById('code-form').hidden = false; document.getElementById('code-done').hidden = true;
     document.querySelector('input[name="how"][value="pickup"]').checked = true; syncAddress();
   }
   addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
@@ -573,22 +562,13 @@
     renderProgress();
   });
 
-  // personal code: one per email, from the centre's pool; illustrative here
-  document.getElementById('code-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var email = document.getElementById('code-email').value.trim().toLowerCase();
-    state.codes = state.codes || {};
-    if (!state.codes[email]) {
-      var prefix = state.org.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'RUB';
-      var alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', tail = '';
-      for (var i = 0; i < 6; i++) tail += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-      state.codes[email] = prefix + '-' + tail;
-    }
-    save();
-    document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.codes[email]) + '?redirect=/collections/all';
-    document.getElementById('code-form').hidden = true;
-    document.getElementById('code-done').hidden = false;
-    toast('Code ' + state.codes[email] + ' sent to ' + email + '.');
+  // each click draws a fresh single-use code from the centre's pool and applies it through Shopify's discount link; the shopper never sees a code
+  document.getElementById('shop-link').addEventListener('click', function () {
+    var prefix = state.org.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'RUB';
+    var alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', tail = '';
+    for (var i = 0; i < 6; i++) tail += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    this.href = 'https://rubyshines.com/discount/' + prefix + '-' + tail + '?redirect=/collections/all';
+    state.clicks = (state.clicks || 0) + 1; save();
   });
 
   // presenter panel: press "e" with nothing focused, or add ?panel to the link
