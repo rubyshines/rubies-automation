@@ -23,7 +23,7 @@ Any approved partner can also order for its closet at any time with its own budg
 
 Sign-up is self-service with one human gate after it: the RUBIES operator approves new centres from a queue before their page and map listing go live. Booking a call is offered and optional.
 
-Three audiences: the public (closet page, programme page with sign-up), the centre's team (a private view, no passwords, a link by email is enough), and the RUBIES operator (a login).
+Three audiences: the public (closet page, programme page with sign-up), the centre's team (accounts, with standard company account management), and the RUBIES operator (a login).
 
 ## The facts
 
@@ -73,10 +73,14 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 - **Request form.** On the closet page: what they need (style, colour, size, up to the centre's limit), pickup or ship (address only when shipping), a sentence on what a pair would mean, an opt-in to share those words anonymously, email. Plus what they see once sent, including when they are on the list for the next shipment.
 - **Sponsor thank-you.** After paying at the store checkout.
 
-**Centre (private, by link)**
-- **Sign in.** Email, a link, no password.
+**Centre account (standard company account management)**
+- **Create account.** Part of sign-up: the first person becomes the centre's admin. Email and password, or sign in with Google or Microsoft (most centres run on Google Workspace or Microsoft 365). Work email domains only, with personal domains (gmail, yahoo, outlook.com, icloud and the like) refused by default; many small centres do run on a gmail address, so the operator can allow one from the approval queue. Verify the email.
+- **Sign in.** Email and password or Google or Microsoft. Forgotten password and reset. Change email, change password.
+- **Team.** The admin invites team members by email, sets their role (admin or member), removes them, and can hand admin to someone else. An invited person accepts the invitation and creates their account on the same rules. Contacts churn at centres, so this is the path that keeps a centre reachable when its coordinator leaves.
+
+**Centre (signed in)**
 - **Home.** The current box: raised of goal, the requests in it and their status, send it now when funded, add to the box, order now, pause requests, and everything the centre needs to share its link.
-- **Settings.** Sizes, items per request, how often one person may ask, funding target, approval mode, shipping to a door on or off; map listing and pause for Pre-Loved; contacts, logo, address; leaving.
+- **Settings.** Sizes, items per request, how often one person may ask, funding target, approval mode, shipping to a door on or off; map listing and pause for Pre-Loved; centre name, logo, address, the email statements go to; leaving. Team management lives here or beside it.
 - **Send the box.** Requested items are fixed; the centre fills the remainder or lets it fill itself, sees the totals, confirms.
 - **Order now.** An order at 50% off, $300 minimum, paid by invoice or card.
 - **History.** Boxes sent; donations routed to them.
@@ -85,7 +89,7 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 **Operator (login)**
 - **Queue.** New centres to approve, ask for more from, or decline; plus anything else needing a human (a wait list growing, a centre whose volume jumps, a sign-up sitting for days).
 - **Centres.** Every centre with its programmes, status, box, activity and a health signal.
-- **Centre detail.** Everything about one centre: contacts, settings, ledger, requests, link clicks and orders, sponsors, boxes sent, donations routed, statements sent, notes, and the actions the operator can take on its behalf.
+- **Centre detail.** Everything about one centre: team members and roles, settings, ledger, requests, link clicks and orders, sponsors, boxes sent, donations routed, statements sent, notes, and the actions the operator can take on its behalf.
 - **Programme dashboard.** Totals across all centres and what needs attention.
 
 ## Emails
@@ -103,7 +107,7 @@ Part of the design, same brief as the pages: purpose only, and the list is open 
 - **The box is funded.** The goal is reached; a link to fill and send it, and the choice to keep it growing.
 - **The box is on its way.** Sent, with what is in it and tracking.
 - **Monthly statement.** Only when something happened: link clicks, orders, dollars into the box, requests, box status.
-- **Sign-in link.** The email that opens their private view.
+- **Account emails.** Verify your email, reset your password, you have been invited to join a centre, you were added to a centre, your role changed.
 - Possibly: **Pre-Loved items are on the way**, when a customer has been given the centre's address for exchanged or returned items. We only know it was sent, not that it arrived.
 
 **To a requester**
@@ -124,7 +128,7 @@ No lobby stand, cards or printed kit. No starter run of product. No shared or vi
 Do not decide these; placeholder them.
 
 - The final name of the Pre-Loved programme.
-- Whether the operator login is password or a link by email.
+- Whether the operator login is the same account system as the centres (one login, an operator role) or its own.
 - Whether a centre pays "add to the box" and "order now" on the spot or by invoice.
 
 ## Reference
