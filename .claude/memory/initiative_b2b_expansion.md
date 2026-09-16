@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-09-11
+last_updated: 2026-09-16
 ---
 
 ## Goal
@@ -33,6 +33,7 @@ Outreach runs on the engine end to end: nightly initiating drafts for operator r
 Next: the retailer ladder chases from mid-September and the org A/B round reads on 22 Sep; lock the round-2 cold-intro rewording; the qualified discovery retailers need an importer and a vetting screen before round 2; the affiliate decision (two stores have asked) is still open; the manual-send cohort (parked). Plan: `.claude/plans/b2b-retailer-outreach.md`.
 
 ## Decisions Made
+- 2026-09-16 — The affiliate decision is resolved for orgs as the Virtual Closet (`initiative_virtual_closet.md`): matched box, hidden automatic discount, no third-party affiliate app. Retailers are still open (Hello Gorgeous is owed an answer); a cash-payout mode on the same ledger or GoAffPro, to decide when the org programme has shipped.
 - 2026-08-26 — Follow-ups auto-send with no click and no shadow period, guarded on targeting rather than prose. The review a human would do is not what makes a chase safe; a reply that landed since, a dead address and an oversized batch are. Scheduling into their business hours leaves a review window anyway.
 - 2026-08-26 — Prospects retire (a reversible cadence-set pause, never `lost`); active partners are handed to Jamie's On Me list with a note. An org we ship boxes to going quiet must be visible now, not next season.
 - 2026-08-05 — Prospect supply is admitted by cohort, not switched on. Tier-4 first touch requires `vetted_at`, so imported rows of uneven quality can't arrive in the panel at once. Vetting is a triage decision (keep/drop/snooze, no draft), applied only where the machine genuinely can't decide.

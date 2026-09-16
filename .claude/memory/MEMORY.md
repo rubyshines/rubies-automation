@@ -8,7 +8,7 @@
 - grading, measurements, fabric deltas, size charts, design, Natta → Product Design (domain_product_design.md) [Merchandising Advisor]
 - products, variants, inventory, catalog, fuzzy search, pre-orders → Inventory (domain_inventory_catalog.md) [Merchandising Advisor]
 - shipping, tracking, Warehance, 3PL, delivery estimates, fulfillment → Logistics (domain_logistics.md) [Merchandising Advisor]
-- donations, LGBTQ+ partners, free swimwear → Community (domain_community.md) [Community Advisor]
+- donations, LGBTQ+ partners, free swimwear, virtual closet, sponsor, centre box → Community (domain_community.md) [Community Advisor]
 - webhooks, Railway, Supabase, sync pipelines, Gmail, deployment → Tech (domain_tech.md) [Tech Advisor]
 - deploy, cron, env vars, Railway services, scheduled jobs → Deployment (reference_deployment.md)
 - If no domain matches, scan initiative list below for keyword match.
@@ -47,4 +47,5 @@
 - [Traffic & Conversion Intelligence](initiative_traffic_conversion_intelligence.md) — GA4 behavioral analysis + attribution via BigQuery raw-event export
 - [Email Campaigns](initiative_email_campaigns.md) — Sadie MacDonald using RUBIES tooling for Klaviyo
 - [LGBTQ+ Partnerships](initiative_lgbtq_partnerships.md) — expand org partnerships, donation closet programs
+- [Virtual Closet](initiative_virtual_closet.md) — per-centre page where the community buys, asks and gives, matched by RUBIES
 - [Production Pipeline](initiative_production_pipeline.md) — unify inventory projections, production orders, pre-orders, QC, Warehance receiving

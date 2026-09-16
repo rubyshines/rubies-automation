@@ -3,7 +3,7 @@ name: LGBTQ+ Partnerships
 description: Expand LGBTQ+ org partnerships — donation closet programs, org purchases using inclusion funding
 type: initiative
 domains: [community]
-last_updated: 2026-09-09
+last_updated: 2026-09-16
 originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -25,7 +25,10 @@ Active programs running. rubies-automations is the SSOT for donation partners: S
 - **Size-aware routing (2026-08-20):** sizes an org accepts are a routing constraint, not a display field; the onboarding form's size question was recut into two categories and the network backfilled (a few inferred rather than asked; confirm at check-in).
 - **Routing weighting fix (2026-08-24):** load compares rates rather than totals and distance weights the national tiers, so a new corridor partner settles at its natural share rather than taking every box. Open: nobody has asked partners what volume they can absorb (parked).
 
+- **Virtual Closet (2026-09-16):** the affiliate idea became a programme of its own for centres; designed and prototyped, Uniting Pride first. Tracked in `initiative_virtual_closet.md`; the org purchasing tier will be restated as matching ("order $300, RUBIES matches it") when it ships.
+
 ## Decisions Made
+- 2026-09-16 — The Virtual Closet is its own initiative; this one keeps donation routing, partner network growth and org purchasing.
 - 2026-09-02 — Corporate ERGs are not a segment to pursue; treat an inbound ERG as an org with the ERG noted.
 - 2026-08-24 — Load balancing compares rates rather than totals, and distance weights the tiers that can span it.
 - 2026-08-20 — Partner size acceptance recut into two categories and enforced in routing; the old survey question had overlapping ranges and was never read by anything.
