@@ -98,12 +98,13 @@ Part of the design, same brief as the pages: purpose only, and the list is open 
 
 **To the centre**
 - **Accepted.** The onboarding email: welcome, their closet page link and everything to share, a link into their private view, their settings as they set them, how the box and the requests work in a few lines, and how to reach Jamie. The one email a new coordinator should be able to inherit and understand.
-- **Pre-Loved items are on the way.** A customer has been given the centre's address and is sending exchanged or returned items. What is coming, roughly, and a way to say it arrived.
+- **Someone sponsored the closet.** A sponsor put money into the box: the amount, what it becomes once matched, and where the box now stands.
 - **A free pair was requested.** For centres approving by hand: the request and approve or decline links, no sign-in. For centres on automatic approval: a lighter note that a request was approved into their box.
 - **The box is funded.** The goal is reached; a link to fill and send it, and the choice to keep it growing.
 - **The box is on its way.** Sent, with what is in it and tracking.
 - **Monthly statement.** Only when something happened: link clicks, orders, dollars into the box, requests, box status.
 - **Sign-in link.** The email that opens their private view.
+- Possibly: **Pre-Loved items are on the way**, when a customer has been given the centre's address for exchanged or returned items. We only know it was sent, not that it arrived.
 
 **To a requester**
 - **Request received.** What they asked for, pickup or ship, and that it comes with the closet's next shipment. Free pairs are final.
