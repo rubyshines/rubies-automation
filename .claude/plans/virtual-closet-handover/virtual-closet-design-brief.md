@@ -74,7 +74,7 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 - **Sponsor thank-you.** After paying at the store checkout.
 
 **Centre account (standard company account management)**
-- **Create account.** Part of sign-up: the first person becomes the centre's admin. Email and password, or sign in with Google or Microsoft (most centres run on Google Workspace or Microsoft 365). Any email address; verify it.
+- **Create account.** Part of sign-up: the first person becomes the centre's admin. Email and password, or sign in with Google or Microsoft (most centres run on Google Workspace or Microsoft 365). Any email address is accepted, verified. We would like the design to encourage a centre email over a personal one, without blocking anyone: when someone types a personal address (gmail and the like), suggest their centre address if they have one, since contacts change and the centre's account should outlive the person. How that nudge works is yours.
 - **Sign in.** Email and password or Google or Microsoft. Forgotten password and reset. Change email, change password.
 - **Team.** The admin invites team members by email, sets their role (admin or member), removes them, and can hand admin to someone else. An invited person accepts the invitation and creates their account on the same rules. Contacts churn at centres, so this is the path that keeps a centre reachable when its coordinator leaves.
 
