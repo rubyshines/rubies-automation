@@ -188,7 +188,7 @@
       <h1><span class="h1-row"><a class="h1-logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-top" alt="RUBIES"></a><span class="x">×</span><span id="org-name-title">Uniting Pride</span></span><span class="sub">Virtual Closet</span></h1>
       <p class="lede">Gender-affirming underwear and swimwear, free for anyone in our community who needs it. Stocked by the community, matched by RUBIES.</p>
       <div class="doors">
-        <a class="btn btn-fill" href="#need">Buy a pair, 20% off</a>
+        <a class="btn btn-fill" href="#need">Buy a pair, 20% off your first order</a>
         <a class="btn btn-line" href="#apply">Apply for a free pair</a>
         <a class="btn btn-sun" href="#sponsor">Sponsor the closet</a>
       </div>
@@ -209,9 +209,19 @@
     <div class="ways">
       <div class="way">
         <h3>If you can, buy one</h3>
-        <p>Shop at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a> with this code. 20% off for you, and for every two pairs bought, the closet gets one.</p>
-        <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com/discount/UPRIDE15?redirect=/collections/all" target="_blank" rel="noopener">Shop with 20% off applied</a>
-        <div class="code-row"><span class="fine">Or use the code at checkout:</span><div class="code" id="code-display">UPRIDE15</div></div>
+        <p>20% off your first order at <a href="https://rubyshines.com" target="_blank" rel="noopener">RUBIES</a>, and for every two pairs bought, the closet gets one.</p>
+        <form id="code-form" class="form">
+          <label>Your email, and we'll send your code
+            <input type="email" id="code-email" placeholder="you@example.com" required>
+          </label>
+          <button type="submit" class="btn btn-fill">Get my 20% off</button>
+          <p class="fine">One code per person, for your first order. It arrives by email and works for 30 days.</p>
+        </form>
+        <div class="sent" id="code-done" hidden>
+          <b>Your code is on its way</b>
+          <p class="soft">Check your inbox. You can also shop now with it already applied:</p>
+          <a class="btn btn-fill" id="shop-link" href="https://rubyshines.com" target="_blank" rel="noopener">Shop with 20% off applied</a>
+        </div>
         <p class="fine">Not sure which style or size? <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">Compare styles</a> or open the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a>.</p>
       </div>
       <div class="rule"></div>
@@ -270,7 +280,7 @@
     <div class="how">
       <div class="col">
         <h3>Community</h3>
-        <p>Buy with the code: 20% off, and for every two pairs the closet gets one. Or apply for a free pair, which comes with the next shipment.</p>
+        <p>Buy through this page: 20% off a first order, and for every two pairs the closet gets one. Or apply for a free pair, which comes with the next shipment.</p>
       </div>
       <div class="col">
         <h3>Closet</h3>
@@ -293,7 +303,6 @@
 
 <div class="panel" id="panel" hidden>
   <label>Org <input id="in-org"></label>
-  <label>Code <input id="in-code"></label>
   <label>Sizes the closet offers <input id="in-sizes" placeholder="XS, S, M, L, 1X, 2X, 3X, 4X"></label>
   <label>Items per request <input id="in-max" type="number" min="1" max="6"></label>
   <div class="row">
@@ -342,8 +351,7 @@
   function readLink() {
     try {
       var q = new URLSearchParams(location.search);
-      ['org', 'city', 'code'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
-      if (q.has('code')) state.code = state.code.toUpperCase();
+      ['org', 'city'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
       if (q.has('sizes')) state.sizes = parseSizes(q.get('sizes'));
       if (q.has('items')) state.maxItems = Math.max(1, parseInt(q.get('items'), 10) || 2);
       if (q.has('reset')) resetProgress();
@@ -369,14 +377,11 @@
   function renderOrg() {
     document.title = state.org + ' x RUBIES Virtual Closet';
     document.getElementById('org-name-title').textContent = state.org;
-    document.getElementById('code-display').textContent = state.code;
-    document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.code) + '?redirect=/collections/all';
     Array.prototype.forEach.call(document.querySelectorAll('.org-name'), function (el) { el.textContent = state.org; });
     ['logo-top', 'logo-foot'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
     document.getElementById('hero-main').src = IMG['the-aj-shaping-underwear'];
     document.getElementById('hero-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
     document.getElementById('in-org').value = state.org;
-    document.getElementById('in-code').value = state.code;
     document.getElementById('in-sizes').value = state.sizes.join(', ');
     document.getElementById('in-max').value = state.maxItems;
     document.getElementById('apply-fine').innerHTML = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. If an item is out of stock when the shipment goes out, we swap in the closest style in your size. Please <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">compare styles</a> and check the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a> first.';
@@ -442,7 +447,7 @@
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
     if (state.sponsors) rows.push({ label: 'Sponsors', amt: state.sponsors });
-    if (state.orders) rows.push({ label: 'Community orders with the code', amt: state.orders });
+    if (state.orders) rows.push({ label: 'Community orders through this page', amt: state.orders });
     if (state.asks.length) rows.push({ label: 'Requests waiting for this shipment', amt: state.asks.length });
     rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + r.amt + '</b>'; list.appendChild(li); });
   }
@@ -479,7 +484,7 @@
     addBtn.textContent = n >= state.maxItems ? 'That is the most per request' : '+ Add another item';
     Array.prototype.forEach.call(itemsHost.querySelectorAll('.remove'), function (b) { b.style.visibility = n > 1 ? 'visible' : 'hidden'; });
   }
-  function resetForm() { itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd(); document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true; }
+  function resetForm() { itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd(); document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true; document.getElementById('code-form').hidden = false; document.getElementById('code-done').hidden = true; }
   addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
   document.getElementById('apply-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -491,6 +496,27 @@
     toast('Request sent.');
     renderWaiting(); renderProgress();
   });
+
+  // personal code: one per email, from the org's pool; illustrative here
+  (function () {
+    var form = document.getElementById('code-form');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var email = document.getElementById('code-email').value.trim().toLowerCase();
+      state.codes = state.codes || {};
+      if (!state.codes[email]) {
+        var prefix = state.org.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'RUB';
+        var alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', tail = '';
+        for (var i = 0; i < 6; i++) tail += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+        state.codes[email] = prefix + '-' + tail;
+      }
+      save();
+      document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.codes[email]) + '?redirect=/collections/all';
+      form.hidden = true;
+      document.getElementById('code-done').hidden = false;
+      toast('Code ' + state.codes[email] + ' sent to ' + email + '.');
+    });
+  })();
 
   // presenter panel: press "e" with nothing focused, or add ?panel to the link
   var panel = document.getElementById('panel');
@@ -504,7 +530,6 @@
   document.getElementById('p-close').addEventListener('click', function () { togglePanel(false); });
   document.getElementById('p-apply').addEventListener('click', function () {
     state.org = document.getElementById('in-org').value.trim() || 'Your Org';
-    state.code = (document.getElementById('in-code').value.trim() || 'CLOSET15').toUpperCase();
     state.sizes = parseSizes(document.getElementById('in-sizes').value);
     state.maxItems = Math.min(6, Math.max(1, parseInt(document.getElementById('in-max').value, 10) || 2));
     save(); renderAll(); resetForm(); togglePanel(false);
