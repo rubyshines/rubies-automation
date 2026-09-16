@@ -1,0 +1,234 @@
+<title>Virtual Closet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800&display=swap">
+<style>
+  :root {
+    --ground: #FFFCF7;
+    --paper: #FFFFFF;
+    --tint: #FDEBFF;
+    --ink: #2A1B3D;
+    --ink-2: #6B5C7E;
+    --rule: #ECE4F1;
+    --magenta: #D400DB;
+    --magenta-2: #B000B8;
+    --magenta-raw: #FB00FF;
+    --orange: #FFAA42;
+    --lime: #B3FE00;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); font-family: "Nunito Sans", "Segoe UI", system-ui, sans-serif; font-size: 18px; line-height: 1.55; }
+  a { color: var(--magenta); }
+  h1, h2, h3 { font-family: "Fredoka", "Nunito Sans", sans-serif; margin: 0; line-height: 1.06; text-wrap: balance; }
+  h1 { font-size: clamp(42px, 6vw, 72px); font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(28px, 3.6vw, 40px); font-weight: 700; letter-spacing: -0.01em; }
+  h3 { font-size: 22px; font-weight: 600; }
+  p { margin: 0; }
+  .soft { color: var(--ink-2); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  .logo img { height: clamp(34px, 4vw, 48px); width: auto; display: block; }
+
+  .hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding: 52px 0 60px; }
+  .hero-copy { display: grid; gap: 22px; }
+  .lede { font-size: clamp(19px, 1.8vw, 23px); color: var(--ink-2); max-width: 36ch; }
+  .doors-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { font: inherit; font-weight: 800; font-size: 16px; padding: 14px 22px; border-radius: 999px; border: 2px solid transparent; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; color: var(--ink); }
+  .btn:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
+  .btn-fill { background: var(--magenta); color: #fff; }
+  .btn-fill:hover { background: var(--magenta-2); }
+  .btn-line { background: transparent; border-color: var(--ink); }
+  .btn-line:hover { background: var(--tint); }
+
+  .art { position: relative; aspect-ratio: 1 / 1; width: 100%; max-width: 440px; justify-self: end; }
+  .art .blob { position: absolute; inset: 6% 4% 4% 6%; background: var(--magenta-raw); opacity: 0.92; border-radius: 58% 42% 55% 45% / 48% 56% 44% 52%; }
+  .art img.main { position: absolute; left: 10%; top: 6%; width: 74%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 46% 54% 50% 50% / 52% 46% 54% 48%; }
+  .art img.second { position: absolute; right: 0; bottom: 0; width: 44%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 50%; border: 6px solid var(--ground); }
+  .art .tag { position: absolute; left: 0; bottom: 14%; background: var(--lime); color: var(--ink); font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 17px; padding: 8px 14px; border-radius: 999px; transform: rotate(-4deg); }
+
+  section { padding: 56px 0; border-top: 1px solid var(--rule); }
+  .head { display: grid; gap: 10px; margin-bottom: 28px; }
+  .head p { font-size: 18px; color: var(--ink-2); max-width: 62ch; }
+
+  .doors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .door { display: grid; gap: 10px; align-content: start; padding-top: 18px; border-top: 5px solid var(--magenta); }
+  .door:nth-child(2) { border-top-color: var(--orange); }
+  .door:nth-child(3) { border-top-color: var(--lime); }
+  .door .who { font-size: 14px; font-weight: 800; color: var(--ink-2); }
+  .door p { color: var(--ink-2); font-size: 17px; }
+
+  .match { display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px; align-items: center; max-width: 820px; margin-top: 8px; }
+  .match .cell { background: var(--paper); border-radius: 22px; padding: 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 6px; }
+  .match .amt { font-family: "Fredoka", sans-serif; font-size: clamp(40px, 5vw, 64px); font-weight: 700; line-height: 1; }
+  .match .amt.m { color: var(--magenta); }
+  .match .arrow { font-family: "Fredoka", sans-serif; font-size: clamp(36px, 4vw, 56px); color: var(--orange); font-weight: 700; }
+  .match .cell span:last-child { color: var(--ink-2); font-size: 15px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 17px; }
+  th, td { text-align: left; padding: 14px 12px 14px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 18px; width: 30%; color: var(--ink); }
+  td { color: var(--ink-2); }
+  td b { color: var(--ink); }
+  .table-wrap { overflow-x: auto; }
+
+  .example { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+  .ledger { background: var(--paper); border-radius: 22px; padding: 24px 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 6px; }
+  .ledger h3 { margin-bottom: 8px; }
+  .ledger .row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--rule); font-size: 16px; }
+  .ledger .row b { font-variant-numeric: tabular-nums; }
+  .ledger .row.total { border-bottom: 0; font-weight: 800; font-size: 17px; }
+  .ledger .row.total b { color: var(--magenta); }
+  .ledger .sub { font-size: 13.5px; color: var(--ink-2); margin-top: -4px; }
+  .example ul { margin: 0; padding-left: 20px; display: grid; gap: 10px; color: var(--ink-2); }
+  .example ul li b { color: var(--ink); }
+
+  .asks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .ask { display: grid; gap: 8px; }
+  .ask .num { font-family: "Fredoka", sans-serif; font-size: 44px; font-weight: 700; color: var(--magenta); line-height: 1; }
+  .ask p { color: var(--ink-2); font-size: 17px; }
+
+  .steps { display: grid; counter-reset: step; max-width: 820px; }
+  .step { display: grid; grid-template-columns: 56px 1fr; gap: 18px; align-items: start; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+  .step:last-child { border-bottom: 0; }
+  .step::before { counter-increment: step; content: counter(step); font-family: "Fredoka", sans-serif; font-weight: 700; font-size: 30px; color: var(--magenta); line-height: 1; }
+  .step b { display: block; font-size: 19px; }
+  .step span { color: var(--ink-2); font-size: 16px; }
+  .pill { display: inline-block; background: var(--orange); color: var(--ink); font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 15px; padding: 6px 14px; border-radius: 999px; width: fit-content; }
+
+  footer { padding: 44px 0 72px; display: grid; gap: 16px; border-top: 1px solid var(--rule); }
+  footer .logo img { height: 28px; }
+  footer .contact { display: grid; gap: 6px; font-size: 18px; }
+  footer .contact a { font-weight: 800; text-decoration: none; }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 28px; padding-top: 36px; }
+    .art { justify-self: start; max-width: 320px; }
+    .doors, .asks, .example { grid-template-columns: 1fr; }
+    .match { grid-template-columns: 1fr; }
+    .match .arrow { transform: rotate(90deg); justify-self: center; }
+    th { width: 40%; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="hero-copy">
+      <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-1" alt="RUBIES"></a>
+      <h1>Virtual Closet</h1>
+      <p class="lede">A gender-affirming closet your community stocks, in your centre's name, with every dollar matched by RUBIES.</p>
+      <div class="doors-row">
+        <a class="btn btn-fill" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet">Talk to Jamie</a>
+        <a class="btn btn-line" href="https://claude.ai/code/artifact/c5a5cdea-7258-4fc8-b060-7f288c277a5e" target="_blank" rel="noopener">See a centre's page</a>
+      </div>
+    </div>
+    <div class="art" aria-hidden="true">
+      <div class="blob"></div>
+      <img class="main" id="art-main" alt="">
+      <img class="second" id="art-second" alt="">
+      <span class="tag">Piloting this fall</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="head">
+      <h2>Closets are strong on binders and thin on everything else</h2>
+      <p>Centres tell us the same thing: requests for trans-fem and non-binary gear come in, budgets are small, and binder brands have been cutting community programmes. The Virtual Closet is the other half of the closet, stocked by the people around it.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>One page in your name, three ways in</h2>
+      <p>Your community buys, asks and gives. Everything lands in one box. When the box is full it ships to your closet, and everyone who asked gets theirs at the same time.</p>
+    </div>
+    <div class="doors">
+      <div class="door"><span class="who">Those who can buy</span><h3>Buy a pair, 20% off</h3><p>Your centre's code takes 20% off at RUBIES, and 25% of every order goes into your closet's box.</p></div>
+      <div class="door"><span class="who">Those who can't right now</span><h3>Apply for a free pair</h3><p>Anyone can ask for what they need, in their size. You approve it from an email. It is filled when the box goes out.</p></div>
+      <div class="door"><span class="who">Those who want to help</span><h3>Sponsor the closet</h3><p>Allies and families give any amount into the box, and RUBIES matches every dollar.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>The terms</h2>
+    </div>
+    <div class="table-wrap">
+    <table>
+      <tr><th>The match</th><td><b>RUBIES matches every dollar</b> that reaches your box, from sponsors, from community orders, or from your own budget.</td></tr>
+      <tr><th>The box</th><td>Ships when <b>$300</b> has been raised, as <b>$600 of product</b>, shipping included in the US. Anything raised past $300 starts the next box. A box that has not filled in six months ships anyway with what is in it.</td></tr>
+      <tr><th>Community orders</th><td>Your code gives <b>20% off</b> at RUBIES. <b>25% of the order's value</b> goes into your box. Buyers get RUBIES' normal exchanges.</td></tr>
+      <tr><th>Free pairs</th><td>You approve each request, or set a monthly auto-approve. You set how many items a request may hold and the sizes you offer. Two requests a year per person. Free pairs are filled when the box goes out and are final.</td></tr>
+      <tr><th>Pick up or ship</th><td>People choose. Pickups come out of your box. A pair shipped to someone's door costs your box <b>$10</b> for shipping. Their address goes only to RUBIES.</td></tr>
+      <tr><th>What fills the box</th><td>Requested items first. You choose the rest, or let it fill itself with what your community buys most.</td></tr>
+      <tr><th>Cost to your centre</th><td><b>Nothing.</b> No minimum purchase, no reporting. Leave whenever you like; anything raised ships to you.</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>One box, for example</h2>
+      <p>A centre's first box, roughly what a community of Uniting Pride's size might do in a couple of months.</p>
+    </div>
+    <div class="example">
+      <div class="ledger">
+        <h3>Into the box</h3>
+        <div class="row"><span>12 community orders with the code</span><b>$96</b></div>
+        <div class="sub">25% of $32 each. Buyers paid $25.60 a pair.</div>
+        <div class="row"><span>9 sponsors</span><b>$150</b></div>
+        <div class="row"><span>The centre's own top-up</span><b>$54</b></div>
+        <div class="row total"><span>Raised</span><b>$300</b></div>
+        <h3 style="margin-top:18px">Out of the box</h3>
+        <div class="row"><span>Shipping for 2 requests sent to doors</span><b>$20</b></div>
+        <div class="row"><span>Product, matched by RUBIES</span><b>$560</b></div>
+        <div class="sub">$280 remaining, doubled.</div>
+        <div class="row total"><span>Items to the closet</span><b>17</b></div>
+      </div>
+      <ul>
+        <li><b>7 people who applied</b> get their pair: 5 pick up at the closet, 2 have it shipped to them.</li>
+        <li><b>10 more pairs</b> stock the closet in the sizes the centre chose, or in the sizes the community bought most.</li>
+        <li><b>The centre spent $54</b> and received about $560 of underwear and swimwear.</li>
+        <li><b>The 12 buyers</b> each saved $6.40 and put $8 into the box without doing anything else.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="head">
+      <h2>What we ask of you</h2>
+    </div>
+    <div class="asks">
+      <div class="ask"><span class="num">1</span><h3>Share the link</h3><p>Your closet's page, in your newsletter, request form, socials, lobby.</p></div>
+      <div class="ask"><span class="num">2</span><h3>Approve requests</h3><p>From an email, one click. Or set a monthly auto-approve and never see one.</p></div>
+      <div class="ask"><span class="num">3</span><h3>Fill the box</h3><p>When it is ready, pick what fills it or let it fill itself.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="head">
+      <span class="pill">Piloting this fall. Your centre can be first.</span>
+      <h2>From a call to your first box</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div><b>A short agreement</b><span>Non-binding. It says what we each do, and you can step out any time.</span></div></div>
+      <div class="step"><div><b>A five-minute survey</b><span>Your address, the sizes you offer, how many items per request, and a logo for your page.</span></div></div>
+      <div class="step"><div><b>Your page goes live</b><span>Your code, your link, your box. We send you everything to share, and a starter run of AJ underwear for the closet.</span></div></div>
+      <div class="step"><div><b>The first box fills</b><span>You approve requests as they come. At $300 we ship, doubled.</span></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <a class="logo" href="https://rubyshines.com" target="_blank" rel="noopener" aria-label="RUBIES"><img id="logo-2" alt="RUBIES"></a>
+    <div class="contact">
+      <span>Jamie Alexander, founder</span>
+      <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a>
+      <a href="https://rubyshines.com" target="_blank" rel="noopener">rubyshines.com</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var IMG = {{IMG_JSON}};
+  ['logo-1', 'logo-2'].forEach(function (id) { document.getElementById(id).src = IMG['rubies-logo']; });
+  document.getElementById('art-main').src = IMG['the-aj-shaping-underwear'];
+  document.getElementById('art-second').src = IMG['the-ruby-no-tuck-shaping-bikini-bottom'];
+})();
+</script>
