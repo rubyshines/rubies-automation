@@ -90,7 +90,11 @@
   .form .radio input { width: 18px; height: 18px; accent-color: var(--magenta); }
   .form .btn { width: fit-content; }
   .items { display: grid; gap: 10px; }
-  .item { display: grid; grid-template-columns: 1.6fr 1fr auto; gap: 10px; align-items: end; }
+  .item { display: grid; grid-template-columns: 1.7fr 1fr 0.8fr auto; gap: 10px; align-items: end; }
+  .swatches { display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+  .sw { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(42,27,61,0.25); display: inline-block; }
+  .sw-black { background: #17141F; } .sw-pink { background: #F6B7D2; } .sw-sandstone { background: #D9B99B; } .sw-white { background: #FFFFFF; } .sw-unicorn { background: linear-gradient(135deg, #FFB3DE, #B7E3FF, #FFF3A8); }
+  .swatches .for { margin-left: 4px; }
   .item .remove { font: inherit; font-size: 13px; font-weight: 700; color: var(--ink-2); background: none; border: 0; cursor: pointer; padding: 10px 4px; }
   .item .remove:hover { color: var(--magenta); }
   .add-item { font: inherit; font-size: 14.5px; font-weight: 800; color: var(--magenta); background: none; border: 0; cursor: pointer; padding: 0; width: fit-content; }
@@ -125,9 +129,7 @@
   .gift small { font-family: "Nunito Sans", sans-serif; font-weight: 700; font-size: 13px; color: var(--ink-2); }
   .gift:hover, .gift:focus-visible { border-color: var(--magenta); outline: none; }
 
-  .box { position: sticky; top: 18px; background: var(--tint); border: 2px solid var(--magenta); border-radius: 26px; padding: 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.14); display: grid; gap: 16px; }
-  .box .bar { background: #FFFFFF; }
-  .box .ledger li { border-bottom-color: rgba(212, 0, 219, 0.25); }
+  .box { position: sticky; top: 18px; background: var(--paper); border-radius: 26px; padding: 26px; box-shadow: 0 18px 50px rgba(212, 0, 219, 0.10), 0 1px 0 var(--rule); display: grid; gap: 16px; }
   .box h3 { font-size: 24px; }
   .box .amount { font-family: "Fredoka", sans-serif; font-size: 48px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
   .box .amount small { font-size: 18px; color: var(--ink-2); font-weight: 600; margin-left: 4px; }
@@ -171,6 +173,7 @@
     .how { grid-template-columns: 1fr; gap: 28px; }
     .gifts { grid-template-columns: repeat(2, 1fr); }
     .item { grid-template-columns: 1fr 1fr; }
+    .item label:first-child { grid-column: 1 / -1; }
     .item .remove { grid-column: 1 / -1; justify-self: start; padding: 0; }
     .ask { grid-template-columns: 48px 1fr; }
     .ask .act { grid-column: 2; justify-items: start; }
@@ -308,11 +311,11 @@
 
   // Real products, adult store prices. give = half of retail; RUBIES matches it to the full item.
   var PRODUCTS = [
-    { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',             retail: 32, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
-    { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage', retail: 33, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
-    { key: 'sassy',   name: 'Sassy No-Tuck Shaping Underwear',       for: 'Cheeky cut, lower rise',        retail: 32, sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-sassy-no-tuck-shaping-underwear' },
-    { key: 'brooke',  name: 'Brooke Shaping Bra',                    for: 'A great first bra',             retail: 42, sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-brooke-bra' },
-    { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',    retail: 48, sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
+    { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',             retail: 32, colors: ['Black','Pink','Sandstone'], sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
+    { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage', retail: 33, colors: ['Black','Pink','Sandstone'], sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
+    { key: 'sassy',   name: 'Sassy No-Tuck Shaping Underwear',       for: 'Cheeky cut, lower rise',        retail: 32, colors: ['Black','Pink','Sandstone'], sizes: ['XXS','XS','S','M','L','1X','2X','3X','4X'], img: 'the-sassy-no-tuck-shaping-underwear' },
+    { key: 'brooke',  name: 'Brooke Shaping Bra',                    for: 'A great first bra',             retail: 42, colors: ['Black','Sandstone','White'], sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-brooke-bra' },
+    { key: 'ruby',    name: 'Ruby No-Tuck Shaping Bikini Bottom',    for: 'The original, for the pool',    retail: 48, colors: ['Black','Pink','Unicorn'], sizes: ['XS','XS+','S','M','L','1X','2X','3X','4X'], img: 'the-ruby-no-tuck-shaping-bikini-bottom' }
   ];
   var byKey = {};
   PRODUCTS.forEach(function (p) { p.give = Math.round(p.retail / 2); byKey[p.key] = p; });
@@ -389,7 +392,8 @@
         '<div class="name">' + p.name + '</div>' +
         '<div class="for">' + p.for + '</div>' +
         '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.80) + ' with the code</div>' +
-        '<div class="for">' + money(p.give) + ' of product to the closet</div>';
+        '<div class="for">' + money(p.give) + ' of product to the closet</div>' +
+        '<div class="swatches">' + p.colors.map(function (c) { return '<span class="sw sw-' + c.toLowerCase() + '" title="' + c + '"></span>'; }).join('') + '<span class="for">' + p.colors.join(', ') + '</span></div>';
       host.appendChild(el);
     });
   }
@@ -455,15 +459,19 @@
   var addBtn = document.getElementById('add-item');
   function itemRow() {
     var row = document.createElement('div'); row.className = 'item';
-    var style = document.createElement('select'); var size = document.createElement('select');
+    var style = document.createElement('select'); var color = document.createElement('select'); var size = document.createElement('select');
     PRODUCTS.forEach(function (p) { if (!offered(p).length) return; var o = document.createElement('option'); o.value = p.key; o.textContent = p.name; style.appendChild(o); });
-    function fillSizes() { size.innerHTML = ''; offered(byKey[style.value]).forEach(function (sz) { var o = document.createElement('option'); o.value = sz; o.textContent = sz; size.appendChild(o); }); }
+    function fillSizes() {
+      size.innerHTML = ''; offered(byKey[style.value]).forEach(function (sz) { var o = document.createElement('option'); o.value = sz; o.textContent = sz; size.appendChild(o); });
+      color.innerHTML = ''; byKey[style.value].colors.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; color.appendChild(o); });
+    }
     style.addEventListener('change', fillSizes); fillSizes();
     var l1 = document.createElement('label'); l1.textContent = 'Style'; l1.appendChild(style);
+    var lc = document.createElement('label'); lc.textContent = 'Colour'; lc.appendChild(color);
     var l2 = document.createElement('label'); l2.textContent = 'Size'; l2.appendChild(size);
     var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'remove'; rm.textContent = 'Remove';
     rm.addEventListener('click', function () { row.remove(); syncAdd(); });
-    row.appendChild(l1); row.appendChild(l2); row.appendChild(rm);
+    row.appendChild(l1); row.appendChild(lc); row.appendChild(l2); row.appendChild(rm);
     return row;
   }
   function syncAdd() {
@@ -476,7 +484,7 @@
   addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
   document.getElementById('apply-form').addEventListener('submit', function (e) {
     e.preventDefault();
-    var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, size: sel[1].value }; });
+    var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, color: sel[1].value, size: sel[2].value }; });
     var how = document.querySelector('input[name="how"]:checked').value;
     state.asks.push({ id: state.nextId++, items: items, how: how }); save();
     document.getElementById('apply-form').hidden = true;
