@@ -196,7 +196,7 @@
       <div class="blob"></div>
       <img class="main" id="hero-main" alt="">
       <img class="second" id="hero-second" alt="">
-      <span class="tag" id="hero-tag">$160 of product so far</span>
+      <span class="tag" id="hero-tag">5 items so far</span>
     </div>
   </header>
 
@@ -244,19 +244,20 @@
   <section id="sponsor">
     <div class="head">
       <h2>Sponsor the closet</h2>
-      <p><span id="waiting-line">6 people have asked for a pair this month.</span> RUBIES matches every dollar you give. When the closet's next shipment goes out, everyone who asked gets theirs.</p>
+      <p><span id="waiting-line">6 people have asked for a pair this month.</span> Give a pair, or a few. When the closet's next shipment goes out, everyone who asked gets theirs.</p>
     </div>
     <div class="sponsor">
       <div>
         <div class="gifts" id="gifts"></div>
+        <p class="fine" style="margin-top:14px">RUBIES matches every dollar, so $16 becomes a $32 pair.</p>
       </div>
       <aside class="box" aria-live="polite">
         <h3 id="box-title">The closet's next shipment</h3>
-        <div class="amount"><span class="amount-num">$0</span><small>of $600 of product</small></div>
+        <div class="amount"><span class="amount-num">0</span><small>of 18 items</small></div>
         <div class="bar"><span></span></div>
         <div class="shipped-note" id="shipped-note"></div>
         <ul class="ledger" id="ledger"></ul>
-        <p class="fine">RUBIES matches every dollar. At $600 of product the shipment goes to <span class="org-name">Uniting Pride</span>, and everything over that starts the next one.</p>
+        <p class="fine">About 18 items fill a shipment. Then it goes to <span class="org-name">Uniting Pride</span> and everyone who asked gets theirs. Anything over starts the next one.</p>
       </aside>
     </div>
   </section>
@@ -272,7 +273,7 @@
       </div>
       <div class="col">
         <h3>Closet</h3>
-        <p>RUBIES matches every dollar. Each shipment is $600 of product, in the sizes <span class="org-name">Uniting Pride</span> chooses.</p>
+        <p>RUBIES matches every dollar. Each shipment is about 18 items, in the sizes <span class="org-name">Uniting Pride</span> chooses.</p>
       </div>
       <div class="col">
         <h3>Team</h3>
@@ -392,7 +393,6 @@
         '<div class="name">' + p.name + '</div>' +
         '<div class="for">' + p.for + '</div>' +
         '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.80) + ' with the code</div>' +
-        '<div class="for">' + money(p.give) + ' of product to the closet</div>' +
         '<div class="swatches">' + p.colors.map(function (c) { return '<span class="sw sw-' + c.toLowerCase() + '" title="' + c + '"></span>'; }).join('') + '<span class="for">' + p.colors.join(', ') + '</span></div>';
       host.appendChild(el);
     });
@@ -401,12 +401,12 @@
   function renderGifts() {
     var host = document.getElementById('gifts'); host.innerHTML = '';
     var tiles = [
-      { amt: byKey.aj.give, label: 'a pair of underwear, $' + (byKey.aj.give * 2) + ' of product' },
-      { amt: byKey.ruby.give, label: 'a bikini bottom, $' + (byKey.ruby.give * 2) + ' of product' },
-      { amt: 50, label: '$100 of product' },
-      { amt: 100, label: '$200 of product' },
-      { amt: 150, label: 'half a shipment, $300 of product' },
-      { amt: 300, label: 'a whole shipment, $600 of product' }
+      { amt: byKey.aj.give, label: 'a pair of underwear for the closet' },
+      { amt: byKey.ruby.give, label: 'a bikini bottom' },
+      { amt: 50, label: 'three pairs' },
+      { amt: 100, label: 'six pairs' },
+      { amt: 150, label: 'nine pairs' },
+      { amt: 300, label: 'a full shipment, about 18' }
     ];
     tiles.forEach(function (t) {
       var c = document.createElement('button');
@@ -414,7 +414,7 @@
       c.innerHTML = money(t.amt) + '<small>' + t.label + '</small>';
       c.addEventListener('click', function () {
         state.gifts += t.amt; save();
-        toast('Thank you. RUBIES matched it: ' + money(t.amt * 2) + ' of product toward ' + possessive(state.org) + ' next shipment.');
+        toast('Thank you. That is ' + Math.max(1, Math.floor(t.amt / byKey.aj.give)) + (Math.floor(t.amt / byKey.aj.give) > 1 ? ' more pairs' : ' more pair') + ' in ' + possessive(state.org) + ' next shipment.');
         renderProgress();
       });
       host.appendChild(c);
@@ -431,9 +431,10 @@
     var boxes = Math.floor(total / BOX);
     var rem = total - boxes * BOX;
     var pct = Math.round(rem / BOX * 100);
-    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(rem * 2); });
+    var items = function (d) { return Math.floor(d * 2 / byKey.aj.retail); };
+    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = items(rem); });
     document.getElementById('box-title').textContent = boxes ? 'Shipment ' + (boxes + 1) : "The closet's next shipment";
-    document.getElementById('hero-tag').textContent = money(total * 2) + ' of product so far';
+    document.getElementById('hero-tag').textContent = items(total) + (items(total) === 1 ? ' item' : ' items') + ' so far';
     Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; });
     var note = document.getElementById('shipped-note');
     note.classList.toggle('show', boxes > 0);
@@ -441,11 +442,11 @@
 
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
-    if (state.gifts) rows.push({ label: 'Sponsors, matched', amt: state.gifts * 2 });
-    if (state.orders) rows.push({ label: state.orders + ' community orders with the code', amt: state.orderCredit * 2 });
+    if (state.gifts) rows.push({ label: 'From sponsors', amt: items(state.gifts) });
+    if (state.orders) rows.push({ label: 'From ' + state.orders + ' community orders', amt: items(state.orderCredit) });
     if (state.asks.length) rows.push({ label: state.asks.length + ' requests waiting for this box', amt: null });
-    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + (r.amt === null ? '' : money(r.amt)) + '</b>'; list.appendChild(li); });
-    var li = document.createElement('li'); li.innerHTML = '<span>Product so far</span><b>' + money(total * 2) + '</b>'; list.appendChild(li);
+    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + (r.amt === null ? '' : r.amt + (r.amt === 1 ? ' item' : ' items')) + '</b>'; list.appendChild(li); });
+    var li = document.createElement('li'); li.innerHTML = '<span>In the shipment so far</span><b>' + items(total) + ' items</b>'; list.appendChild(li);
   }
 
   var toastTimer;
