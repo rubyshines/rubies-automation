@@ -82,8 +82,9 @@
 
   .form { display: grid; gap: 14px; }
   .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
-  .form select, .form input[type="email"] { font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper); width: 100%; }
-  .form select:focus, .form input:focus { outline: 3px solid var(--tint); border-color: var(--magenta); }
+  .form select, .form input[type="email"], .form input[type="text"], .form textarea { font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper); width: 100%; }
+  .form textarea { resize: vertical; font-family: inherit; }
+  .form select:focus, .form input:focus, .form textarea:focus { outline: 3px solid var(--tint); border-color: var(--magenta); }
   .form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
   .form legend { font-size: 14.5px; font-weight: 700; color: var(--ink-2); padding: 0; margin-bottom: 4px; }
   .form .radio { display: flex; gap: 10px; align-items: center; font-weight: 600; color: var(--ink); font-size: 16px; }
@@ -229,6 +230,9 @@
         <h3>If money is tight, apply for a free pair</h3>
         <p>Tell us what you need. It is approved and comes with the closet's next shipment.</p>
         <form id="apply-form" class="form">
+          <label>The name you'd like us to use
+            <input type="text" id="ap-name" placeholder="First name is fine" required>
+          </label>
           <div class="items" id="items"></div>
           <button type="button" class="add-item" id="add-item">+ Add another item</button>
           <fieldset>
@@ -237,6 +241,10 @@
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
             <p class="fine">Either way it arrives with the closet's next shipment. Picking up saves the closet the cost of shipping.</p>
           </fieldset>
+          <label>What would a pair mean for you?
+            <textarea id="ap-why" rows="3" placeholder="A sentence or two is plenty" required></textarea>
+          </label>
+          <label class="radio"><input type="checkbox" id="ap-share"> You may share my words, without my name, to encourage sponsors</label>
           <label>Email, so we can send you the code
             <input type="email" id="ap-email" placeholder="you@example.com" required>
           </label>
@@ -245,7 +253,7 @@
         </form>
         <div class="sent" id="apply-done" hidden>
           <b>Request sent</b>
-          <p class="soft">When the closet's next shipment goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.</p>
+          <p class="soft" id="apply-done-text">When the closet's next shipment goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.</p>
         </div>
       </div>
     </div>
@@ -255,7 +263,7 @@
   <section id="sponsor">
     <div class="head">
       <h2>Sponsor the closet</h2>
-      <p><span id="waiting-line">6 people have asked for a pair this month.</span> Give a pair, or a few. When the closet's next shipment goes out, everyone who asked gets theirs.</p>
+      <p><span id="waiting-line">6 people are waiting for a pair.</span> Give a pair, or a few. When the closet's next shipment goes out, everyone who asked gets theirs.</p>
     </div>
     <div class="sponsor">
       <div>
@@ -264,11 +272,11 @@
       </div>
       <aside class="box" aria-live="polite">
         <h3 id="box-title">The closet's next shipment</h3>
-        <div class="amount"><span class="amount-num">$0</span><small>raised of $300</small></div>
+        <div class="amount"><span class="amount-num">$0</span><small id="goal-label">raised of $300</small></div>
         <div class="bar"><span></span></div>
         <div class="shipped-note" id="shipped-note"></div>
         <ul class="ledger" id="ledger"></ul>
-        <p class="fine">At $300 the shipment can go to <span class="org-name">Uniting Pride</span>, and everyone who asked gets theirs. Past that, <span class="org-name">Uniting Pride</span> chooses: send it now, or keep it growing.</p>
+        <p class="fine" id="goal-note">At $300 the shipment can go to <span class="org-name">Uniting Pride</span>, and everyone who asked gets theirs. Past that, <span class="org-name">Uniting Pride</span> chooses: send it now, or keep it growing.</p>
       </aside>
     </div>
   </section>
@@ -288,7 +296,7 @@
       </div>
       <div class="col">
         <h3>Team</h3>
-        <p>Share the link. When a shipment is ready, pick what fills it or let it fill itself. Nothing to maintain.</p>
+        <p>Share the link. Set how many items a request can hold, how often someone can ask, and your funding target. When a shipment is ready, pick what fills it or let it fill itself.</p>
       </div>
     </div>
   </section>
@@ -305,22 +313,24 @@
   <label>Org <input id="in-org"></label>
   <label>Sizes the closet offers <input id="in-sizes" placeholder="XS, S, M, L, 1X, 2X, 3X, 4X"></label>
   <label>Items per request <input id="in-max" type="number" min="1" max="6"></label>
+  <label>Requests per person per year <input id="in-freq" type="number" min="1" max="12"></label>
+  <label>Funding target ($300 minimum) <input id="in-target" type="number" min="300" step="10"></label>
   <div class="row">
     <button type="button" id="p-apply">Apply</button>
     <button type="button" class="quiet" id="p-reset">Reset progress</button>
     <button type="button" class="quiet" id="p-fill">Fund it (and a bit over)</button>
+    <button type="button" class="quiet" id="p-send">Send the shipment</button>
     <button type="button" class="quiet" id="p-close">Close</button>
   </div>
 </div>
 
 <script>
 (function () {
-  var BOX = 300;  // dollars raised per box, the minimum that reaches RUBIES before one ships; matched, $600 of product
-  var SHIP = 15;  // charged to the closet's pool per package shipped to a door when the box goes out; not shown on the page
+  var MIN_TARGET = 300;  // the minimum shipment; the centre may set a higher target
+  var SHIP = 15;         // charged to the shipment per package mailed to a door; not shown on the page
   var IMG = {{IMG_JSON}};
   var STORE = 'https://rubyshines.com/products/';
 
-  // Real products, adult store prices. give = half of retail; RUBIES matches it to the full item.
   var PRODUCTS = [
     { key: 'aj',      name: 'AJ No-Tuck Shaping Underwear',        for: 'Your go-to undies',             retail: 32, colors: ['Black','Pink','Sandstone'], sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-aj-shaping-underwear' },
     { key: 'charlie', name: 'Charlie Extra Cute Shaping Underwear',  for: 'Feminine boost, full coverage', retail: 33, colors: ['Black','Pink','Sandstone'], sizes: ['XS','S','M','L','1X','2X','3X','4X'], img: 'the-extra-cute-shaping-underwear' },
@@ -332,34 +342,44 @@
   PRODUCTS.forEach(function (p) { p.give = Math.round(p.retail / 2); byKey[p.key] = p; });
 
   var DEFAULTS = {
-    org: 'Uniting Pride', city: 'Champaign-Urbana, Illinois', code: 'UPRIDE15',
-    sizes: ['XS','S','M','L','1X','2X','3X','4X'],   // sizes the closet offers; set by the org
-    maxItems: 2,                                        // items per request; set by the org
-    // requests waiting for the next shipment (anonymous); seeded so the page has people on it
-    asks: [ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }, { id: 6 } ],
-    orders: 4, orderCredit: 32, gifts: 56, sponsors: 3, nextId: 7
+    org: 'Uniting Pride', city: 'Champaign-Urbana, Illinois',
+    sizes: ['XS','S','M','L','1X','2X','3X','4X'],
+    maxItems: 2, perYear: 2, target: 300,
+    // approved requests attached to the open shipment; anonymous on the page
+    asks: [
+      { id: 1, items: [ { key: 'aj', color: 'Black', size: 'M' } ], how: 'pickup' },
+      { id: 2, items: [ { key: 'aj', color: 'Sandstone', size: '1X' }, { key: 'brooke', color: 'Black', size: '1X' } ], how: 'ship' },
+      { id: 3, items: [ { key: 'ruby', color: 'Black', size: 'S' } ], how: 'pickup' },
+      { id: 4, items: [ { key: 'sassy', color: 'Pink', size: 'L' } ], how: 'pickup' },
+      { id: 5, items: [ { key: 'charlie', color: 'Black', size: 'M' } ], how: 'ship' },
+      { id: 6, items: [ { key: 'aj', color: 'Black', size: 'S' } ], how: 'pickup' }
+    ],
+    waitlist: [],
+    orders: 4, orderCredit: 32, gifts: 56, sponsors: 3, shipmentsSent: 0, nextId: 7, codes: {}
   };
   var state = load();
   readLink();
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function load() {
-    try { var raw = localStorage.getItem('closet-page-v4'); if (raw) return Object.assign(clone(DEFAULTS), JSON.parse(raw)); } catch (e) {}
+    try { var raw = localStorage.getItem('closet-page-v5'); if (raw) return Object.assign(clone(DEFAULTS), JSON.parse(raw)); } catch (e) {}
     return clone(DEFAULTS);
   }
-  function save() { try { localStorage.setItem('closet-page-v4', JSON.stringify(state)); } catch (e) {} }
+  function save() { try { localStorage.setItem('closet-page-v5', JSON.stringify(state)); } catch (e) {} }
   function readLink() {
     try {
       var q = new URLSearchParams(location.search);
       ['org', 'city'].forEach(function (k) { if (q.has(k)) state[k] = q.get(k); });
       if (q.has('sizes')) state.sizes = parseSizes(q.get('sizes'));
       if (q.has('items')) state.maxItems = Math.max(1, parseInt(q.get('items'), 10) || 2);
+      if (q.has('peryear')) state.perYear = Math.max(1, parseInt(q.get('peryear'), 10) || 2);
+      if (q.has('target')) state.target = Math.max(MIN_TARGET, parseInt(q.get('target'), 10) || MIN_TARGET);
       if (q.has('reset')) resetProgress();
       save();
     } catch (e) {}
   }
   function resetProgress() {
-    var keep = { org: state.org, city: state.city, code: state.code, sizes: state.sizes, maxItems: state.maxItems };
+    var keep = { org: state.org, city: state.city, sizes: state.sizes, maxItems: state.maxItems, perYear: state.perYear, target: state.target };
     state = Object.assign(clone(DEFAULTS), keep);
   }
   function parseSizes(str) {
@@ -371,8 +391,11 @@
 
   function money(n) { return '$' + Math.round(n); }
   function possessive(name) { return /s$/i.test(name) ? name + "'" : name + "'s"; }
-  function shortName(p) { return p.name.replace(/No-Tuck |Shaping /g, ''); }
+  function askCost(a) { var c = 0; a.items.forEach(function (it) { c += byKey[it.key].give; }); if (a.how === 'ship') c += SHIP; return c; }
   function ledger() { return state.orderCredit + state.gifts; }
+  function requestsCost() { return state.asks.reduce(function (s, a) { return s + askCost(a); }, 0); }
+  // the goal is the centre's target, or the cost of everyone approved, whichever is larger
+  function goal() { return Math.max(state.target, requestsCost()); }
 
   function renderOrg() {
     document.title = state.org + ' x RUBIES Virtual Closet';
@@ -384,7 +407,9 @@
     document.getElementById('in-org').value = state.org;
     document.getElementById('in-sizes').value = state.sizes.join(', ');
     document.getElementById('in-max').value = state.maxItems;
-    document.getElementById('apply-fine').innerHTML = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, twice a year, so the closet can help everyone who asks. If an item is out of stock when the shipment goes out, we swap in the closest style in your size. Please <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">compare styles</a> and check the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a> first.';
+    document.getElementById('in-freq').value = state.perYear;
+    document.getElementById('in-target').value = state.target;
+    document.getElementById('apply-fine').innerHTML = 'Up to ' + state.maxItems + (state.maxItems === 1 ? ' item' : ' items') + ' per request, ' + (state.perYear === 1 ? 'once' : state.perYear === 2 ? 'twice' : state.perYear + ' times') + ' a year, so the closet can help everyone who asks. If an item is out of stock when the shipment goes out, we swap in the closest style in your size. Please <a href="https://rubyshines.com/pages/find-your-fit" target="_blank" rel="noopener">compare styles</a> and check the <a href="https://rubyshines.com/pages/size-guide" target="_blank" rel="noopener">size guide</a> first.';
   }
 
   function renderProducts() {
@@ -428,28 +453,41 @@
   }
 
   function renderWaiting() {
-    var n = state.asks.length;
-    document.getElementById('waiting-line').textContent = n === 0 ? 'Nobody is waiting right now.' : (n === 1 ? 'One person has asked for a pair this month.' : n + ' people have asked for a pair this month.');
+    var n = state.asks.length, w = state.waitlist.length;
+    var gap = Math.max(0, goal() - ledger());
+    var line = n === 0 ? 'Nobody is waiting right now.' : (n === 1 ? 'One person is waiting for a pair.' : n + ' people are waiting for a pair.');
+    if (n && gap > 0) line += ' ' + money(gap) + ' more covers them.';
+    if (w) line += ' ' + w + (w === 1 ? ' more is' : ' more are') + ' on the list for the shipment after.';
+    document.getElementById('waiting-line').textContent = line;
   }
 
   function renderProgress() {
-    var total = ledger();
-    var full = total >= BOX;
-    var pct = Math.min(100, Math.round(total / BOX * 100));
+    var total = ledger(), g = goal();
+    var full = total >= g;
+    var pct = Math.min(100, Math.round(total / g * 100));
     Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(total); });
+    document.getElementById('goal-label').textContent = 'raised of ' + money(g);
     document.getElementById('box-title').textContent = full ? 'Fully funded' : "The closet's next shipment";
     document.getElementById('hero-tag').textContent = full ? 'Fully funded: ' + money(total) + ' raised' : money(total) + ' raised so far';
     Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; bar.classList.toggle('full', full); });
-    var note = document.getElementById('shipped-note');
-    note.classList.toggle('show', full);
-    note.innerHTML = money(total) + ' raised, ' + money(total - BOX) + ' over. ' + state.org + ' can send the shipment now or keep it growing.';
+    var note = document.getElementById('goal-note');
+    note.innerHTML = (g > state.target
+      ? money(g) + ' covers everyone who has asked so far, so the goal has grown with them. '
+      : 'At ' + money(state.target) + ' the shipment can go to ' + state.org + ', and everyone who asked gets theirs. ')
+      + 'Past that, ' + state.org + ' chooses: send it now, or keep it growing.';
+    var over = document.getElementById('shipped-note');
+    over.classList.toggle('show', full);
+    over.innerHTML = money(total) + ' raised' + (total > g ? ', ' + money(total - g) + ' over' : '') + '. ' + state.org + ' can send the shipment now or keep it growing.';
 
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
     if (state.sponsors) rows.push({ label: 'Sponsors', amt: state.sponsors });
     if (state.orders) rows.push({ label: 'Community orders through this page', amt: state.orders });
-    if (state.asks.length) rows.push({ label: 'Requests waiting for this shipment', amt: state.asks.length });
+    rows.push({ label: 'Requests in this shipment', amt: state.asks.length });
+    if (state.waitlist.length) rows.push({ label: 'Waiting for the shipment after', amt: state.waitlist.length });
+    if (state.shipmentsSent) rows.push({ label: 'Shipments sent so far', amt: state.shipmentsSent });
     rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + r.amt + '</b>'; list.appendChild(li); });
+    renderWaiting();
   }
 
   var toastTimer;
@@ -458,7 +496,7 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3400);
   }
 
-  // apply form: one or more items, capped by the org's setting
+  // apply form: items, capped by the centre's setting
   var itemsHost = document.getElementById('items');
   var addBtn = document.getElementById('add-item');
   function itemRow() {
@@ -484,39 +522,48 @@
     addBtn.textContent = n >= state.maxItems ? 'That is the most per request' : '+ Add another item';
     Array.prototype.forEach.call(itemsHost.querySelectorAll('.remove'), function (b) { b.style.visibility = n > 1 ? 'visible' : 'hidden'; });
   }
-  function resetForm() { itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd(); document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true; document.getElementById('code-form').hidden = false; document.getElementById('code-done').hidden = true; }
+  function resetForms() {
+    itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd();
+    document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
+    document.getElementById('code-form').hidden = false; document.getElementById('code-done').hidden = true;
+  }
   addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
   document.getElementById('apply-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, color: sel[1].value, size: sel[2].value }; });
     var how = document.querySelector('input[name="how"]:checked').value;
-    state.asks.push({ id: state.nextId++, items: items, how: how }); save();
+    var ask = { id: state.nextId++, items: items, how: how, share: document.getElementById('ap-share').checked };
+    // a funded shipment is about to go, so a new request joins the list for the one after
+    var funded = ledger() >= goal();
+    if (funded) state.waitlist.push(ask); else state.asks.push(ask);
+    save();
+    var done = document.getElementById('apply-done-text');
+    done.textContent = funded
+      ? "This shipment is funded and about to go, so you're on the list for the next one. " + (state.waitlist.length - 1) + (state.waitlist.length - 1 === 1 ? ' person is' : ' people are') + ' ahead of you. When it goes out you will get an email with a one-time code, or a note that it is ready to pick up.'
+      : "When the closet's next shipment goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.";
     document.getElementById('apply-form').hidden = true;
     document.getElementById('apply-done').hidden = false;
     toast('Request sent.');
-    renderWaiting(); renderProgress();
+    renderProgress();
   });
 
-  // personal code: one per email, from the org's pool; illustrative here
-  (function () {
-    var form = document.getElementById('code-form');
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var email = document.getElementById('code-email').value.trim().toLowerCase();
-      state.codes = state.codes || {};
-      if (!state.codes[email]) {
-        var prefix = state.org.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'RUB';
-        var alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', tail = '';
-        for (var i = 0; i < 6; i++) tail += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-        state.codes[email] = prefix + '-' + tail;
-      }
-      save();
-      document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.codes[email]) + '?redirect=/collections/all';
-      form.hidden = true;
-      document.getElementById('code-done').hidden = false;
-      toast('Code ' + state.codes[email] + ' sent to ' + email + '.');
-    });
-  })();
+  // personal code: one per email, from the centre's pool; illustrative here
+  document.getElementById('code-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var email = document.getElementById('code-email').value.trim().toLowerCase();
+    state.codes = state.codes || {};
+    if (!state.codes[email]) {
+      var prefix = state.org.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'RUB';
+      var alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', tail = '';
+      for (var i = 0; i < 6; i++) tail += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+      state.codes[email] = prefix + '-' + tail;
+    }
+    save();
+    document.getElementById('shop-link').href = 'https://rubyshines.com/discount/' + encodeURIComponent(state.codes[email]) + '?redirect=/collections/all';
+    document.getElementById('code-form').hidden = true;
+    document.getElementById('code-done').hidden = false;
+    toast('Code ' + state.codes[email] + ' sent to ' + email + '.');
+  });
 
   // presenter panel: press "e" with nothing focused, or add ?panel to the link
   var panel = document.getElementById('panel');
@@ -532,15 +579,27 @@
     state.org = document.getElementById('in-org').value.trim() || 'Your Org';
     state.sizes = parseSizes(document.getElementById('in-sizes').value);
     state.maxItems = Math.min(6, Math.max(1, parseInt(document.getElementById('in-max').value, 10) || 2));
-    save(); renderAll(); resetForm(); togglePanel(false);
+    state.perYear = Math.min(12, Math.max(1, parseInt(document.getElementById('in-freq').value, 10) || 2));
+    state.target = Math.max(MIN_TARGET, parseInt(document.getElementById('in-target').value, 10) || MIN_TARGET);
+    save(); renderAll(); resetForms(); togglePanel(false);
   });
-  document.getElementById('p-reset').addEventListener('click', function () { resetProgress(); save(); renderAll(); resetForm(); });
+  document.getElementById('p-reset').addEventListener('click', function () { resetProgress(); save(); renderAll(); resetForms(); });
   document.getElementById('p-fill').addEventListener('click', function () {
-    var gap = BOX + 40 - ledger(); if (gap > 0) { state.gifts += gap; state.sponsors = (state.sponsors || 0) + 1; } save();
+    var gap = goal() + 40 - ledger(); if (gap > 0) { state.gifts += gap; state.sponsors = (state.sponsors || 0) + 1; } save();
     renderProgress(); document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' }); togglePanel(false);
   });
+  // the centre sends the shipment: everyone in it is covered, the next one opens with the wait list
+  document.getElementById('p-send').addEventListener('click', function () {
+    if (ledger() < state.target) { toast('Not yet: ' + money(state.target - ledger()) + ' short of the ' + money(state.target) + ' minimum.'); return; }
+    state.shipmentsSent = (state.shipmentsSent || 0) + 1;
+    state.asks = state.waitlist; state.waitlist = [];
+    state.gifts = 0; state.orderCredit = 0; state.orders = 0; state.sponsors = 0;
+    save(); renderAll(); resetForms();
+    toast('Shipment ' + state.shipmentsSent + ' sent to ' + state.org + '. The next one is open.');
+    togglePanel(false);
+  });
 
-  function renderAll() { renderOrg(); renderProducts(); renderGifts(); renderWaiting(); renderProgress(); }
-  renderAll(); resetForm();
+  function renderAll() { renderOrg(); renderProducts(); renderGifts(); renderProgress(); }
+  renderAll(); resetForms();
 })();
 </script>
