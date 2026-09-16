@@ -423,3 +423,5 @@ Jamie: the four prototype pages are not the deliverable. Design what the Virtual
 Refined: encourage a centre email over a personal one without blocking (a nudge when a personal address is typed); the design decides how.
 
 **Operator side lives in the CS dashboard (Jamie, 2026-09-16, later):** the queue, centres list, centre detail and programme dashboard are a new section of the existing ops dashboard, not part of the new app, so there is no operator login to design and stage 2 styles them to the dashboard's look. Operator emails link into the dashboard. Open question about the operator login closed.
+
+**Add to the box is paid on the spot; order now is out of scope (Jamie, 2026-09-16, later):** a centre adds any amount to its box by card, matched. Centres buying product directly at 50% off continues as it works today, by email, outside the app. The 50%-off language exception is therefore gone from the brief; everything centre- and sponsor-facing is matching language. Open question about payment closed.

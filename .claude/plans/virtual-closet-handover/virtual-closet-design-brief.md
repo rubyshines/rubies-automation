@@ -19,7 +19,7 @@ A centre signs up once, self-service, and ticks the programmes it wants:
 - **Pre-Loved partner** (working name): customers' exchanged and returned RUBIES items are routed to the centre's closet, and the centre appears on a public donation map. This runs today with partners on three continents.
 - **Virtual Closet**: the page and box above.
 
-Any approved partner can also order for its closet at any time with its own budget, at 50% off with a $300 minimum, or add any amount to its box, where it is matched.
+A centre can also add any amount from its own budget to its box, paid on the spot, where it is matched like every other dollar.
 
 Sign-up is self-service with one human gate after it: the RUBIES operator approves new centres from a queue before their page and map listing go live. Booking a call is offered and optional.
 
@@ -39,13 +39,13 @@ Three audiences: the public (closet page, programme page with sign-up), the cent
 | Pickup or ship | The requester chooses. Shipping to a door costs the box $15 per package. The address is held by RUBIES only; the centre sees the name they go by, the items and their words. |
 | What fills a box | Five styles to start: AJ, Charlie and Sassy underwear, the Brooke bra, the Ruby bikini bottom. Requested items first; the centre picks the rest or lets it fill itself. |
 | Sizes | One sizes question serves both programmes: which sizes the closet takes and offers, kids and adult. Adult sizes XS to 4X. |
-| Order anytime | Own budget, 50% off, $300 minimum, ships right away. Or add any amount to the box, matched. |
+| Add to the box | The centre adds any amount from its own budget, paid on the spot by card, matched. |
 | Cost to the centre | Nothing. Leave anytime; anything raised ships. |
 | Store prices (adult) | AJ $32, Charlie $33, Sassy $32, Brooke bra $42, Ruby bikini bottom $48. |
 
 ## Rules that do not bend
 
-- Anything about the box is **matching** language: "RUBIES matches every dollar." Never "discount", "wholesale" or "doubled" about the box. The one exception is an order the centre places itself, which says "50% off, $300 minimum" plainly. The only percentage a community member sees is the shopper's 20%.
+- Everything is **matching** language: "RUBIES matches every dollar." Never "discount", "wholesale", "50% off" or "doubled" on any centre- or sponsor-facing surface. The only percentage anyone sees is the shopper's 20%.
 - Community-facing copy says "shipment"; centre-facing copy may say "box". Buyers hear one sentence about the closet's benefit; requesters hear timing only; sponsors see dollars raised of a goal, like a fundraiser.
 - Never label the reader. Say what the product is, never who is holding the page.
 - Never "platform", "app" or "prototype" to a centre. Never "patented".
@@ -59,7 +59,7 @@ Three audiences: the public (closet page, programme page with sign-up), the cent
 - **Shopper**: opens the link, taps through to the store with the discount applied, checks out as normal. Nothing to design on the store side.
 - **Requester**: asks for what they need on the closet page, hears back by email, picks up at the closet or receives it at home with the shipment.
 - **Sponsor**: picks an amount on the closet page, pays at the store checkout, gets a thank-you naming the centre.
-- **Centre team**: learns about the programme, signs up, gets approved, shares the link, sets its limits, approves requests if it chose to, sends the box when it is ready, orders anytime.
+- **Centre team**: learns about the programme, signs up, gets approved, shares the link, sets its limits, approves requests if it chose to, sends the box when it is ready, adds its own budget when it can.
 - **RUBIES operator** (one person): approves new centres, watches every centre and the programme as a whole, handles what needs a human, from the internal operations dashboard.
 
 ## Pages
@@ -79,10 +79,9 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 - **Team.** The admin invites team members by email, sets their role (admin or member), removes them, and can hand admin to someone else. An invited person accepts the invitation and creates their account on the same rules. Contacts churn at centres, so this is the path that keeps a centre reachable when its coordinator leaves.
 
 **Centre (signed in)**
-- **Home.** The current box: raised of goal, the requests in it and their status, send it now when funded, add to the box, order now, pause requests, and everything the centre needs to share its link.
+- **Home.** The current box: raised of goal, the requests in it and their status, send it now when funded, add to the box (paid on the spot), pause requests, and everything the centre needs to share its link.
 - **Settings.** Sizes, items per request, how often one person may ask, funding target, approval mode, shipping to a door on or off; map listing and pause for Pre-Loved; centre name, logo, address, the email statements go to; leaving. Team management lives here or beside it.
 - **Send the box.** Requested items are fixed; the centre fills the remainder or lets it fill itself, sees the totals, confirms.
-- **Order now.** An order at 50% off, $300 minimum, paid by invoice or card.
 - **History.** Boxes sent; donations routed to them.
 - **Approval email.** For centres approving by hand: the request and two links, approve or decline, no sign-in.
 
@@ -122,14 +121,13 @@ Part of the design, same brief as the pages: purpose only, and the list is open 
 
 ## Leave out
 
-No lobby stand, cards or printed kit. No starter run of product. No shared or visible discount code. No inventory or intake tooling the centre maintains. No fake phone status bars.
+No lobby stand, cards or printed kit. No starter run of product. No ordering outside the box (centres buying product directly is handled by email today and stays out of scope). No shared or visible discount code. No inventory or intake tooling the centre maintains. No fake phone status bars.
 
 ## Open questions
 
 Do not decide these; placeholder them.
 
 - The final name of the Pre-Loved programme.
-- Whether a centre pays "add to the box" and "order now" on the spot or by invoice.
 
 ## Reference
 
