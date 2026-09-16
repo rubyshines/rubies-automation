@@ -204,7 +204,7 @@
   <section id="need">
     <div class="head">
       <h2>Need a pair? Two ways to get one.</h2>
-      <p>If you can buy one, please do: for every two pairs bought with the code, the closet gets one. If money is tight right now, apply and the closet will cover it.</p>
+      <p>If you can buy one, please do: for every two pairs bought through this page, the closet gets one. If money is tight right now, apply and the closet will cover it.</p>
     </div>
     <div class="ways">
       <div class="way">
@@ -398,7 +398,7 @@
         '<img alt="" src="' + IMG[p.img] + '">' +
         '<div class="name">' + p.name + '</div>' +
         '<div class="for">' + p.for + '</div>' +
-        '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.80) + ' with the code</div>' +
+        '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.80) + ' on a first order</div>' +
         '<div class="swatches">' + p.colors.map(function (c) { return '<span class="sw sw-' + c.toLowerCase() + '" title="' + c + '" aria-label="' + c + '"></span>'; }).join('') + '</div>';
       host.appendChild(el);
     });
