@@ -37,6 +37,7 @@ function noticeSummaryMarkdown(summary) {
     `**${summary.total}** orders matched (A pre-only: ${summary.byVariant.A_pre_only}, B mixed: ${summary.byVariant.B_mixed})`,
   ];
   if (summary.dedupeWarning) lines.push('', `⚠️ ${summary.dedupeWarning}`);
+  if (summary.recentWarning) lines.push('', `⚠️ ${summary.recentWarning}`);
 
   if (summary.mode === 'dry_run') {
     // Show one full body per variant, then the recipient list — the operator

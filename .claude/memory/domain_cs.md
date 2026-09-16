@@ -70,6 +70,8 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 
 ## Key Decisions
 
+- **Proactive outreach checks the conversation before it writes, and refuses by default.** Outbound is the one CS action with no inbound message anchoring it, so nothing in the flow forces a look at what the customer has already been told. `create_outreach_ticket` now refuses when we have written to that customer in the last 30 days, lists those messages, and needs `acknowledge_recent_contact` to proceed; the pre-order wave uses the same signal as a second dedupe source. The check is on OUR messages only, so a customer awaiting a reply is never blocked, and it runs before composition so a refusal costs no model call. A per-feature notification log could not do this job: `preorder_notifications` only sees sends the wave itself made, and notices sent any other way leave no row, which is how a wave wrote to a customer mid-conversation about the same items.
+
 - **Agentic loops, not decision trees.** Opus controls flow; all exchange/sizing/response rules live in the advisor prompt, not in code. The old deterministic sizing tree was deleted; `sizingEngine.js` owns only sizing utilities (nicknames, classification, size lists and adjacency, grading deltas, chart category, one-piece fit), nothing that decides what to say.
 - **One shared tool-loop engine.** Every agentic loop runs on `runToolLoop.js`; callers inject divergent behaviour via callbacks. New agents use it rather than hand-rolling the loop.
 - **Structured output:** the advisor returns `_structured` JSON alongside customer-facing markdown; the dashboard consumes the structured data directly.

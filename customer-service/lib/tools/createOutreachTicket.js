@@ -18,6 +18,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { buildContext } = require('../contextBuilder');
 const { composeOutboundDraft } = require('../composeOutboundDraft');
 const { seedOutboundDraft } = require('../customerOutreach');
+const { recentAgentMessages, describeRecentContact, DEFAULT_WINDOW_DAYS } = require('../recentContact');
 
 async function resolveCustomerEmailFromOrder(orderNumber) {
   const supabase = getSupabaseClient();
@@ -33,7 +34,7 @@ async function resolveCustomerEmailFromOrder(orderNumber) {
   return data?.customer_email || null;
 }
 
-async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
+async function handleCreateOutreachTicket({ order_number, steer, note_text, acknowledge_recent_contact }) {
   if (!order_number) {
     return { content: [{ type: 'text', text: 'order_number is required.' }], isError: true };
   }
@@ -52,6 +53,46 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
   }
   if (!customerEmail) {
     return { content: [{ type: 'text', text: `Order #${cleanOrderNumber} not found in Supabase orders mirror. Confirm the order number, or run the orders sync if it's very recent.` }], isError: true };
+  }
+
+  // 1b) Has this customer already heard from us? Proactive outreach has no
+  // inbound message anchoring it, so nothing else in the flow forces anyone to
+  // read the existing thread — and twice on 2026-09-15 nobody did. The check
+  // runs before composition so a refusal costs no model call. It fires only on
+  // OUR messages: a customer who wrote in and is awaiting a reply is not a
+  // duplicate risk.
+  const contact = await recentAgentMessages(customerEmail);
+  if (contact.error) {
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          `Could not check what this customer has already been told (${contact.error}).`,
+          '',
+          'Refusing rather than guessing: this is the check that stops a duplicate notice, and a lookup failure reads exactly like a clean record.',
+          'Read the customer\'s thread yourself, then pass acknowledge_recent_contact=true to proceed.',
+        ].join('\n'),
+      }],
+      isError: true,
+    };
+  }
+  if (contact.messages.length && !acknowledge_recent_contact) {
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          `**Stop — we already wrote to ${customerEmail} in the last ${DEFAULT_WINDOW_DAYS} days.** Nothing composed, nothing staged.`,
+          '',
+          `${contact.messages.length} message${contact.messages.length === 1 ? '' : 's'} from us, newest first:`,
+          ...describeRecentContact(contact.messages),
+          '',
+          'Read those before writing again. A second note about something the customer has already been told, or is mid-conversation about, reads as nobody paying attention.',
+          '',
+          'If this outreach is genuinely new information, call again with acknowledge_recent_contact=true.',
+        ].join('\n'),
+      }],
+      isError: true,
+    };
   }
 
   // 2) Build context (customer + orders + target order line items).
@@ -126,6 +167,11 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
   if (draft.action_dropped) {
     previewLines.push(`\n_Note: the advisor proposed a paired action but it was incomplete or not a recognized action_type, so it was NOT staged. Re-steer with explicit action instructions if one is needed._`);
   }
+  if (contact.messages.length) {
+    previewLines.push(
+      ``,
+      `_Sent despite ${contact.messages.length} message${contact.messages.length === 1 ? '' : 's'} from us in the last ${DEFAULT_WINDOW_DAYS} days (acknowledged). Most recent: ${contact.messages[0].sent_at.slice(0, 16).replace('T', ' ')} UTC on ticket ${contact.messages[0].ticket_id}._`);
+  }
   if (seedResult.note_error) {
     previewLines.push(`\n_Note: order_alert_notes insert failed (${seedResult.note_error}). The draft is still staged correctly._`);
   }
@@ -136,7 +182,7 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
 const tools = [
   {
     name: 'create_outreach_ticket',
-    description: 'Compose a proactive outbound email to a customer about one of their orders, and stage it as a pending draft for review in the dashboard. Use when Jamie wants to reach out FIRST about an issue (back-order heads-up, shipping delay he wants to disclose proactively, defect notification, post-purchase feedback request) rather than respond to an inbound message. Provide the order number and a free-form steer describing what the email should communicate. If the outreach pairs with an operator action on the order (an exchange, refund, hold, order edit), describe the action in the steer too — the draft is then staged with the action attached so the dashboard action panel and Execute & Send work on it. The CS advisor composes the draft, no Gorgias ticket is created, and no email is sent until the operator reviews and approves the draft in the dashboard. If the operator only named a customer (no order), use lookup_customer + get_customer_orders FIRST to disambiguate which order, then call this tool with the resolved order number.',
+    description: 'Compose a proactive outbound email to a customer about one of their orders, and stage it as a pending draft for review in the dashboard. REFUSES if we have emailed this customer in the last 30 days, listing what was said — read those messages, and only pass acknowledge_recent_contact=true if this outreach is genuinely new information. Use when Jamie wants to reach out FIRST about an issue (back-order heads-up, shipping delay he wants to disclose proactively, defect notification, post-purchase feedback request) rather than respond to an inbound message. Provide the order number and a free-form steer describing what the email should communicate. If the outreach pairs with an operator action on the order (an exchange, refund, hold, order edit), describe the action in the steer too — the draft is then staged with the action attached so the dashboard action panel and Execute & Send work on it. The CS advisor composes the draft, no Gorgias ticket is created, and no email is sent until the operator reviews and approves the draft in the dashboard. If the operator only named a customer (no order), use lookup_customer + get_customer_orders FIRST to disambiguate which order, then call this tool with the resolved order number.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -151,6 +197,10 @@ const tools = [
         note_text: {
           type: 'string',
           description: 'Optional override for the order_alert_notes text that surfaces this order in the daily report. Defaults to "Proactive outreach drafted — pending operator review".',
+        },
+        acknowledge_recent_contact: {
+          type: 'boolean',
+          description: `Proceed even though we have written to this customer in the last ${DEFAULT_WINDOW_DAYS} days. Without it the tool refuses and lists those messages. Pass it only after READING them and concluding this outreach is genuinely new information — not to get past the refusal.`,
         },
       },
       required: ['order_number', 'steer'],

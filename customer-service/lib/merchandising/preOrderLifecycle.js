@@ -27,6 +27,7 @@
  */
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { recentAgentMessagesForMany, DEFAULT_WINDOW_DAYS } = require('../recentContact');
 const { sendEmail } = require('../../../shared/sendgridClient');
 const { shopifyGraphQL } = require('../shopify');
 const { fetchOrderByNumber, getHoldReasons } = require('../../../reports/lib/warehanceClient');
@@ -495,6 +496,17 @@ async function sendPreOrderUpdateNotices({
   const { orders: alreadyTold, warning: dedupeWarning } = await previouslyNotified(newDatePhrase);
 
   const { rows, errors } = await scanOpenPreOrders({ onProgress });
+
+  // preorder_notifications only knows about sends this function made. Notices
+  // sent any other way — create_outreach_ticket, or Jamie replying inside an
+  // existing thread — leave no row here, so on 2026-09-15 a wave wrote to a
+  // customer mid-conversation about the same items. The conversation itself is
+  // the record that covers every channel, so it is the second dedupe source.
+  const { byEmail: recentByEmail, error: recentError } =
+    await recentAgentMessagesForMany(rows.map(r => r.customer_email));
+  const recentWarning = recentError
+    ? `conversation dedupe unavailable (${recentError}) — orders recently written to CANNOT be detected`
+    : null;
   const skipped = errors.map(e => `#${e.order}: scan error — ${e.error}`);
   const candidates = [];
 
@@ -512,6 +524,12 @@ async function sendPreOrderUpdateNotices({
     if (row.warehance.ready_to_ship !== false) { skipped.push(`#${row.order_number}: Warehance says ready to ship — no email`); continue; }
     if (!resend && alreadyTold.has(row.order_number)) {
       skipped.push(`#${row.order_number}: already told "${newDatePhrase}" — pass resend=true to include`);
+      continue;
+    }
+    const recent = recentByEmail.get(row.customer_email) || [];
+    if (!resend && recent.length) {
+      const newest = recent[0];
+      skipped.push(`#${row.order_number}: we wrote to ${row.customer_email} on ${newest.sent_at.slice(0, 10)} (ticket ${newest.ticket_id}) — read that thread before writing again; pass resend=true to include`);
       continue;
     }
 
@@ -534,6 +552,7 @@ async function sendPreOrderUpdateNotices({
     },
     skipped,
     dedupeWarning,
+    recentWarning,
     results: [],
   };
 

@@ -53,6 +53,7 @@ async function main() {
   console.log(`[${summary.mode.toUpperCase()}] ${summary.total} orders matched ` +
     `(A pre-only: ${summary.byVariant.A_pre_only}, B mixed: ${summary.byVariant.B_mixed})\n`);
   if (summary.dedupeWarning) console.log(`WARNING: ${summary.dedupeWarning}\n`);
+  if (summary.recentWarning) console.log(`WARNING: ${summary.recentWarning}\n`);
 
   if (summary.mode === 'dry_run') {
     for (const r of summary.results) {
