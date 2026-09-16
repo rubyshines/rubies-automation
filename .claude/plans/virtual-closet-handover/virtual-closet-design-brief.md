@@ -36,13 +36,13 @@ A centre signs up once and ticks what it wants:
 - **Pre-Loved partner** (working name, may change): customers' exchanged and returned RUBIES items are routed to the centre's closet. RUBIES already runs this with partners on three continents. The centre appears on a public map of donation partners.
 - **Virtual Closet**: the page and box described above.
 
-Any approved partner can also **order for its closet at any time** with its own budget (a grant, year-end money), and RUBIES matches it: order $300, receive $600 of product. This is a standing capability, not a tick box. Two ways, same terms: **add to the box** (any amount, joins the closet's shipment, no minimum of its own) or **order now** (standalone, $300 minimum, ships right away).
+Any approved partner can also **order for its closet at any time** with its own budget (a grant, year-end money) at **50% off, $300 minimum**. This is a standing capability, not a tick box. A centre can also **add any amount to its box**, where it is matched like every other dollar and ships with the box.
 
 Sign-up is self-service. The centre fills in the form, accepts the terms, and lands on a confirmation immediately. The operator approves from a queue (usually the same day) before the page and map listing go live. "Book a call with Jamie" is offered on the programme page and the confirmation, and is optional.
 
 ## Vocabulary and copy rules (apply on every screen)
 
-- **Matching, never discount.** Org-facing and sponsor-facing copy says "RUBIES matches every dollar", "order $300, receive $600 of product". Never "discount", "wholesale", "50% off", "closet price" or "doubled" on any centre- or sponsor-facing surface. The only percentage a community member sees is the shopper's 20% off.
+- **Matching, never discount, with one exception.** Anything about the box says "RUBIES matches every dollar", whoever put the money in. Never "discount", "wholesale", "closet price" or "doubled" about the box, on any centre- or sponsor-facing surface. **The exception is an order the centre places itself** ("order now"): that is a purchase, and it says "50% off, $300 minimum" plainly. The only percentage a community member sees is the shopper's 20% off.
 - **Community-facing copy says "shipment"; centre-facing copy says "box".** The community page never says "box".
 - **Buyers see one sentence** about the closet's benefit: "for every two pairs bought through this page, the closet gets one". The number 25% never appears on the community page.
 - **Requesters see timing only**: "comes with the closet's next shipment". No dollars, no goal, no mechanism.
@@ -71,7 +71,7 @@ Sign-up is self-service. The centre fills in the form, accepts the terms, and la
 | Free pairs | Approved automatically within limits the centre sets (items per request, requests per person per year, default 2 a year). Final. Out-of-stock items auto-swapped to the closest style in that size. |
 | Pickup or ship | Requester chooses. Shipping to a door costs the box $15 per package (centre-facing only). Address held by RUBIES only. |
 | Box menu | Five styles to start: AJ, Charlie and Sassy underwear, the Brooke bra, the Ruby bikini bottom. Requested items first; the centre fills the rest or lets it auto-fill. |
-| Order anytime | Any approved partner, own budget, matched. Add to the box (no minimum) or order now ($300 minimum, ships now). |
+| Order anytime | Any approved partner, own budget: order now at 50% off, $300 minimum, ships now. Or add any amount to the box, matched, ships with the box. |
 | Cost to the centre | Nothing. Leave anytime; anything raised ships. |
 | Adult store prices | AJ $32, Charlie $33, Sassy $32, Brooke bra $42, Ruby bikini bottom $48. |
 | Sizes | Underwear and swim: XS, S, M, L, 1X, 2X, 3X, 4X (the centre chooses which it offers). |
@@ -84,7 +84,7 @@ Sign-up is self-service. The centre fills in the form, accepts the terms, and la
 
 **Sponsor** (someone who wants to help). Opens the link, reads the sponsor section, picks a tile, is sent to rubyshines.com checkout for a non-shipping "Sponsor [centre]'s closet" product, pays, receives a thank-you naming the centre. The closet page's dollars raised update.
 
-**Centre team.** Reads the programme page, signs up (form, terms, confirmation), waits for approval, receives the welcome email with the link and the share kit. Opens its private view by magic link. Sees the current box (raised of goal, requests), changes settings, shares the link. If approving manually: gets an email per request with Approve and Decline links. When the box reaches its goal: gets a "box is ready" email, opens the order builder pre-filled with requested items, fills the rest or lets it auto-fill, sends it. Can also add its own budget to the box or place an order anytime. Receives a monthly statement when something happened.
+**Centre team.** Reads the programme page, signs up (form, terms, confirmation), waits for approval, receives the welcome email with the link and the share kit. Opens its private view by magic link. Sees the current box (raised of goal, requests), changes settings, shares the link. If approving manually: gets an email per request with Approve and Decline links. When the box reaches its goal: gets a "box is ready" email, opens the order builder pre-filled with requested items, fills the rest or lets it auto-fill, sends it. Can also add its own budget to the box (matched) or place an order anytime at 50% off. Receives a monthly statement when something happened.
 
 **RUBIES operator** (one person, Jamie). Logs in. Sees the queue of new sign-ups, approves, asks for more information, or declines. Sees the list of all centres with health, opens any centre's detail, and a programme dashboard with totals. Also receives the alerts (a wait list growing, a centre whose volume jumps, an unclaimed sign-up sitting for days).
 
@@ -100,7 +100,7 @@ Content, in order:
 1. Hero: "Virtual Closet". "A gender-affirming closet your community stocks, in your centre's name, with every dollar matched by RUBIES." Buttons: Sign up your centre / Book a call. Tag: "Piloting this fall".
 2. The gap: "Closets are strong on binders and thin on everything else." "Centres tell us the same thing: requests for trans-fem and non-binary gear come in, budgets are small, and binder brands have been cutting community programmes. The Virtual Closet is the other half of the closet, stocked by the people around it."
 3. Three doors (three columns): Those who can buy: "Buy a pair, 20% off" (your centre's link gives 20% off a first order, applied automatically; for every two pairs bought, your closet gets one). Those who can't right now: "Apply for a free pair" (anyone can ask for what they need, in their size; approved automatically within limits you set; filled when the box goes out). Those who want to help: "Sponsor the closet" (allies and families give any amount into the box, and RUBIES matches every dollar).
-4. Two programmes, pick one or both: Pre-Loved partner (exchanges and returns routed to your closet; you appear on the donation map) and Virtual Closet (the page and box above). Plus one line: "Any partner can order for its closet at any time with its own budget, and RUBIES matches it: order $300, receive $600 of product."
+4. Two programmes, pick one or both: Pre-Loved partner (exchanges and returns routed to your closet; you appear on the donation map) and Virtual Closet (the page and box above). Plus one line: "Any partner can order for its closet at any time with its own budget, at 50% off, $300 minimum."
 5. The terms, as one table: the match; the box ($300 minimum target, doubled at the goal, goal grows to cover everyone approved, centre chooses past the goal, one box at a time); community orders (20% off first order applied at checkout, for every two pairs bought your closet gets one, 25% of each order into the box, orders within 30 days of the link count); free pairs (name they go by, what they need, a sentence on why; approved automatically or by you from an email; you set items per request, how often one person may ask, sizes offered; final; wait list when a shipment is funded; auto-swap if out of stock); pick up or ship (pickups from your box, a shipped pair costs the box $15, your team sees name, items and words, email and address stay with RUBIES); what fills the box (five styles, requested items first, you choose the rest or let it fill itself); cost to your centre (nothing; leave anytime; anything raised ships).
 6. One worked box (a small ledger): 12 community orders $96; 9 sponsors $150; the centre's own top-up $54; raised $300. Out: shipping for 2 requests sent to doors $30; product, matched by RUBIES $540; 17 items to the closet; 7 people who applied get their pair (5 pick up, 2 shipped); 10 more stock the closet.
 7. What we ask of you, three things: share the link; set your limits; fill the box when it is ready.
@@ -113,7 +113,7 @@ Content, in order:
 Content:
 - About your centre: centre name; website; city, state/province, country; street address (for shipments); who you serve (one line); logo upload; a short description for your public page and the map (two sentences).
 - Your contact: name; role; email; a shared or role-based email for statements (recommended, since contacts change); phone (optional).
-- Which programmes? Two tick boxes with one line each: Pre-Loved partner; Virtual Closet. Note under them: "Any partner can order for its closet anytime, matched. Nothing to tick."
+- Which programmes? Two tick boxes with one line each: Pre-Loved partner; Virtual Closet. Note under them: "Any partner can order for its closet anytime at 50% off. Nothing to tick."
 - If Pre-Loved: sizes you can take (two tick boxes: kids 4 to 11; kids 12 to 16 and adult XXS to 4X); list us on the public donation map (yes/no).
 - If Virtual Closet: sizes you offer (XS to 4X chips); items per request (default 2); how often one person may ask (default 2 a year); funding target (default $300, $300 minimum); requests are approved (automatically / by us from an email); allow shipping to a door (yes/no).
 - Terms: a short non-binding agreement shown inline or as a link, one checkbox "We agree to the terms." Optional: "Ask Jamie to call us first" checkbox.
@@ -152,13 +152,13 @@ States: P5a pickup; P5b ship (address open); P5c sent ("Request sent" plus timin
 
 **C1. Approval email** (only for centres that approve manually). Subject "A request for [Centre]'s closet". Body: name they go by, items with size and colour, pickup or ship, their words, and two buttons, Approve / Decline, that work without signing in. Reminder version after three days.
 
-**C2. Centre home: the current box.** Header with the centre's name and a link to its public page. Box [N]: "$88 raised of $300", progress, the same counts as the public card, and two actions: "Send it now" (enabled from $300) and "Add our own budget". Below: the request list for this box: name, items (style, colour, size), pickup or shipped, words (expand), status (approved, waiting for funding, on the list for box N+1, filled), date. Actions per row for manual-approval centres. A "Pause requests" toggle. A "Share your closet" block: the link, a QR, a newsletter line, a line for your request form, a social tile, each with copy buttons. Draw a second state, C2b, with the box funded (Send it now enabled, an "over the goal" line, wait-listed requests shown under a divider).
+**C2. Centre home: the current box.** Header with the centre's name and a link to its public page. Box [N]: "$88 raised of $300", progress, the same counts as the public card, and three actions: "Send it now" (enabled from $300), "Add to the box" (an amount from the centre's budget, matched) and "Order now, 50% off" (C5). Below: the request list for this box: name, items (style, colour, size), pickup or shipped, words (expand), status (approved, waiting for funding, on the list for box N+1, filled), date. Actions per row for manual-approval centres. A "Pause requests" toggle. A "Share your closet" block: the link, a QR, a newsletter line, a line for your request form, a social tile, each with copy buttons. Draw a second state, C2b, with the box funded (Send it now enabled, an "over the goal" line, wait-listed requests shown under a divider).
 
 **C3. Settings.** Virtual Closet: sizes offered, items per request, how often one person may ask, funding target ($300 floor), approval mode, allow shipping to a door, pause requests. Pre-Loved: sizes you take, map listing on/off, pause donations (with a reason). Centre: name, logo, address, contact, statements email. Leave the programme (with what happens: anything raised ships to you).
 
 **C4. Order builder: send the box.** Reached from "Send it now" or the box-ready email. Top: what is in the box that cannot change (requested items, listed). Then the remainder: "$270 of product left to fill" with two ways: pick items (style, colour, size, quantity from the menu, only in-stock, only the centre's sizes) or "Fill it for me" (auto-fill from what the community buys most). Running total: raised, shipping for [N] mailed requests, product value matched, items. Ship-to address (the centre's, editable). Button "Send the box". Confirmation state C4b: "Box [N] is on its way. Box [N+1] is open."
 
-**C5. Order anytime.** The same builder, empty. Explains at the top: "Order for your closet with your own budget. RUBIES matches it: order $300, receive $600 of product. $300 minimum." Choice at the top: "Add this to our box" (no minimum, ships with the box) or "Order now" (ships now). Payment: an invoice by email (draft order) or pay now. Confirmation state C5b.
+**C5. Order anytime.** The same builder, empty. Explains at the top: "Order for your closet with your own budget, 50% off, $300 minimum. Ships right away." Prices shown at 50% off. Payment: an invoice by email (draft order) or pay now. Confirmation state C5b. "Add to our box" is a separate, simpler action on C2 (an amount, paid the same way), described in matching language.
 
 **C6. History.** Boxes sent: number, date, raised, items, requests filled. Pre-Loved: donations routed to you (count, recent).
 
@@ -202,7 +202,7 @@ States: P5a pickup; P5b ship (address open); P5c sent ("Request sent" plus timin
 - Whether the sponsor tile hands straight to checkout or shows an amount confirmation first.
 - Whether the operator login is password or magic link.
 - Copy for the empty closet page state (P4b) and the declined note (M5).
-- Whether a centre's own "add to the box" is paid on the spot or by invoice.
+- Whether a centre's own "add to the box" and "order now" are paid on the spot or by invoice.
 
 ## Reference
 
