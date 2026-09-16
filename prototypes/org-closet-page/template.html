@@ -211,7 +211,7 @@
       <div class="rule"></div>
       <div class="way" id="apply">
         <h3>If money is tight, apply for a free pair</h3>
-        <p>Tell us what you need. <span class="org-name">Uniting Pride</span> approves it, and it is filled when the closet's next box goes out.</p>
+        <p>Tell us what you need. It is approved and filled when the closet's next box goes out.</p>
         <form id="apply-form" class="form">
           <div class="items" id="items"></div>
           <button type="button" class="add-item" id="add-item">+ Add another item</button>
@@ -229,7 +229,7 @@
         </form>
         <div class="sent" id="apply-done" hidden>
           <b>Request sent</b>
-          <p class="soft"><span class="org-name">Uniting Pride</span> will take a quick look. When the closet's next box goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.</p>
+          <p class="soft">When the closet's next box goes out you will get an email with a one-time code and a link to order in your size, or a note that it is ready to pick up.</p>
         </div>
       </div>
     </div>
@@ -263,7 +263,7 @@
     <div class="how">
       <div class="col">
         <h3>Community</h3>
-        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair: <span class="org-name">Uniting Pride</span> approves it, and it is filled with the next box.</p>
+        <p>Buy with the code and 25% of your order goes to the closet. Or apply for a free pair, filled with the next box.</p>
       </div>
       <div class="col">
         <h3>Closet</h3>
@@ -271,7 +271,7 @@
       </div>
       <div class="col">
         <h3>Team</h3>
-        <p>Share the link. Approve requests from an email. When a box is ready, pick what fills it or let it fill itself. Nothing to maintain.</p>
+        <p>Share the link. When a box is ready, pick what fills it or let it fill itself. Nothing to maintain.</p>
       </div>
     </div>
   </section>
@@ -300,7 +300,7 @@
 <script>
 (function () {
   var BOX = 300;  // dollars raised per box, the minimum that reaches RUBIES before one ships; matched, $600 of product
-  var SHIP = 10;  // charged to the closet's pool per package shipped to a door when the box goes out; not shown on the page
+  var SHIP = 15;  // charged to the closet's pool per package shipped to a door when the box goes out; not shown on the page
   var IMG = {{IMG_JSON}};
   var STORE = 'https://rubyshines.com/products/';
 
@@ -479,7 +479,7 @@
     state.asks.push({ id: state.nextId++, items: items, how: how }); save();
     document.getElementById('apply-form').hidden = true;
     document.getElementById('apply-done').hidden = false;
-    toast('Request sent to ' + state.org + '.');
+    toast('Request sent.');
     renderWaiting(); renderProgress();
   });
 
