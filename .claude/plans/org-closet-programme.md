@@ -390,3 +390,21 @@ Each phase gets a `done_when` before it starts.
 
 - `get_product_margins` errors with `column orders.id does not exist`; `get_wholesale_margins` works. Park.
 - Transcript says "AG underwear"; the product is AJ.
+
+---
+
+## The app, not four pages (Jamie, 2026-09-16, evening; discussion, nothing built)
+
+Jamie: the four prototype pages are not the deliverable. Design what the Virtual Closet needs as an app, plus one page where an org learns about the programme and signs up. Wireframes first, then high fidelity in the rubyshines.com design system (Fixel Display, magenta `#FB00FF`, purple `#310C48`, blue `#2000A0`, square buttons, pill badges; the prototypes' Fredoka/cream look is not the site's).
+
+**Why wireframes first:** the only screen ever laid out is the community closet page. The requester, sponsor, centre-team and operator sides exist as sentences in this file, not as screens. Walking each actor's flow end to end is what surfaces the missing pieces. The community page keeps the prototype's structure rather than starting over.
+
+**Sign-up is full self-service, with a call as an option (Jamie).** Replaces call-first onboarding (a `domain_community.md` Key Decision to change when this ships). The org fills in one form, accepts the terms by checkbox, and lands on a "you're in, what happens next" page at once. "Book a call with Jamie" is on the sign-up page and the confirmation, optional.
+
+**One sign-up for both programmes (Jamie).** The donation programme's onboarding folds into the same form; the org ticks which programme(s) it wants. The legacy programme needs a new name because "donation closet" collides with "Virtual Closet"; working name **Pre-Loved Program** (an org is a Pre-Loved partner), matching the customer-facing "donate your pre-loved RUBIES clothing" page. Form split: shared fields (org, website, logo, contact, a role-based email, address, who they serve); Pre-Loved fields (size categories they can take, short description for the public map, whether to be listed); Virtual Closet fields (sizes offered, items per request, requests per person per year, funding target with the $300 floor, approval mode, whether shipping to a door is allowed). Existing Pre-Loved partners add the Virtual Closet from a link, never by signing up again. Proposed, awaiting Jamie: matched purchasing (orgs buying at the matched rate) is not a third tick box; it is "your own budget goes into the box" inside the Virtual Closet.
+
+**One human gate, after sign-up, not before (proposed).** The page and the map listing go live when the operator approves from a queue, usually the same day. Keeps the vetting the survey ingest does today (logo, description, geocode, a look at who they are) without a call in the way.
+
+**Operator login (Jamie).** RUBIES signs in to approve new orgs and track how the programme is going: an approval queue, an org list with health, an org detail (codes issued and used, orders, sponsors, box status, requests waiting, last statement), and programme totals. So the app has three audiences behind one front door: public pages (closet page, programme page with sign-up), the centre team by magic link (per-box request list, settings, send-it-now, the pre-filled box order), and the operator by login.
+
+**Screen and message inventory to wireframe:** closet page in its states (empty box, funded, oversubscribed, shipped, requests paused, wait list); request confirmation, one-time code email, pickup-ready notice, wait-list notice; sponsor checkout (Shopify) and thank-you; programme page with sign-up form, terms acceptance, confirmation; centre approval email with Approve/Decline links; centre view (request list per box, settings, send-it-now, box order pre-filled, history); operator queue, org list, org detail, programme dashboard; welcome and monthly statement emails.
