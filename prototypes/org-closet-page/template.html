@@ -92,7 +92,7 @@
   .items { display: grid; gap: 10px; }
   .item { display: grid; grid-template-columns: 1.7fr 1fr 0.8fr auto; gap: 10px; align-items: end; }
   .swatches { display: flex; align-items: center; gap: 5px; margin-top: 2px; }
-  .sw { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(42,27,61,0.25); display: inline-block; }
+  .sw { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(42,27,61,0.25); display: inline-block; }
   .sw-black { background: #17141F; } .sw-pink { background: #F6B7D2; } .sw-sandstone { background: #D9B99B; } .sw-white { background: #FFFFFF; } .sw-unicorn { background: linear-gradient(135deg, #FFB3DE, #B7E3FF, #FFF3A8); }
   .swatches .for { margin-left: 4px; }
   .item .remove { font: inherit; font-size: 13px; font-weight: 700; color: var(--ink-2); background: none; border: 0; cursor: pointer; padding: 10px 4px; }
@@ -394,7 +394,7 @@
         '<div class="name">' + p.name + '</div>' +
         '<div class="for">' + p.for + '</div>' +
         '<div class="price"><s>' + money(p.retail) + '</s>' + money(p.retail * 0.80) + ' with the code</div>' +
-        '<div class="swatches">' + p.colors.map(function (c) { return '<span class="sw sw-' + c.toLowerCase() + '" title="' + c + '"></span>'; }).join('') + '<span class="for">' + p.colors.join(', ') + '</span></div>';
+        '<div class="swatches">' + p.colors.map(function (c) { return '<span class="sw sw-' + c.toLowerCase() + '" title="' + c + '" aria-label="' + c + '"></span>'; }).join('') + '</div>';
       host.appendChild(el);
     });
   }
