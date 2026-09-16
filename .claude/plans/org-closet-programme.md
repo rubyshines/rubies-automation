@@ -414,3 +414,5 @@ Jamie: the four prototype pages are not the deliverable. Design what the Virtual
 **Exception to matching language (Jamie, 2026-09-16, later):** an order the centre places itself ("order now") is a purchase and says "50% off, $300 minimum" plainly. Matching language stays for everything about the box, including money the centre adds to it. Brief updated.
 
 **Brief cut back (Jamie, 2026-09-16, later):** the design brief for Claude Design was too prescriptive. It now lists pages and their purpose only, explicitly invites Claude Design to change the page list if it has a better idea, and leaves structure, layout and copy to it. Also: one sizes question serves both programmes; no starter run of AJ underwear anywhere in the programme.
+
+**Emails are part of the design (Jamie, 2026-09-16, later):** the brief now lists the emails by recipient, purpose only: operator (sign-up to approve, needs attention); centre (accepted/onboarding with links into their view, Pre-Loved items on the way, a free pair requested, box funded, box on its way, monthly statement, sign-in link); requester (received, on the list, ready, declined); sponsor (thank you).

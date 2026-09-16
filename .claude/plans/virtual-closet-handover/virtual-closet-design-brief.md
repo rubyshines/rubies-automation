@@ -88,7 +88,31 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 - **Centre detail.** Everything about one centre: contacts, settings, ledger, requests, link clicks and orders, sponsors, boxes sent, donations routed, statements sent, notes, and the actions the operator can take on its behalf.
 - **Programme dashboard.** Totals across all centres and what needs attention.
 
-**Messages** (email): welcome after approval, with the link and what to share; request received; on the list for the next shipment; ready (pickup or shipped); declined, kindly; box ready; monthly statement when something happened; sponsor thank-you.
+## Emails
+
+Part of the design, same brief as the pages: purpose only, and the list is open to change. Every email to a centre links back into its private view. Every email to a requester or sponsor links to the closet page.
+
+**To the RUBIES operator**
+- **A centre signed up.** Who they are, what they ticked, and a link to approve, ask for more, or decline.
+- **Needs attention.** Anything the queue would show: a wait list growing, a centre whose volume jumps, a sign-up sitting for days, an approval email a centre has not answered.
+
+**To the centre**
+- **Accepted.** The onboarding email: welcome, their closet page link and everything to share, a link into their private view, their settings as they set them, how the box and the requests work in a few lines, and how to reach Jamie. The one email a new coordinator should be able to inherit and understand.
+- **Pre-Loved items are on the way.** A customer has been given the centre's address and is sending exchanged or returned items. What is coming, roughly, and a way to say it arrived.
+- **A free pair was requested.** For centres approving by hand: the request and approve or decline links, no sign-in. For centres on automatic approval: a lighter note that a request was approved into their box.
+- **The box is funded.** The goal is reached; a link to fill and send it, and the choice to keep it growing.
+- **The box is on its way.** Sent, with what is in it and tracking.
+- **Monthly statement.** Only when something happened: link clicks, orders, dollars into the box, requests, box status.
+- **Sign-in link.** The email that opens their private view.
+
+**To a requester**
+- **Request received.** What they asked for, pickup or ship, and that it comes with the closet's next shipment. Free pairs are final.
+- **On the list.** The current shipment was already funded; they are in line for the next one.
+- **Ready.** Pickup: it is at the closet. Shipped: it is on its way, with tracking.
+- **Declined.** A kind, short note when a centre approving by hand says no.
+
+**To a sponsor**
+- **Thank you.** What their amount became, that RUBIES matched it, and the centre's name.
 
 ## Leave out
 
