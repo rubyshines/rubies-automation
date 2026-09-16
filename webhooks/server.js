@@ -356,6 +356,32 @@ const deallocSweepTimer = setInterval(async () => {
 }, DEALLOC_WATCH_MS);
 deallocSweepTimer.unref();
 
+// Post-call notes. Wispr Flow Notetaker finalizes a call's recording within
+// minutes of it ending; until this existed, nothing looked for it until the
+// 8:30am sync, so an afternoon call spent the rest of the day with an unknown
+// outcome and the panel asked Jamie to confirm a call the recording already
+// proved had happened. Same reasoning as the follow-up sweep above: it has to
+// tick all day, so it belongs here and not in a cron service. The ingest is the
+// nightly's function with a tighter window; the nightly stays as the backstop.
+const { runPostCallSweep, POST_CALL_SWEEP_MS } = require('../b2b-outreach/lib/meetingNotes');
+let meetingNotesSweepRunning = false;
+const meetingNotesTimer = setInterval(async () => {
+  if (meetingNotesSweepRunning) return; // never overlap a slow sweep with the next tick
+  meetingNotesSweepRunning = true;
+  try {
+    const { getSupabaseClient } = require('../shared/supabaseClient');
+    const r = await runPostCallSweep(getSupabaseClient(), {});
+    // Wispr's grant is a token that can be revoked or expire. Silence would
+    // look exactly like "no calls today", which is the normal case.
+    if (r.skipped) console.warn(`[meeting-notes] ${r.skipped}`);
+  } catch (e) {
+    console.error(`[meeting-notes] sweep error: ${e.message}`);
+  } finally {
+    meetingNotesSweepRunning = false;
+  }
+}, POST_CALL_SWEEP_MS);
+meetingNotesTimer.unref();
+
 // Stranded intake claims: the atomic draft claim is taken BEFORE the advisor
 // call, so a worker that dies mid-draft (a Railway redeploy is the realistic
 // case) leaves a claim nothing fills in. The takeover inside claimDraftSlot only

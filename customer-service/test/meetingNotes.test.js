@@ -188,6 +188,81 @@ test('the nightly pass covers the last week of calls without notes and nothing e
   assert.equal(r.no_recording, 1);
 });
 
+// The quarter-hour sweep (2026-09-16). Same function as the nightly, reached
+// through a tighter window, so these cover what the window does and nothing else.
+test('a call still in the room is left alone until the grace period is up', async () => {
+  const ending = new Date(NOW.getTime() - 2 * 60 * 1000).toISOString(); // ended 2 min ago
+  const sb = fakeSb({
+    b2b_meetings: [swtRow({ starts_at: '2026-09-10T21:30:00Z', ends_at: ending })],
+    b2b_companies: [company],
+  });
+  const wispr = fakeWispr({ recent: [] });
+  const r = await N.runPostCallSweep(sb, { now: NOW, wispr });
+  assert.equal(r.considered, 0, 'not looked for yet');
+  assert.equal(r.settling, 1, 'and counted as settling, not as having no recording');
+  assert.equal(wispr.calls.length, 0, 'Wispr is not called at all');
+});
+
+test('the end time is what ripens a call, not its start', async () => {
+  // Started 40 min ago, ends in 10: a half-hour call read from its start would
+  // look ripe. It is still in progress.
+  const sb = fakeSb({
+    b2b_meetings: [swtRow({
+      starts_at: new Date(NOW.getTime() - 40 * 60 * 1000).toISOString(),
+      ends_at: new Date(NOW.getTime() + 10 * 60 * 1000).toISOString(),
+    })],
+    b2b_companies: [company],
+  });
+  const r = await N.runPostCallSweep(sb, { now: NOW, wispr: fakeWispr({ recent: [] }) });
+  assert.equal(r.considered, 0);
+  assert.equal(r.settling, 1);
+});
+
+test('the sweep reaches back six hours; older calls are the nightly\'s job', async () => {
+  const endedAgo = ms => new Date(NOW.getTime() - ms).toISOString();
+  const sb = fakeSb({
+    b2b_meetings: [
+      swtRow({ id: 20, starts_at: endedAgo(2 * 3600e3), ends_at: endedAgo(90 * 60e3) }),  // 1.5h ago — in
+      swtRow({ id: 21, starts_at: endedAgo(9 * 3600e3), ends_at: endedAgo(8 * 3600e3) }), // 8h ago — out
+    ],
+    b2b_companies: [company],
+  });
+  const r = await N.runPostCallSweep(sb, { now: NOW, wispr: fakeWispr({ recent: [] }) });
+  assert.equal(r.considered, 1, 'only the call that ended inside the window');
+  assert.equal(r.rows[0].meeting_id, 20);
+
+  // The nightly has no window, so it still covers the older one.
+  const nightly = await N.ingestRecentNotes(sb, { now: NOW, wispr: fakeWispr({ recent: [] }) });
+  assert.equal(nightly.considered, 2);
+});
+
+test('the post-call sweep ingests a just-ended call: notes stored, held, action items lifted', async () => {
+  refreshed = [];
+  const sb = fakeSb({
+    b2b_meetings: [swtRow({
+      starts_at: new Date(NOW.getTime() - 45 * 60 * 1000).toISOString(),
+      ends_at: new Date(NOW.getTime() - 15 * 60 * 1000).toISOString(),
+    })],
+    b2b_companies: [company],
+  });
+  const wispr = fakeWispr({
+    byCalendar: { tfe2: { id: 'w1', title: 'Stand with Trans', summary: SUMMARY, share_link: 'https://notes/w1', has_transcript: false } },
+  });
+  const r = await N.runPostCallSweep(sb, { now: NOW, wispr });
+  assert.equal(r.ingested, 1);
+  const row = sb.tables.b2b_meetings[0];
+  assert.equal(row.outcome, 'held', 'the recording proves the call happened');
+  assert.equal(row.wispr_share_link, 'https://notes/w1');
+  assert.equal(sb.tables.b2b_commitments.length, 2, 'both Next Steps lifted');
+  assert.deepEqual(refreshed, ['swt'], 'and the recap is rebuilt knowing the call happened');
+});
+
+test('a sweep with Wispr disconnected reports it rather than looking like a quiet day', async () => {
+  const sb = fakeSb({ b2b_meetings: [], b2b_companies: [company] });
+  const r = await N.runPostCallSweep(sb, { now: NOW, wispr: fakeWispr({ configured: false }) });
+  assert.match(r.skipped, /not connected/);
+});
+
 test('the manual fallback records notes handed in by a session, with an explicit commitments list', async () => {
   refreshed = [];
   const sb = fakeSb({ b2b_meetings: [swtRow()], b2b_companies: [company] });

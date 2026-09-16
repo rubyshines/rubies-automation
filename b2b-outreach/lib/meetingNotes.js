@@ -8,10 +8,19 @@
  * (commitments.js). Then the relationship recap is rebuilt so it knows a call
  * happened and what was agreed.
  *
- * Two triggers, one function (2026-09-10):
+ * Three triggers, one function:
+ *   - every quarter hour on the webhook server, for a call that has just ended
+ *     (2026-09-16), so the notes are there while the call is still the thing
+ *     Jamie is thinking about;
  *   - nightly in daily-sync-all, for every call in the last week with no notes;
  *   - the moment the operator marks a call Held (scheduleMeeting.recordMeetingOutcome),
  *     so the notes are on the company before the post-call email is written.
+ *
+ * Why the quarter-hour sweep exists (2026-09-16): the nightly ran at 8:30am and
+ * a call at 3pm finalized its notes at 3:32pm, so for seventeen hours the panel
+ * asked Jamie whether a call had happened while the recording that proves it sat
+ * in Wispr. A daily batch is the wrong shape for a fact that lands minutes after
+ * the event. The nightly stays as the backstop for anything the window missed.
  *
  * Finding the recording: Wispr keys a recording on the Google event id when the
  * Notetaker joined from the calendar, so that lookup is tried first — on every
@@ -33,6 +42,19 @@ const C = require('./commitments');
 
 const DEFAULT_DAYS_BACK = 7;
 const MATCH_WINDOW_MS = 45 * 60 * 1000;
+// Wispr finalizes a recording a couple of minutes after the call ends, so a
+// call is not looked for until it has been over this long. Without it the
+// quarter-hour sweep would fetch calls that are still in the room.
+const NOTES_GRACE_MS = 10 * 60 * 1000;
+// How far back the quarter-hour sweep reaches. It is a window rather than the
+// nightly's seven days because a call Jamie never recorded keeps `summary` null
+// forever: unbounded, every one of them would be re-looked-up four times an
+// hour for a week. Six hours of retries, then the nightly owns it.
+const POST_CALL_WINDOW_MS = 6 * 60 * 60 * 1000;
+// A quarter hour, so a call ending at 3:30 has its notes by about 3:45: the
+// grace above plus one tick. The interval lives with the logic it paces, the
+// way the other webhook-server sweeps do.
+const POST_CALL_SWEEP_MS = 15 * 60 * 1000;
 const STOP = new Set(['the', 'and', 'with', 'for', 'centre', 'center', 'group', 'community', 'society', 'inc', 'org', 'organization', 'foundation', 'meeting', 'call', 'rubies']);
 
 /** The words of a company name worth matching a title on. PURE. */
@@ -176,18 +198,30 @@ async function ingestMeetingNotes(sb, { meeting_id, force = false, now = new Dat
   };
 }
 
-/** Every call in the window with no notes yet. The nightly pass. */
-async function ingestRecentNotes(sb, { now = new Date(), daysBack = DEFAULT_DAYS_BACK, limit = 25, wispr = require('./wisprClient') } = {}) {
-  const result = { considered: 0, ingested: 0, no_recording: 0, already: 0, failed: 0, errors: [], rows: [] };
+/**
+ * Every call in the window with no notes yet. Shared by the nightly pass and
+ * the quarter-hour post-call sweep; `endedWithinMs` is what separates them.
+ *
+ * A call is ripe once it has been OVER for the grace period — `ends_at`, not
+ * `starts_at`, because a half-hour call fetched from its start time is a call
+ * still in progress.
+ */
+async function ingestRecentNotes(sb, { now = new Date(), daysBack = DEFAULT_DAYS_BACK, limit = 25, endedWithinMs = null, wispr = require('./wisprClient') } = {}) {
+  const result = { considered: 0, ingested: 0, no_recording: 0, already: 0, failed: 0, settling: 0, errors: [], rows: [] };
   if (!(await wispr.isConfigured())) return { ...result, skipped: 'Wispr is not connected (run scripts/authWispr.js, set WISPR_TOKEN_JSON)' };
   const { data: rows, error } = await sb.from('b2b_meetings')
-    .select('id, company_id, title, starts_at, status, outcome, summary')
+    .select('id, company_id, title, starts_at, ends_at, status, outcome, summary')
     .gte('starts_at', new Date(now.getTime() - daysBack * 86400000).toISOString())
     .lte('starts_at', now.toISOString())
     .neq('status', 'cancelled').is('summary', null)
     .order('starts_at', { ascending: true }).limit(limit);
   if (error) throw new Error(error.message);
   for (const r of rows || []) {
+    // A row with no end time is treated as ending when it started: the
+    // fallback cadence.postCallFollowupDue already uses.
+    const sinceEnd = now.getTime() - new Date(r.ends_at || r.starts_at).getTime();
+    if (sinceEnd < NOTES_GRACE_MS) { result.settling++; continue; }
+    if (endedWithinMs !== null && sinceEnd > endedWithinMs) continue;
     result.considered++;
     try {
       const out = await ingestMeetingNotes(sb, { meeting_id: r.id, now, wispr });
@@ -201,6 +235,22 @@ async function ingestRecentNotes(sb, { now = new Date(), daysBack = DEFAULT_DAYS
     }
   }
   return result;
+}
+
+/**
+ * Webhook-server entry point: the calls that ended in the last few hours.
+ * Fail-soft and quiet — it ticks all day and is a no-op almost every time, so
+ * it logs only when it did something or when something went wrong.
+ */
+async function runPostCallSweep(sb, { now = new Date(), wispr = require('./wisprClient') } = {}) {
+  const r = await ingestRecentNotes(sb, { now, wispr, daysBack: 1, endedWithinMs: POST_CALL_WINDOW_MS });
+  for (const row of r.rows) {
+    if (row.status === 'ingested') {
+      console.log(`[meeting-notes] ${row.company_id}: "${row.title}" held, notes stored — ${row.commitments.added} commitment(s) added (${row.matched_by})`);
+    }
+  }
+  for (const e of r.errors) console.error(`[meeting-notes] error: ${e}`);
+  return r;
 }
 
 /** daily-sync-all entry point. Fail-soft: notes are never worth failing a sync over. */
@@ -223,6 +273,8 @@ async function run() {
 }
 
 module.exports = {
-  MATCH_WINDOW_MS, nameTokens, titleMatchesCompany, matchRecording, eventIds,
-  findRecording, recordMeetingNotes, ingestMeetingNotes, ingestRecentNotes, run,
+  MATCH_WINDOW_MS, NOTES_GRACE_MS, POST_CALL_WINDOW_MS, POST_CALL_SWEEP_MS,
+  nameTokens, titleMatchesCompany, matchRecording, eventIds,
+  findRecording, recordMeetingNotes, ingestMeetingNotes, ingestRecentNotes,
+  runPostCallSweep, run,
 };
