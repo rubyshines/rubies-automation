@@ -84,6 +84,8 @@
   .form label { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: var(--ink-2); }
   .form select, .form input[type="email"], .form input[type="text"], .form textarea { font: inherit; font-size: 16px; color: var(--ink); padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--rule); background: var(--paper); width: 100%; }
   .form textarea { resize: vertical; font-family: inherit; }
+  .address { display: grid; gap: 10px; margin-top: 6px; padding: 14px; border-radius: 12px; background: var(--tint); }
+  .address-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
   .form select:focus, .form input:focus, .form textarea:focus { outline: 3px solid var(--tint); border-color: var(--magenta); }
   .form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
   .form legend { font-size: 14.5px; font-weight: 700; color: var(--ink-2); padding: 0; margin-bottom: 4px; }
@@ -176,6 +178,8 @@
     .gifts { grid-template-columns: repeat(2, 1fr); }
     .item { grid-template-columns: 1fr 1fr; }
     .item label:first-child { grid-column: 1 / -1; }
+    .address-row { grid-template-columns: 1fr 1fr; }
+    .address-row label:first-child { grid-column: 1 / -1; }
     .item .remove { grid-column: 1 / -1; justify-self: start; padding: 0; }
     .ask { grid-template-columns: 48px 1fr; }
     .ask .act { grid-column: 2; justify-items: start; }
@@ -240,6 +244,17 @@
             <label class="radio"><input type="radio" name="how" value="pickup" checked> I'll pick it up at the closet</label>
             <label class="radio"><input type="radio" name="how" value="ship"> Ship it to me, free</label>
             <p class="fine">Either way it arrives with the closet's next shipment. Picking up saves the closet the cost of shipping.</p>
+            <div class="address" id="address" hidden>
+              <label>Street address
+                <input type="text" id="ad-street" placeholder="Street and apartment" autocomplete="street-address">
+              </label>
+              <div class="address-row">
+                <label>City <input type="text" id="ad-city" autocomplete="address-level2"></label>
+                <label>State <input type="text" id="ad-state" autocomplete="address-level1"></label>
+                <label>ZIP <input type="text" id="ad-zip" inputmode="numeric" autocomplete="postal-code"></label>
+              </div>
+              <p class="fine">Only RUBIES sees your address. The closet does not.</p>
+            </div>
           </fieldset>
           <label>What would a pair mean for you?
             <textarea id="ap-why" rows="3" placeholder="A sentence or two is plenty" required></textarea>
@@ -526,13 +541,24 @@
     itemsHost.innerHTML = ''; itemsHost.appendChild(itemRow()); syncAdd();
     document.getElementById('apply-form').hidden = false; document.getElementById('apply-done').hidden = true;
     document.getElementById('code-form').hidden = false; document.getElementById('code-done').hidden = true;
+    document.querySelector('input[name="how"][value="pickup"]').checked = true; syncAddress();
   }
   addBtn.addEventListener('click', function () { if (itemsHost.children.length < state.maxItems) { itemsHost.appendChild(itemRow()); syncAdd(); } });
+  var addressBox = document.getElementById('address');
+  var addressFields = ['ad-street', 'ad-city', 'ad-state', 'ad-zip'].map(function (id) { return document.getElementById(id); });
+  function syncAddress() {
+    var ship = document.querySelector('input[name="how"]:checked').value === 'ship';
+    addressBox.hidden = !ship;
+    addressFields.forEach(function (f) { f.required = ship; });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="how"]'), function (r) { r.addEventListener('change', syncAddress); });
+  syncAddress();
   document.getElementById('apply-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var items = Array.prototype.map.call(itemsHost.querySelectorAll('.item'), function (row) { var sel = row.querySelectorAll('select'); return { key: sel[0].value, color: sel[1].value, size: sel[2].value }; });
     var how = document.querySelector('input[name="how"]:checked').value;
     var ask = { id: state.nextId++, items: items, how: how, share: document.getElementById('ap-share').checked };
+    if (how === 'ship') ask.address = { street: addressFields[0].value.trim(), city: addressFields[1].value.trim(), state: addressFields[2].value.trim(), zip: addressFields[3].value.trim() }; // held by RUBIES only
     // a funded shipment is about to go, so a new request joins the list for the one after
     var funded = ledger() >= goal();
     if (funded) state.waitlist.push(ask); else state.asks.push(ask);
