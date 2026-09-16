@@ -23,7 +23,7 @@ Any approved partner can also order for its closet at any time with its own budg
 
 Sign-up is self-service with one human gate after it: the RUBIES operator approves new centres from a queue before their page and map listing go live. Booking a call is offered and optional.
 
-Three audiences: the public (closet page, programme page with sign-up), the centre's team (accounts, with standard company account management), and the RUBIES operator (a login).
+Three audiences: the public (closet page, programme page with sign-up), the centre's team (accounts, with standard company account management), and the RUBIES operator (a new section inside RUBIES' existing internal operations dashboard, so no login to design).
 
 ## The facts
 
@@ -60,7 +60,7 @@ Three audiences: the public (closet page, programme page with sign-up), the cent
 - **Requester**: asks for what they need on the closet page, hears back by email, picks up at the closet or receives it at home with the shipment.
 - **Sponsor**: picks an amount on the closet page, pays at the store checkout, gets a thank-you naming the centre.
 - **Centre team**: learns about the programme, signs up, gets approved, shares the link, sets its limits, approves requests if it chose to, sends the box when it is ready, orders anytime.
-- **RUBIES operator** (one person): approves new centres, watches every centre and the programme as a whole, handles what needs a human.
+- **RUBIES operator** (one person): approves new centres, watches every centre and the programme as a whole, handles what needs a human, from the internal operations dashboard.
 
 ## Pages
 
@@ -86,7 +86,8 @@ This is our high-level list of what seems needed, with the purpose of each. Trea
 - **History.** Boxes sent; donations routed to them.
 - **Approval email.** For centres approving by hand: the request and two links, approve or decline, no sign-in.
 
-**Operator (login)**
+**Operator (a section of the existing RUBIES operations dashboard)**
+These are wireframed like everything else, but they live inside an internal tool RUBIES already runs, so in stage 2 they follow that dashboard's existing look rather than the store's design system. Screenshots of the dashboard will be supplied for stage 2. No sign-in to design; the dashboard's own access covers it.
 - **Queue.** New centres to approve, ask for more from, or decline; plus anything else needing a human (a wait list growing, a centre whose volume jumps, a sign-up sitting for days).
 - **Centres.** Every centre with its programmes, status, box, activity and a health signal.
 - **Centre detail.** Everything about one centre: team members and roles, settings, ledger, requests, link clicks and orders, sponsors, boxes sent, donations routed, statements sent, notes, and the actions the operator can take on its behalf.
@@ -98,7 +99,7 @@ Part of the design, same brief as the pages: purpose only, and the list is open 
 
 **To the RUBIES operator**
 - **A centre signed up.** Who they are, what they ticked, and a link to approve, ask for more, or decline.
-- **Needs attention.** Anything the queue would show: a wait list growing, a centre whose volume jumps, a sign-up sitting for days, an approval email a centre has not answered.
+- **Needs attention.** Anything the queue would show, each linking into the dashboard: a wait list growing, a centre whose volume jumps, a sign-up sitting for days, an approval email a centre has not answered.
 
 **To the centre**
 - **Accepted.** The onboarding email: welcome, their closet page link and everything to share, a link into their private view, their settings as they set them, how the box and the requests work in a few lines, and how to reach Jamie. The one email a new coordinator should be able to inherit and understand.
@@ -128,7 +129,6 @@ No lobby stand, cards or printed kit. No starter run of product. No shared or vi
 Do not decide these; placeholder them.
 
 - The final name of the Pre-Loved programme.
-- Whether the operator login is the same account system as the centres (one login, an operator role) or its own.
 - Whether a centre pays "add to the box" and "order now" on the spot or by invoice.
 
 ## Reference

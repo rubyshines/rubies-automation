@@ -421,3 +421,5 @@ Jamie: the four prototype pages are not the deliverable. Design what the Virtual
 
 **No work-domain rule (Jamie, 2026-09-16, later):** any email address can open a centre account; the operator's approval is the gate, not the domain.
 Refined: encourage a centre email over a personal one without blocking (a nudge when a personal address is typed); the design decides how.
+
+**Operator side lives in the CS dashboard (Jamie, 2026-09-16, later):** the queue, centres list, centre detail and programme dashboard are a new section of the existing ops dashboard, not part of the new app, so there is no operator login to design and stage 2 styles them to the dashboard's look. Operator emails link into the dashboard. Open question about the operator login closed.
