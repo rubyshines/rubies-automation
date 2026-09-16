@@ -139,7 +139,7 @@
   .shipped-note.show { display: block; }
   .ledger { display: grid; margin: 0; padding: 0; }
   .ledger li { list-style: none; display: flex; justify-content: space-between; gap: 12px; font-size: 15px; padding: 9px 0; border-bottom: 1px dashed var(--rule); }
-  .ledger li:last-child { border-bottom: 0; font-weight: 800; }
+  .ledger li:last-child { border-bottom: 0; }
   .ledger b { font-variant-numeric: tabular-nums; }
   .box .fine { font-size: 14px; }
 
@@ -196,7 +196,7 @@
       <div class="blob"></div>
       <img class="main" id="hero-main" alt="">
       <img class="second" id="hero-second" alt="">
-      <span class="tag" id="hero-tag">5 items so far</span>
+      <span class="tag" id="hero-tag">29% to the first shipment</span>
     </div>
   </header>
 
@@ -253,11 +253,11 @@
       </div>
       <aside class="box" aria-live="polite">
         <h3 id="box-title">The closet's next shipment</h3>
-        <div class="amount"><span class="amount-num">0</span><small>of 18 items</small></div>
+        <div class="amount"><span class="amount-num">0%</span><small>of the way there</small></div>
         <div class="bar"><span></span></div>
         <div class="shipped-note" id="shipped-note"></div>
         <ul class="ledger" id="ledger"></ul>
-        <p class="fine">About 18 items fill a shipment. Then it goes to <span class="org-name">Uniting Pride</span> and everyone who asked gets theirs. Anything over starts the next one.</p>
+        <p class="fine">When it reaches 100% the shipment goes to <span class="org-name">Uniting Pride</span> and everyone who asked gets theirs. Anything over starts the next one.</p>
       </aside>
     </div>
   </section>
@@ -273,7 +273,7 @@
       </div>
       <div class="col">
         <h3>Closet</h3>
-        <p>RUBIES matches every dollar. Each shipment is about 18 items, in the sizes <span class="org-name">Uniting Pride</span> chooses.</p>
+        <p>RUBIES matches every dollar. Each shipment goes out in the sizes <span class="org-name">Uniting Pride</span> chooses.</p>
       </div>
       <div class="col">
         <h3>Team</h3>
@@ -327,7 +327,7 @@
     maxItems: 2,                                        // items per request; set by the org
     // requests waiting for the next shipment (anonymous); seeded so the page has people on it
     asks: [ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }, { id: 6 } ],
-    orders: 4, orderCredit: 32, gifts: 56, nextId: 7
+    orders: 4, orderCredit: 32, gifts: 56, sponsors: 3, nextId: 7
   };
   var state = load();
   readLink();
@@ -401,20 +401,20 @@
   function renderGifts() {
     var host = document.getElementById('gifts'); host.innerHTML = '';
     var tiles = [
-      { amt: byKey.aj.give, label: 'a pair of underwear for the closet' },
+      { amt: byKey.aj.give, label: 'a pair of underwear' },
+      { amt: byKey.brooke.give, label: 'a bra' },
       { amt: byKey.ruby.give, label: 'a bikini bottom' },
-      { amt: 50, label: 'three pairs' },
-      { amt: 100, label: 'six pairs' },
-      { amt: 150, label: 'nine pairs' },
-      { amt: 300, label: 'a full shipment, about 18' }
+      { amt: 50, label: 'toward the next shipment' },
+      { amt: 100, label: 'toward the next shipment' },
+      { amt: 300, label: 'a full shipment' }
     ];
     tiles.forEach(function (t) {
       var c = document.createElement('button');
       c.type = 'button'; c.className = 'gift';
       c.innerHTML = money(t.amt) + '<small>' + t.label + '</small>';
       c.addEventListener('click', function () {
-        state.gifts += t.amt; save();
-        toast('Thank you. That is ' + Math.max(1, Math.floor(t.amt / byKey.aj.give)) + (Math.floor(t.amt / byKey.aj.give) > 1 ? ' more pairs' : ' more pair') + ' in ' + possessive(state.org) + ' next shipment.');
+        state.gifts += t.amt; state.sponsors = (state.sponsors || 0) + 1; save();
+        toast('Thank you. RUBIES matched it, and it is in ' + possessive(state.org) + ' next shipment.');
         renderProgress();
       });
       host.appendChild(c);
@@ -431,10 +431,9 @@
     var boxes = Math.floor(total / BOX);
     var rem = total - boxes * BOX;
     var pct = Math.round(rem / BOX * 100);
-    var items = function (d) { return Math.floor(d * 2 / byKey.aj.retail); };
-    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = items(rem); });
+    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = pct + '%'; });
     document.getElementById('box-title').textContent = boxes ? 'Shipment ' + (boxes + 1) : "The closet's next shipment";
-    document.getElementById('hero-tag').textContent = items(total) + (items(total) === 1 ? ' item' : ' items') + ' so far';
+    document.getElementById('hero-tag').textContent = boxes ? (boxes === 1 ? '1 shipment sent' : boxes + ' shipments sent') : pct + '% to the first shipment';
     Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; });
     var note = document.getElementById('shipped-note');
     note.classList.toggle('show', boxes > 0);
@@ -442,11 +441,10 @@
 
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
-    if (state.gifts) rows.push({ label: 'From sponsors', amt: items(state.gifts) });
-    if (state.orders) rows.push({ label: 'From ' + state.orders + ' community orders', amt: items(state.orderCredit) });
-    if (state.asks.length) rows.push({ label: state.asks.length + ' requests waiting for this box', amt: null });
-    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + (r.amt === null ? '' : r.amt + (r.amt === 1 ? ' item' : ' items')) + '</b>'; list.appendChild(li); });
-    var li = document.createElement('li'); li.innerHTML = '<span>In the shipment so far</span><b>' + items(total) + ' items</b>'; list.appendChild(li);
+    if (state.sponsors) rows.push({ label: 'Sponsors', amt: state.sponsors });
+    if (state.orders) rows.push({ label: 'Community orders with the code', amt: state.orders });
+    if (state.asks.length) rows.push({ label: 'Requests waiting for this shipment', amt: state.asks.length });
+    rows.forEach(function (r) { var li = document.createElement('li'); li.innerHTML = '<span>' + r.label + '</span><b>' + r.amt + '</b>'; list.appendChild(li); });
   }
 
   var toastTimer;
