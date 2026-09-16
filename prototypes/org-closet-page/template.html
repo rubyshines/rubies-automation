@@ -135,6 +135,7 @@
   .box .amount small { font-size: 18px; color: var(--ink-2); font-weight: 600; margin-left: 4px; }
   .bar { height: 16px; border-radius: 999px; background: var(--tint); overflow: hidden; position: relative; }
   .bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--magenta), var(--orange)); border-radius: 999px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+  .bar.full > span { background: var(--lime); }
   .shipped-note { display: none; background: var(--green-bg); border-left: 4px solid var(--green); padding: 12px 14px; font-weight: 700; color: #1F6B3E; }
   .shipped-note.show { display: block; }
   .ledger { display: grid; margin: 0; padding: 0; }
@@ -196,7 +197,7 @@
       <div class="blob"></div>
       <img class="main" id="hero-main" alt="">
       <img class="second" id="hero-second" alt="">
-      <span class="tag" id="hero-tag">29% to the first shipment</span>
+      <span class="tag" id="hero-tag">$88 raised so far</span>
     </div>
   </header>
 
@@ -253,11 +254,11 @@
       </div>
       <aside class="box" aria-live="polite">
         <h3 id="box-title">The closet's next shipment</h3>
-        <div class="amount"><span class="amount-num">0%</span><small>of the way there</small></div>
+        <div class="amount"><span class="amount-num">$0</span><small>raised of $300</small></div>
         <div class="bar"><span></span></div>
         <div class="shipped-note" id="shipped-note"></div>
         <ul class="ledger" id="ledger"></ul>
-        <p class="fine">When it reaches 100% the shipment goes to <span class="org-name">Uniting Pride</span> and everyone who asked gets theirs. Anything over starts the next one.</p>
+        <p class="fine">At $300 the shipment can go to <span class="org-name">Uniting Pride</span>, and everyone who asked gets theirs. Past that, <span class="org-name">Uniting Pride</span> chooses: send it now, or keep it growing.</p>
       </aside>
     </div>
   </section>
@@ -298,7 +299,7 @@
   <div class="row">
     <button type="button" id="p-apply">Apply</button>
     <button type="button" class="quiet" id="p-reset">Reset progress</button>
-    <button type="button" class="quiet" id="p-fill">Fill the shipment</button>
+    <button type="button" class="quiet" id="p-fill">Fund it (and a bit over)</button>
     <button type="button" class="quiet" id="p-close">Close</button>
   </div>
 </div>
@@ -428,16 +429,15 @@
 
   function renderProgress() {
     var total = ledger();
-    var boxes = Math.floor(total / BOX);
-    var rem = total - boxes * BOX;
-    var pct = Math.round(rem / BOX * 100);
-    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = pct + '%'; });
-    document.getElementById('box-title').textContent = boxes ? 'Shipment ' + (boxes + 1) : "The closet's next shipment";
-    document.getElementById('hero-tag').textContent = boxes ? (boxes === 1 ? '1 shipment sent' : boxes + ' shipments sent') : pct + '% to the first shipment';
-    Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; });
+    var full = total >= BOX;
+    var pct = Math.min(100, Math.round(total / BOX * 100));
+    Array.prototype.forEach.call(document.querySelectorAll('.amount-num'), function (el) { el.textContent = money(total); });
+    document.getElementById('box-title').textContent = full ? 'Fully funded' : "The closet's next shipment";
+    document.getElementById('hero-tag').textContent = full ? 'Fully funded: ' + money(total) + ' raised' : money(total) + ' raised so far';
+    Array.prototype.forEach.call(document.querySelectorAll('.bar'), function (bar) { bar.firstElementChild.style.width = pct + '%'; bar.classList.toggle('full', full); });
     var note = document.getElementById('shipped-note');
-    note.classList.toggle('show', boxes > 0);
-    note.innerHTML = boxes === 1 ? 'Shipment 1 is on its way to ' + state.org + '.' : boxes + ' shipments on their way to ' + state.org + '.';
+    note.classList.toggle('show', full);
+    note.innerHTML = money(total) + ' raised, ' + money(total - BOX) + ' over. ' + state.org + ' can send the shipment now or keep it growing.';
 
     var list = document.getElementById('ledger'); list.innerHTML = '';
     var rows = [];
@@ -511,7 +511,7 @@
   });
   document.getElementById('p-reset').addEventListener('click', function () { resetProgress(); save(); renderAll(); resetForm(); });
   document.getElementById('p-fill').addEventListener('click', function () {
-    var total = ledger(); var gap = BOX - (total % BOX); if (gap > 0 && gap < BOX) { state.gifts += gap; } else if (gap === BOX) { state.gifts += BOX; } save();
+    var gap = BOX + 40 - ledger(); if (gap > 0) { state.gifts += gap; state.sponsors = (state.sponsors || 0) + 1; } save();
     renderProgress(); document.getElementById('sponsor').scrollIntoView({ behavior: 'smooth', block: 'start' }); togglePanel(false);
   });
 
