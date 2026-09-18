@@ -27,7 +27,7 @@ module.exports = [
       const w = a.week;
       lines.push(`This week: ${w.activeCentres} active centres · ${w.orders} orders from closet links · ${dollars(w.sponsoredCents)} sponsored · ${w.requests} requests · ${w.boxesShipped} boxes shipped · match owed on open boxes ${dollars(w.matchOwedCents)}`);
       if (a.unusual.length) { lines.push('Unusual:'); for (const u of a.unusual) lines.push(`  - ${u}`); }
-      return { ...text(lines.join('\n')), _structured: a };
+      return { content: [{ type: 'text', text: lines.join('\n') }], _structured: a };
     },
   },
   {
@@ -37,7 +37,7 @@ module.exports = [
     handler: async ({ status } = {}) => {
       const rows = await operator.listCentres({ status });
       const lines = rows.map(c => `#${c.id} ${c.name} (${c.slug}) · ${c.status} · ${[c.programmes?.closet && 'Closet', c.programmes?.pass_it_on && 'Pass It On'].filter(Boolean).join(' + ')}${c.box ? ` · box #${c.box.number} ${dollars(c.box.raised)}/${dollars(c.box.goal)}${c.box.funded ? ' funded' : ''} · ${c.box.approved} requests${c.box.waiting ? ` +${c.box.waiting} waiting` : ''}` : ''}${c.unanswered ? ` · ${c.unanswered} unanswered` : ''} · ${c.orders30d} orders/30d`);
-      return { ...text(lines.join('\n') || 'No centres.'), _structured: { centres: rows } };
+      return { content: [{ type: 'text', text: lines.join('\n') || 'No centres.' }], _structured: { centres: rows } };
     },
   },
   {
@@ -46,13 +46,13 @@ module.exports = [
     inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] },
     handler: async ({ id }) => {
       const d = await operator.centreDetail(id);
-      if (!d) return { ...text('No such centre.'), isError: true };
+      if (!d) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
       const c = d.centre;
       const lines = [`${c.name} (${c.slug}) · ${c.status} · goal ${dollars(c.goal_cents)} · ${c.approval_mode} approval · sizes ${(c.sizes || []).join(', ')}${c.kids_sizes ? ', kids' : ''}`];
       lines.push(`Team: ${d.team.members.map(m => `${m.name || m.email} (${m.role})`).join(', ')}${d.team.invites.length ? ` · ${d.team.invites.length} invited` : ''}`);
       for (const b of d.boxes) lines.push(`Box #${b.number} · ${b.status} · ${dollars(b.raised)} of ${dollars(b.goal)} · orders ${dollars(b.sources.orders)}, sponsors ${dollars(b.sources.sponsors)}, centre ${dollars(b.sources.centre)} · ${b.requests} requests`);
       lines.push(`Requests: ${d.requests.length} · codes issued ${d.codes.issued}, used ${d.codes.used} · visits (90d) ${d.visits} · words published ${d.published}`);
-      return { ...text(lines.join('\n')), _structured: d };
+      return { content: [{ type: 'text', text: lines.join('\n') }], _structured: d };
     },
   },
   {
@@ -70,14 +70,14 @@ module.exports = [
     inputSchema: { type: 'object', properties: { box_id: { type: 'number' } }, required: ['box_id'] },
     handler: async ({ box_id }) => {
       const p = await operator.packingList(box_id);
-      if (!p) return { ...text('No such box.'), isError: true };
+      if (!p) return { content: [{ type: 'text', text: 'No such box.' }], isError: true };
       const lines = [`${p.centre.name} box #${p.box.number} · ship to ${p.centre.name}, ${[p.centre.address?.street, p.centre.address?.city, p.centre.address?.region, p.centre.address?.postal].filter(Boolean).join(', ')}${p.admin ? ` · attn ${p.admin.name || p.admin.email}` : ''}`];
       lines.push(`Requested items, ${p.requests.length} people:`);
       for (const r of p.requests) lines.push(`  - ${r.name}: ${r.items.map(i => `${i.styleName} · ${i.colour} · ${i.size}`).join(', ')} · ${r.delivery === 'ship' ? `separate parcel to ${[r.address?.street, r.address?.city, r.address?.region, r.address?.postal].filter(Boolean).join(', ')}` : 'in box'}`);
       lines.push(`Fill (${p.box.fill_mode || 'auto'}):`);
       for (const l of p.plan) lines.push(`  - ${l.styleName} ${l.size} × ${l.qty}`);
       lines.push(`Totals: raised ${dollars(p.totals.raised)} + match ${dollars(p.totals.match)} − door shipping ${dollars(p.totals.doorShipping)} = ${dollars(p.totals.productBudget)} · placed ${dollars(p.totals.placedProductCents)} · carries ${dollars(p.totals.carryOut)}`);
-      return { ...text(lines.join('\n')), _structured: p };
+      return { content: [{ type: 'text', text: lines.join('\n') }], _structured: p };
     },
   },
   {
@@ -96,7 +96,7 @@ module.exports = [
     inputSchema: { type: 'object', properties: { status: { type: 'string' }, q: { type: 'string' } } },
     handler: async ({ status, q } = {}) => {
       const rows = await operator.listRequests({ status, q });
-      return { ...text(rows.map(r => `#${r.id} ${r.centre?.name} · ${r.name} <${r.email}> · ${r.items_text} · ${r.delivery} · ${r.status_label}`).join('\n') || 'No requests.'), _structured: { requests: rows } };
+      return { content: [{ type: 'text', text: rows.map(r => `#${r.id} ${r.centre?.name} · ${r.name} <${r.email}> · ${r.items_text} · ${r.delivery} · ${r.status_label}`).join('\n') || 'No requests.' }], _structured: { requests: rows } };
     },
   },
   {
