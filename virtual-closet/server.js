@@ -12,6 +12,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 
+const auth = require('./lib/auth');
 const centres = require('./lib/centres');
 const boxes = require('./lib/boxes');
 const catalog = require('./lib/catalog');
@@ -21,6 +22,7 @@ const { page, esc } = require('./views/layout');
 
 const PORT = parseInt(process.env.PORT || '3850', 10);
 const BASE_URL = process.env.VC_BASE_URL || `http://localhost:${PORT}`;
+const STARTED = new Date().toISOString();
 
 const app = express();
 app.disable('x-powered-by');
@@ -28,22 +30,15 @@ app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: true, limit: '200kb' }));
 app.use(express.json({ limit: '200kb' }));
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: false }));
-
-// Paths that are never a centre slug.
-const RESERVED = new Set(['signup', 'signin', 'signout', 'home', 'history', 'settings', 'send', 'account', 'invite', 'verify', 'reset', 'forgot',
-  'offer-details', 'free-pair-terms', 'health', 'api', 'public', 'favicon.ico', 'robots.txt', 'ops', 'thanks', 'map']);
-
 app.get('/health', (req, res) => res.json({ ok: true, service: 'virtual-closet', started: STARTED }));
-const STARTED = new Date().toISOString();
+app.use(auth.attach());
 
-// ---- programme site (filled in by the sign-up step) ----------------------
-app.get('/', (req, res) => {
-  res.type('html').send(page({
-    title: 'Virtual Closet',
-    mode: 'programme',
-    body: `<section class="hero"><div class="hero-copy"><h1>A closet for your community, stocked by your community.</h1><p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops, requests and sponsors; RUBIES matches every dollar. You receive a box and hand it out. It costs your centre nothing.</p><div class="doors"><a class="btn btn-fill" href="/#signup">Sign up your centre</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet%20call">Book a call, if you'd like one</a></div></div></section><section id="signup"><p class="wire-note">Programme page and sign-up form: built in the accounts step.</p></section>`,
-  }));
-});
+// Named routes first: programme site, accounts, centre view, requests, terms.
+app.use(require('./routes/accounts'));
+for (const mod of ['./routes/centre', './routes/requests']) {
+  const r = safeRequire(mod);
+  if (r) app.use(r);
+}
 
 app.get('/offer-details', (req, res) => {
   res.type('html').send(page({ title: 'Offer details', mode: 'plain', body: `<section class="card narrow"><h1>Offer details</h1><ul class="list"><li>20% off one order with RUBIES, from a centre's closet link. New or returning customers.</li><li>Applied at checkout, no code to type. Once per customer.</li><li>Not combinable with other discount codes. Excludes gift cards.</li><li>For every two items bought through the link, the closet gets one: 25% of the order goes into the centre's box and RUBIES matches it. Underwear, bras and bikini bottoms all count as one item.</li><li>Orders count for the box for 30 days from using the link.</li></ul></section>` }));
@@ -54,20 +49,29 @@ app.get('/free-pair-terms', (req, res) => {
 });
 
 // ---- public closet pages ---------------------------------------------------
+const RESERVED = new Set(['signup', 'signin', 'signout', 'home', 'history', 'settings', 'send', 'account', 'invite', 'verify', 'reset', 'forgot', 'welcome', 'answer',
+  'offer-details', 'free-pair-terms', 'health', 'api', 'public', 'favicon.ico', 'robots.txt', 'ops', 'thanks', 'map', 'team']);
+
 async function loadCentre(req, res, next) {
   const slug = String(req.params.slug || '').toLowerCase();
   if (RESERVED.has(slug)) return next('route');
-  const centre = await centres.getBySlug(slug);
-  if (!centre || !centres.isPublic(centre)) {
-    return res.status(404).type('html').send(page({ title: 'Not found', mode: 'plain', body: `<section class="card narrow"><h1>No closet here</h1><p>There is no closet page at this address. It may be waiting for approval, or the link may be out of date.</p><a href="/">Virtual Closet</a></section>` }));
-  }
-  req.centre = centre;
-  next();
+  try {
+    const centre = await centres.getBySlug(slug);
+    if (!centre || !centres.isPublic(centre)) {
+      // Operators and the centre's own team may preview a pending page.
+      const canPreview = centre && (req.actingAs || (req.centre && req.centre.id === centre.id));
+      if (!canPreview) {
+        return res.status(404).type('html').send(page({ title: 'Not found', mode: 'plain', body: `<section class="card narrow"><h1>No closet here</h1><p>There is no closet page at this address. It may be waiting for approval, or the link may be out of date.</p><a href="/">Virtual Closet</a></section>` }));
+      }
+    }
+    req.centre = centre;
+    next();
+  } catch (err) { next(err); }
 }
 
 async function closetContext(centre) {
   const [box, lastSent, products] = await Promise.all([
-    boxes.getOpenBox(centre.id, { create: true, goalCents: centre.goal_cents }),
+    boxes.getOpenBox(centre.id, { create: centre.status === 'active', goalCents: centre.goal_cents }),
     boxes.lastSentBox(centre.id),
     catalog.menu(),
   ]);
@@ -80,7 +84,9 @@ app.get('/:slug', loadCentre, async (req, res, next) => {
   try {
     const lead = String(req.query.lead || '');
     const ctx = await closetContext(req.centre);
-    db().from('vc_visits').insert({ centre_id: req.centre.id, lead: closetView.LEADS.has(lead) ? lead : null, source: req.query.from === 'map' ? 'map' : 'link' }).then(() => {}, () => {});
+    if (req.centre.status === 'active') {
+      db().from('vc_visits').insert({ centre_id: req.centre.id, lead: closetView.LEADS.has(lead) ? lead : null, source: req.query.from === 'map' ? 'map' : 'link' }).then(() => {}, () => {});
+    }
     res.type('html').send(closetView.render({ ...ctx, lead }));
   } catch (err) { next(err); }
 });
@@ -89,10 +95,7 @@ app.get('/:slug', loadCentre, async (req, res, next) => {
 app.get('/:slug/shop', loadCentre, async (req, res, next) => {
   try {
     const discounts = safeRequire('./lib/discounts');
-    if (discounts) {
-      const url = await discounts.shopUrlFor(req.centre);
-      return res.redirect(302, url);
-    }
+    if (discounts) return res.redirect(302, await discounts.shopUrlFor(req.centre));
     res.redirect(302, `${catalog.STORE}/collections/all`);
   } catch (err) { next(err); }
 });
@@ -121,16 +124,6 @@ app.get('/:slug/thanks', loadCentre, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Request form and the rest of the flows mount here as they are built.
-for (const mod of ['./routes/requests', './routes/accounts', './routes/centre']) {
-  const r = safeRequire(mod);
-  if (r) app.use(r);
-}
-
-app.get('/:slug/request', loadCentre, (req, res) => {
-  if (req.centre.requests_paused_at) return res.type('html').send(closetView.renderPaused({ centre: req.centre }));
-  res.type('html').send(page({ title: 'Request a pair', centre: req.centre, mode: 'public', body: `<section class="card narrow"><h1>Request a pair</h1><p class="wire-note">Request form: built in the requests step.</p><a href="/${req.centre.slug}">Back to the closet</a></section>` }));
-});
 
 app.use((req, res) => {
   res.status(404).type('html').send(page({ title: 'Not found', mode: 'plain', body: `<section class="card narrow"><h1>Not found</h1><a href="/">Virtual Closet</a></section>` }));
@@ -142,11 +135,14 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 });
 
 function safeRequire(mod) {
-  try { return require(mod); } catch (err) { if (err.code === 'MODULE_NOT_FOUND' && String(err.message).includes(mod.replace('./', ''))) return null; throw err; }
+  try { return require(mod); } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND' && String(err.message).includes(path.basename(mod))) return null;
+    throw err;
+  }
 }
 
 if (require.main === module) {
   app.listen(PORT, () => console.log(`[vc] Virtual Closet listening on ${BASE_URL}`));
 }
 
-module.exports = { app, BASE_URL };
+module.exports = { app, BASE_URL, loadCentre, closetContext };

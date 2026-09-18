@@ -89,3 +89,13 @@
     grid.addEventListener('input', recalc); recalc();
   }
 })();
+
+// Request form: the colour list follows the chosen style
+document.addEventListener('change', function (e) {
+  var sel = e.target;
+  if (!sel.matches('[data-style-select]')) return;
+  var colours = (sel.selectedOptions[0].getAttribute('data-colours') || '').split('|').filter(Boolean);
+  var colourSel = sel.closest('.item').querySelector('[data-colour-select]');
+  if (!colourSel) return;
+  colourSel.innerHTML = colours.map(function (c) { return '<option>' + c + '</option>'; }).join('');
+});

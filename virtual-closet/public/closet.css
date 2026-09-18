@@ -147,3 +147,6 @@ th { background: var(--panel); font-size: 12px; text-transform: uppercase; lette
   .print-only { display: block; }
   body { font-size: 12px; }
 }
+
+.inline { display: inline; }
+.inline .btn { vertical-align: middle; }
