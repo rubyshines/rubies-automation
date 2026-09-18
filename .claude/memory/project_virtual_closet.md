@@ -93,12 +93,14 @@ Box goal shown = max(centre goal, sum of approved requests at half retail plus $
 - Box terms on screens use "match" as a line item, never "double" or "50%".
 - The pickup note and delivery note are per box, prefilled from the last box.
 
-## Open questions put to Jamie (2026-09-18)
+## Answers from Jamie (2026-09-18)
 
-1. Keep "Pass It On" as the name? (Adopted unless told otherwise.)
-2. The wireframes say the 20% is "one order per customer, new or returning"; the programme record says first order only. Which? (Build defaults to once per customer; first-order-only needs a customer segment on the discount and can be switched later.)
-3. OK to create the hidden "Sponsor a closet" product and the "Virtual Closet 20%" discount in the live store now, so checkout can be tested for real?
-4. Public URL `closet.rubyshines.com` (subdomain on Railway) rather than `rubyshines.com/closet/...`?
+1. "Pass It On" stays as the name.
+2. Sizes are the store's: XS, S, M, L, 1X, 2X, 3X, 4X (no XL) plus kids.
+3. The 20% is once per customer, new or returning (Shopify `appliesOncePerCustomer`).
+4. OK to create the hidden "Sponsor a closet" product and the "Virtual Closet 20%" discount in the live store (`virtual-closet/scripts/setupShopify.js --create`).
+5. Jamie applies `virtual-closet/schema.sql` in the Supabase SQL editor (no `SUPABASE_DATABASE_URL` locally).
+6. Requesters become store customers on confirmation (name they go by, tagged `virtual-closet` and `closet:<slug>`); the newsletter is an opt-in checkbox on the request form and subscribes through Klaviyo only when ticked.
 
 ## Build order
 

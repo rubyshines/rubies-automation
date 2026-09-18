@@ -373,6 +373,18 @@ r.get('/share/qr.svg', ...guard, (req, res) => {
   res.type('image/svg+xml').send(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="260" viewBox="0 0 240 260"><rect width="240" height="240" fill="#fff" stroke="#222" stroke-width="4"/><text x="120" y="120" font-family="system-ui" font-size="14" text-anchor="middle">QR placeholder</text><text x="120" y="254" font-family="system-ui" font-size="10" text-anchor="middle">${url.replace(/&/g, '&amp;')}</text></svg>`);
 });
 
+// Operator impersonation starts here: the dashboard mints a session and a
+// signed one-time link; this sets the cookie on the closet domain.
+r.get('/ops/enter', async (req, res) => {
+  const crypto = require('crypto');
+  const secret = process.env.VC_SESSION_SECRET || process.env.SESSION_SECRET || 'dev-only-secret';
+  const sid = String(req.query.sid || ''), sig = String(req.query.sig || '');
+  const expected = crypto.createHmac('sha256', secret).update(`enter:${sid}`).digest('base64url');
+  if (!sid || sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return res.status(403).send('Bad link');
+  auth.setSessionCookie(res, sid, req);
+  res.redirect(302, '/home');
+});
+
 // Operator impersonation ends here (the dashboard starts it).
 r.get('/ops/stop', async (req, res) => {
   if (req.session) await auth.revokeSession(req.session.id);

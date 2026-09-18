@@ -42,7 +42,7 @@ function computeBuildInfo() {
   }
   // Hash the bytes of every file the browser actually runs.
   const publicDir = path.join(__dirname, 'public');
-  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'queueSuppression.js', 'messageBody.js', 'sw.js', 'receipts.html', 'receipts.js', 'receipts.css'];
+  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'queueSuppression.js', 'messageBody.js', 'sw.js', 'receipts.html', 'receipts.js', 'receipts.css', 'closets.html', 'closets.js'];
   const h = crypto.createHash('sha256');
   for (const f of assetFiles) {
     try { h.update(fs.readFileSync(path.join(publicDir, f))); } catch { /* file optional */ }
@@ -4266,6 +4266,11 @@ async function apiReceiptAccounts() {
 // ---------------------------------------------------------------------------
 
 const routes = {
+  // Virtual Closet operator screens (virtual-closet/lib/operator.js)
+  'GET /api/closets/attention': () => require('../../virtual-closet/lib/operator').needsAttention(),
+  'GET /api/closets/centres': (req) => require('../../virtual-closet/lib/operator').listCentres({ status: new URL(req.url, 'http://localhost').searchParams.get('status') || undefined }),
+  'GET /api/closets/boxes': (req) => require('../../virtual-closet/lib/operator').listBoxesAll({ status: new URL(req.url, 'http://localhost').searchParams.get('status') || undefined }),
+  'GET /api/closets/requests': (req) => { const q = new URL(req.url, 'http://localhost').searchParams; return require('../../virtual-closet/lib/operator').listRequests({ status: q.get('status') || undefined, q: q.get('q') || undefined }); },
   'GET /api/receipts': (req) => apiReceiptsList(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/receipts/accounts': () => apiReceiptAccounts(),
   'GET /api/drafts': (req) => apiGetDrafts(new URL(req.url, 'http://localhost').searchParams),
@@ -4302,6 +4307,23 @@ const routes = {
 
 // Routes with path params
 const paramRoutes = [
+  // Virtual Closet operator actions. The operator's email rides on every write.
+  { method: 'GET',  pattern: /^\/api\/closets\/centres\/(\d+)$/, handler: (_, id) => require('../../virtual-closet/lib/operator').centreDetail(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/approve$/, handler: (_, id, req) => require('../../virtual-closet/lib/operator').approveCentre(parseInt(id), sessionEmail(req)) },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/ask$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').askForMore(parseInt(id), sessionEmail(req), body.message || '') },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/decline$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').declineCentre(parseInt(id), sessionEmail(req), body.reason || '') },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/pause$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').pauseCentre(parseInt(id), sessionEmail(req), body.reason || '') },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/resume$/, handler: (_, id, req) => require('../../virtual-closet/lib/operator').resumeCentre(parseInt(id), sessionEmail(req)) },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/settings$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').overrideSettings(parseInt(id), body, sessionEmail(req)) },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/add$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').addToBoxAsRubies(parseInt(id), Math.round((parseFloat(body.dollars) || 0) * 100), sessionEmail(req), body.note || '') },
+  { method: 'POST', pattern: /^\/api\/closets\/centres\/(\d+)\/open-as$/, handler: async (_, id, req) => { const sid = await require('../../virtual-closet/lib/operator').impersonate(parseInt(id), sessionEmail(req)); const crypto = require('crypto'); const sig = crypto.createHmac('sha256', process.env.VC_SESSION_SECRET || SESSION_SECRET).update(`enter:${sid}`).digest('base64url'); return { url: `${process.env.VC_BASE_URL || 'http://localhost:3850'}/ops/enter?sid=${encodeURIComponent(sid)}&sig=${sig}` }; } },
+  { method: 'GET',  pattern: /^\/api\/closets\/boxes\/(\d+)\/packing$/, handler: (_, id) => require('../../virtual-closet/lib/operator').packingList(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/closets\/boxes\/(\d+)\/shipped$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').markShipped(parseInt(id), { carrier: body.carrier, tracking: body.tracking, operatorEmail: sessionEmail(req) }) },
+  { method: 'POST', pattern: /^\/api\/closets\/boxes\/(\d+)\/delivered$/, handler: (_, id, req) => require('../../virtual-closet/lib/operator').markDelivered(parseInt(id), { operatorEmail: sessionEmail(req) }) },
+  { method: 'GET',  pattern: /^\/api\/closets\/requests\/(\d+)$/, handler: (_, id) => require('../../virtual-closet/lib/operator').requestDetail(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/closets\/requests\/(\d+)\/swap$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').swapItem(parseInt(id), { ...body, index: parseInt(body.index) || 0, operatorEmail: sessionEmail(req) }) },
+  { method: 'POST', pattern: /^\/api\/closets\/requests\/(\d+)\/cancel$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').cancelRequest(parseInt(id), { reason: body.reason || '', emailThem: !!body.email_them, operatorEmail: sessionEmail(req) }) },
+  { method: 'POST', pattern: /^\/api\/closets\/reports\/(\d+)\/resolve$/, handler: (body, id, req) => require('../../virtual-closet/lib/operator').resolveReport(parseInt(id), body.resolution === 'unpublish' ? 'unpublish' : 'keep', sessionEmail(req)) },
   { method: 'GET', pattern: /^\/api\/customer\/([^/]+)\/context$/, handler: (_, email, req) => {
     const url = new URL(req.url, 'http://localhost');
     return apiGetCustomerContext(decodeURIComponent(email), url.searchParams.get('order'));
@@ -4801,6 +4823,7 @@ async function handleRequest(req, res) {
   let filePath = pathname === '/' ? '/index.html'
     : pathname === '/stats' ? '/stats.html'
     : pathname === '/receipts' ? '/receipts.html'
+    : pathname === '/closets' ? '/closets.html'
     : pathname;
   const fullPath = path.join(STATIC_DIR, filePath);
 
@@ -4825,7 +4848,7 @@ async function handleRequest(req, res) {
       // content hash so a new deploy busts any cached app.js/styles.css.
       const v = GIT_VERSION.assetHash;
       let html = fs.readFileSync(fullPath, 'utf8')
-        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|queueSuppression|messageBody|receipts)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
+        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|queueSuppression|messageBody|receipts|closets)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
         .replace('</head>', `<script>window.__BUILD__=${JSON.stringify({
           commit: GIT_VERSION.short, assetHash: v, started: GIT_VERSION.started,
         })};</script>\n</head>`);

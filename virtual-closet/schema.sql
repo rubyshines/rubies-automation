@@ -205,3 +205,11 @@ create table if not exists vc_statements (
   sent_at    timestamptz,
   unique (centre_id, month)
 );
+
+-- Small key/value config the setup script fills (sponsorship product variant
+-- ids, the 20% discount id). Read at runtime so no env var change is needed.
+create table if not exists vc_config (
+  key        text primary key,
+  value      jsonb not null,
+  updated_at timestamptz not null default now()
+);

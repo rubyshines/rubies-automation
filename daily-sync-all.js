@@ -153,6 +153,10 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/freeSwimwearLifecycle').run({ live: true }),
   },
   {
+    name: 'Virtual Closet',
+    run: () => require('./virtual-closet/jobs/daily').run({ live: true }),
+  },
+  {
     name: 'Gmail Management',
     run: () => require('./gmail-management/sync/syncGmail').run(),
   },
