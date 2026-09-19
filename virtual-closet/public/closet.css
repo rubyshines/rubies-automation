@@ -24,6 +24,7 @@
   --rule: rgba(49, 12, 72, .1);
   --line: rgba(49, 12, 72, .55);
   --orange-tint: #FFF1DF;
+  --blue-tint: #EFF9FF;
   --lime-tint: #F3FFD6;
   --font: "Fixel Display", Assistant, "Helvetica Neue", Arial, sans-serif;
   --display: "Motter Corpus Std", var(--font);
@@ -39,9 +40,11 @@ h1, h2, h3 { font-weight: 600; line-height: 1.2; margin: 0 0 12px; letter-spacin
 h1 { font-size: 34px; }
 h2 { font-size: 26px; }
 h3 { font-size: 19px; margin-bottom: 6px; }
-/* The site's way of putting one playful word in a heading: once per page, in
-   the page's H1, in the text colour. Other headings stay plain Fixel. */
-h1 i { font-family: var(--display); font-style: normal; font-weight: 400; color: inherit; font-size: 1.15em; line-height: 1; }
+/* The site's way of putting one playful word in a heading (home page:
+   "Never stop shining.", "comfort"): Motter Corpus in the site's blue. Used on
+   the programme page's headline only; a centre's name in the closet H1 stays
+   plain Fixel. */
+h1 i { font-family: var(--display); font-style: normal; font-weight: 400; color: var(--blue); font-size: 1.15em; line-height: 1; }
 h2 i, h3 i { font-style: normal; }
 p { margin: 0 0 12px; }
 b, strong { font-weight: 600; }
@@ -70,16 +73,18 @@ b, strong { font-weight: 600; }
 .banner.op { background: var(--blue); color: var(--white); }
 .banner.op a { color: var(--white); }
 
-/* buttons: square, one primary in near-black, secondaries in white */
-.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 45px; padding: 0 28px; border: 1px solid var(--black); border-radius: 0; background: var(--white); color: var(--black); font: 500 15px/1.2 var(--font); letter-spacing: .02em; text-decoration: none; text-align: center; cursor: pointer; transition: opacity .4s; }
-.btn:hover { opacity: .8; color: var(--black); }
-.btn:active { transform: translateY(2px); opacity: .8; }
-.btn-fill { background: var(--black); color: var(--white); }
+/* buttons, as the store draws them: primary solid blue, secondary light-blue
+   tint with a blue border ("Add to cart"), tertiary plain blue text; 4px
+   corners, 18px semibold, 1px letter-spacing, 47px tall */
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 47px; min-width: 122px; padding: 0 30px; border: 1px solid var(--blue); border-radius: 4px; background: var(--blue-tint); color: var(--ink); font: 600 18px/1.2 var(--font); letter-spacing: 1px; text-decoration: none; text-align: center; cursor: pointer; transition: opacity .2s, background-color .2s; }
+.btn:hover { opacity: .85; color: var(--ink); }
+.btn:active { transform: translateY(1px); }
+.btn-fill { background: var(--blue); border-color: var(--blue); color: var(--white); }
 .btn-fill:hover { color: var(--white); }
-.btn-sun, .btn-line { background: var(--white); }
-.btn-quiet { border-color: var(--line); color: var(--ink); font-weight: 400; }
-.btn-quiet:hover { color: var(--ink); }
-.btn-small { min-height: 36px; padding: 0 16px; font-size: 14px; }
+.btn-sun, .btn-line { background: var(--blue-tint); }
+.btn-quiet { background: transparent; border-color: transparent; color: var(--blue); font-weight: 500; }
+.btn-quiet:hover { color: var(--blue); background: var(--blue-tint); }
+.btn-small { min-height: 38px; min-width: 0; padding: 0 16px; font-size: 15px; letter-spacing: .5px; }
 .btn.disabled, .btn[aria-disabled="true"], .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
 .doors { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0 8px; }
 
@@ -109,6 +114,15 @@ section + section { border-top: 1px solid var(--rule); }
 .sponsor-block { display: grid; grid-template-columns: .9fr 1.1fr; gap: 24px; align-items: start; }
 .strip { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--grey); padding: 14px 20px; flex-wrap: wrap; }
 .strip.quiet { background: transparent; color: var(--soft); font-size: 14px; padding: 0; }
+.quiet-fund { display: grid; gap: 8px; max-width: 420px; }
+.bar-slim { height: 8px; }
+/* the fundraiser band on the shop-first page */
+.fund { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; background: var(--grey); padding: 32px; }
+.fund-copy { display: grid; gap: 10px; max-width: 640px; }
+.fund .amount { font-size: 40px; }
+.fund .amount small { font-size: 16px; }
+.fund-cta { display: grid; gap: 6px; justify-items: center; text-align: center; }
+.fund-cta .btn { min-width: 240px; }
 
 /* progress */
 .progress { background: var(--grey); padding: 24px; display: grid; gap: 10px; }
@@ -121,8 +135,8 @@ section + section { border-top: 1px solid var(--rule); }
 .tag { display: inline-block; border-radius: 40px; padding: 3px 14px; font-size: 14px; font-weight: 500; background: var(--lime); color: var(--ink); }
 .amounts { display: grid; gap: 12px; }
 .gifts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.gift { border: 1px solid var(--black); padding: 16px 8px 12px; text-align: center; text-decoration: none; display: grid; gap: 2px; background: var(--white); }
-.gift:hover { background: var(--grey); color: var(--ink); }
+.gift { border: 1px solid var(--blue); border-radius: 4px; padding: 16px 8px 12px; text-align: center; text-decoration: none; display: grid; gap: 2px; background: var(--white); }
+.gift:hover { background: var(--blue-tint); color: var(--ink); }
 .gift b { font-size: 24px; font-weight: 600; }
 .gift small { color: var(--soft); font-size: 13px; }
 
@@ -155,7 +169,7 @@ section + section { border-top: 1px solid var(--rule); }
 /* forms: square inputs, 1px border at 55% of the text colour */
 .form { display: grid; gap: 16px; max-width: 640px; }
 .form label, .settings-block label, .field { display: grid; gap: 6px; font-size: 14px; font-weight: 500; color: var(--ink); }
-input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], select, textarea { font: 400 16px/1.4 var(--font); letter-spacing: .02em; color: var(--ink); padding: 11px 12px; border: 1px solid var(--line); border-radius: 0; background: var(--white); width: 100%; }
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], select, textarea { font: 400 16px/1.4 var(--font); letter-spacing: .02em; color: var(--ink); padding: 11px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--white); width: 100%; }
 select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23310C48' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
 textarea { min-height: 90px; resize: vertical; }
 .form fieldset, .settings-block fieldset { border: 1px solid var(--rule); padding: 16px; margin: 0; display: grid; gap: 10px; }
@@ -163,10 +177,10 @@ textarea { min-height: 90px; resize: vertical; }
 .radio, .check, .form .radio, .form .check, .settings-block .radio, .settings-block .check { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; color: var(--ink); font-size: 15px; }
 .radio input, .check input { margin-top: 5px; accent-color: var(--ink); }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip { position: relative; border: 1px solid var(--line); border-radius: 40px; padding: 5px 14px; font-size: 14px; font-weight: 400; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; background: var(--white); color: var(--ink); text-decoration: none; }
+.chip { position: relative; border: 1px solid var(--blue); border-radius: 4px; padding: 6px 16px; font-size: 15px; font-weight: 600; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; background: var(--blue-tint); color: var(--ink); text-decoration: none; }
 .chip input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
 .chip:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
-.chip.on { background: var(--black); color: var(--white); border-color: var(--black); }
+.chip.on { background: var(--blue); color: var(--white); border-color: var(--blue); }
 .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; }
 .item { border: 1px solid var(--rule); padding: 14px; display: grid; grid-template-columns: 96px 1fr; gap: 14px; align-items: start; }
 .item-fields { display: grid; gap: 10px; min-width: 0; }
@@ -215,6 +229,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
 }
 @media (max-width: 989px) {
   .about { grid-template-columns: 1fr; gap: 20px; }
+  .fund { grid-template-columns: 1fr; gap: 20px; padding: 24px; }
+  .fund-cta { justify-items: start; text-align: left; }
 }
 @media (max-width: 749px) {
   .three, .two, .sponsor-block, .row, .steps, .steps-4 { grid-template-columns: 1fr; }
@@ -226,6 +242,7 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
   h1 { font-size: 28px; }
   h2 { font-size: 22px; }
   .lede { font-size: 17px; }
+  .btn { font-size: 16px; min-height: 44px; padding: 0 20px; }
   .brand img { width: 90px; }
   .hd { padding: 14px 0; gap: 10px; }
   .hd nav, .hd-nav { gap: 14px; }
