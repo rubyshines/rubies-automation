@@ -31,15 +31,15 @@ const STORE = 'https://rubyshines.com';
 
 const MENU = [
   { key: 'aj',      name: 'AJ',                 title: 'AJ no-tuck shaping underwear',                 kind: 'underwear', sizing: 'numeric', retail_cents: 3200, half_cents: 1600, handle: 'the-aj-shaping-underwear',
-    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/AJ-PNK-S-01.png?v=1775056355',              colours: ['Black', 'Pink'] },
+    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/AJ-PNK-S-01.png?v=1775056355', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/AJ-PNK-S-char.png',              colours: ['Black', 'Pink'] },
   { key: 'charlie', name: 'Charlie',            title: 'Charlie no-tuck extra cute shaping underwear', kind: 'underwear', sizing: 'numeric', retail_cents: 3300, half_cents: 1650, handle: 'the-extra-cute-shaping-underwear',
-    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/UNW-SND-S-01.png?v=1762455013',       colours: ['Black', 'Sandstone'] },
+    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/UNW-SND-S-01.png?v=1762455013', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/UNW-SND-S-char.png',       colours: ['Black', 'Sandstone'] },
   { key: 'sassy',   name: 'Sassy',              title: 'Sassy no-tuck shaping underwear',              kind: 'underwear', sizing: 'letter',  retail_cents: 3200, half_cents: 1600, handle: 'the-sassy-no-tuck-shaping-underwear',
-    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/HLA-BLK-S-01.png?v=1784119179',    colours: ['Black', 'Pink', 'Sandstone'] },
+    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/HLA-BLK-S-01.png?v=1784119179', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/HLA-BLK-S-char.png',    colours: ['Black', 'Pink', 'Sandstone'] },
   { key: 'brooke',  name: 'Brooke bra',         title: 'Brooke shaping bra',                           kind: 'bra',       sizing: 'numeric', retail_cents: 4200, half_cents: 2100, handle: 'the-brooke-bra',
-    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/BB-BLK-S-01.jpg?v=1777394661',                         colours: ['Black', 'Sandstone'] },
+    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/BB-BLK-S-01.jpg?v=1777394661', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/BB-BLK-S-char.png',                         colours: ['Black', 'Sandstone'] },
   { key: 'ruby',    name: 'Ruby bikini bottom', title: 'Ruby no-tuck shaping bikini bottom',           kind: 'swim',      sizing: 'numeric', retail_cents: 4800, half_cents: 2400, handle: 'the-ruby-no-tuck-shaping-bikini-bottom',
-    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-01.jpg?v=1777394698', colours: ['Black', 'Pink'] },
+    image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-01.jpg?v=1777394698', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-char.png', colours: ['Black', 'Pink'] },
 ];
 
 // Sponsor tiles, half retail per item; the larger amounts are "toward the shipment".

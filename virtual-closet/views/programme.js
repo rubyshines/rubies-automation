@@ -18,7 +18,7 @@ function programme({ values = {}, errors = [] } = {}) {
   const body = `
 <section class="hero">
   <div class="hero-copy">
-    <h1>A <i>closet</i> for your community, stocked by your community.</h1>
+    <h1>A closet for your community, stocked by your community.</h1>
     <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops, requests and sponsors; RUBIES matches every dollar. You receive a box and hand it out. It costs your centre nothing.</p>
     <div class="doors"><a class="btn btn-fill" href="#signup">Sign up your centre</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet%20call">Book a call, if you'd like one</a></div>
   </div>

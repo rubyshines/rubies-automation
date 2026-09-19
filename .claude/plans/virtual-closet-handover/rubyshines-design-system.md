@@ -48,9 +48,10 @@ Rule: on the Virtual Closet pages, text stays `#310C48` on white, buttons stay n
 
 ## Shape and spacing
 
-- **Buttons are square**: radius 0, 1 px border at full opacity, no shadow. Minimum 12 rem wide and 4.5 rem tall, padding 0 3 rem, font-size 1.5 rem, inline-flex centred. Primary: near-black `#121212` fill with white text. Secondary: white fill with `#121212` text and border. Hover: opacity 0.8 with a 0.4 s transition. Active: translateY(4 px) and opacity 0.8.
+- **Buttons, as the live site draws them (measured on rubyshines.com 2026-09-19; the theme's custom CSS overrides Dawn's square near-black defaults):** primary is solid blue `#2000A0` with white text; secondary is the light-blue tint `#EFF9FF` with a 1px `#2000A0` border and purple text (the product page's "Add to cart"); tertiary is plain blue text on transparent. All have 4px corners, 18px semibold Fixel, 1px letter-spacing, 47px tall, 30px side padding, 122px minimum width. Hover: opacity about 0.85.
+- **Page titles** are set whole in Motter Corpus Std in the site's blue, the way the home hero sets "Never stop shining."; an H2 may carry one Motter word in blue ("comfort" on the home page). Never split an H1 half-and-half.
 - **Inputs**: radius 0, 1 px border at 55% opacity, no shadow.
-- **Variant pills and badges**: radius 40 px (pill-shaped), 1 px border at 55% opacity. This is the only rounded element family on the site; use it for size chips, tags and the "raised so far" callout.
+- **Size chips**: light-blue boxes (`#EFF9FF`, 1px `#2000A0` border, 4px corners); the selected one is solid blue with white text. Badges and small tags stay pill-shaped.
 - **Cards, media, text boxes, popups**: radius 0, no shadow. Cards sit on `#F3F3F3`.
 - **Page width**: 1200 px content width (the stylesheet's global override sets the page container to 144 rem). Section spacing setting is 0; sections butt against each other and use their own padding.
 - **Grid gaps**: 8 px horizontal and vertical on desktop, 4 px on mobile (product grids are tight).
