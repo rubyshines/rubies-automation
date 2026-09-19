@@ -34,7 +34,6 @@ function requestBtn(ctx, label = 'Request a pair') {
 }
 
 function requestLine(ctx) {
-  if (ctx.sum.state === 'funded' || ctx.sum.state === 'over') return 'This shipment is full; your request joins the next one.';
   if (ctx.sum.number === 1 && ctx.sum.state === 'empty') return 'It comes with the first shipment, to the closet or to your door.';
   return 'It comes with the next shipment, to the closet or to your door.';
 }
@@ -49,7 +48,7 @@ function progress(ctx, { hero = false, strip = false } = {}) {
     case 'grown': line = 'The goal grew to cover everyone who asked.'; break;
     case 'funded': line = `Funded. Anything more grows the shipment until ${esc(ctx.name)} sends it.`; break;
     case 'over': line = `Funded, ${dollars(s.over)} over. Anything more grows the shipment until ${esc(ctx.name)} sends it.`; break;
-    default: line = `${s.sources.sponsorCount} sponsor${s.sources.sponsorCount === 1 ? '' : 's'} so far. Ships when it's funded.`;
+    default: line = `${s.sources.sponsorCount} sponsor${s.sources.sponsorCount === 1 ? '' : 's'} so far. RUBIES matches every dollar.`;
   }
   const arrived = ctx.lastSent && ctx.lastSent.delivered_at
     ? `<p class="fine">Shipment #${ctx.lastSent.number} arrived at ${esc(ctx.name)} on ${fmtDate(ctx.lastSent.delivered_at)}${ctx.lastSent.items_count ? ` with ${ctx.lastSent.items_count} items` : ''}.</p>`
@@ -57,7 +56,7 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   if (strip) {
     return `<section class="strip" id="progress"><div><b>Shipment #${s.number}</b> · ${dollars(s.raised)} raised of ${dollars(s.goal)} · RUBIES matches every dollar</div><a class="btn btn-small btn-sun" href="#sponsor">Sponsor the closet</a></section>`;
   }
-  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b><span class="soft">${s.state === 'funded' || s.state === 'over' ? 'Funded' : "Ships when it's funded"}</span></div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
+  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b><span class="soft">${s.state === 'funded' || s.state === 'over' ? 'Funded' : `Ships when ${esc(ctx.name)} sends it`}</span></div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
 function amounts(ctx, { cta = 'Sponsor' } = {}) {
@@ -145,7 +144,7 @@ function requestFirst(ctx) {
     <p class="lede"><b>Need a pair? Request one here.</b></p>
     <p>Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Pick a style and size, and it comes with ${esc(ctx.name)}'s next shipment: collect it at the centre or have it sent to your door in plain packaging. No cost to you.</p>
     <div class="doors">${requestBtn(ctx)}<a class="btn btn-line" href="${LINKS.sizeGuide}">Check my size first</a></div>
-    <p class="fine">Only RUBIES and ${esc(ctx.name)} see your request. Approved within the limits ${esc(ctx.name)} sets. <a href="${LINKS.how}">How RUBIES works</a></p>
+    <p class="fine">Only RUBIES and ${esc(ctx.name)} see your request. <a href="${LINKS.how}">How RUBIES works</a></p>
   </div>
   ${placeholder('product photo, calm, no fundraising imagery', 'ph-hero')}
 </section>

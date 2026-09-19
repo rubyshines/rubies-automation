@@ -30,7 +30,10 @@ async function needsAttention() {
   for (const c of pending) {
     const team = await auth.teamFor(c.id);
     const admin = team.members.find(m => m.role === 'admin');
-    newCentres.push({ ...c, admin, verified: !!admin?.email_verified_at, ageDays: Math.floor((now - new Date(c.created_at)) / day) });
+    // A sign-up whose admin never verified their email is not a queue item:
+    // RUBIES is only told about a centre once that link is tapped.
+    if (!admin?.email_verified_at) continue;
+    newCentres.push({ ...c, admin, verified: true, ageDays: Math.floor((now - new Date(c.created_at)) / day) });
   }
   const waitingOn = [];
   const byCentre = new Map();
@@ -249,7 +252,7 @@ async function markShipped(boxId, { carrier, tracking, operatorEmail }) {
   const requests = sum.requests.filter(r => ['in_box', 'shipped'].includes(r.status));
   const to = centre.statements_email || (await firstAdmin(centre.id));
   const nextBox = await boxes.getOpenBox(centre.id);
-  if (to) await emails.boxOnItsWay({ centre, to, box: updated, items: updated.items_count || sum.requests.length, requesters: requests.map(r => r.name), nextBox });
+  if (to) await emails.boxOnItsWay({ centre, to, box: updated, items: updated.items_count || sum.requests.length, pickups: requests.filter(r => r.delivery !== 'ship').map(r => r.name), doors: requests.filter(r => r.delivery === 'ship').map(r => r.name), nextBox });
   return updated;
 }
 

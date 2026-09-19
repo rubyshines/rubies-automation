@@ -12,7 +12,7 @@ const BASE = () => process.env.VC_BASE_URL || `http://localhost:${process.env.PO
 function banners({ centre, actingAs, flash }) {
   let out = '';
   if (actingAs) out += `<div class="banner op">Operator view: you are seeing ${esc(centre.name)}'s Home as they see it. Every action is logged and emailed to their admins. <a href="/ops/stop">Stop</a></div>`;
-  if (centre.status === 'pending') out += `<div class="banner warn">Waiting for approval. Your page goes live when a person at RUBIES has said hello, usually within a few days.</div>`;
+  if (centre.status === 'pending') out += `<div class="banner warn">Waiting for approval. A person at RUBIES reviews every new centre, usually within a few days. Your page goes live the moment we do.</div>`;
   if (centre.status === 'paused') out += `<div class="banner warn">Your page is paused by RUBIES${centre.paused_reason ? `: ${esc(centre.paused_reason)}` : ''}. Write to jamie@rubyshines.com.</div>`;
   if (flash) out += `<div class="banner">${esc(flash)}</div>`;
   return out;
@@ -56,7 +56,7 @@ ${byHand && needs ? `<div class="banner warn" style="margin:12px 0"><b>${needs} 
     <div class="bar"><span style="width:${sum.goal ? Math.min(100, Math.round(sum.raised / sum.goal * 100)) : 0}%"></span></div>
     <p class="fine">RUBIES matches every dollar when it ships${sum.state === 'grown' ? '. The goal grew to cover everyone approved' : ''}.</p>
     <table><tr><td class="soft">From community orders</td><td><b>${dollars(sum.sources.orders)}</b></td></tr><tr><td class="soft">From sponsors (${sum.sources.sponsorCount})</td><td><b>${dollars(sum.sources.sponsors)}</b></td></tr><tr><td class="soft">From ${esc(centre.name)}</td><td><b>${dollars(sum.sources.centre)}</b></td></tr><tr><td class="soft">Carried over from box #${sum.number - 1}</td><td><b>${dollars(sum.sources.carry)}</b></td></tr></table>
-    ${funded ? `<a class="btn btn-fill" href="/send">Send the box</a><p class="fine">Funded. Or keep it growing past the goal; you choose when.</p>` : `<span class="btn btn-fill disabled">Send the box</span><p class="fine">Available at ${dollars(sum.goal)}. Or keep it growing past the goal; you choose then.</p>`}
+    ${funded ? `<a class="btn btn-fill" href="/send">Send the box</a><p class="fine">Funded. Send it now, or keep it growing; requests that arrive before you send go in too, and the goal grows to cover them.</p>` : `<span class="btn btn-fill disabled">Send the box</span><p class="fine">Available at ${dollars(sum.goal)}. Or keep it growing past the goal; you choose then.</p>`}
   </div>
   <div>
     ${lastSent && lastSent.status !== 'delivered' ? `<div class="card" style="margin-bottom:16px"><h3>Box #${lastSent.number} · ${lastSent.status === 'shipped' ? 'on its way' : 'being packed at RUBIES'}</h3><p>${lastSent.carrier ? `${esc(lastSent.carrier)} ${esc(lastSent.tracking_number || '')}. ` : ''}${lastSent.items_count || ''} items. People who requested pickup will be emailed instructions the day it's delivered.</p></div>` : ''}
@@ -80,7 +80,7 @@ ${notCollected?.length ? `<section><h3>Not collected yet?</h3><p class="soft">Bo
     </div>
     <p class="fine">Same page, different thing on top. The plain link shows all three equally.</p>
     <div class="doors"><a class="btn btn-small btn-line" href="/share/qr.svg" download="closet-qr.svg">Download QR</a><button class="btn btn-small btn-line" type="button" data-copy="${esc(share.post)}">Copy a ready-made post</button><a class="btn btn-small btn-quiet" href="/${centre.slug}" target="_blank" rel="noopener">Preview your page</a></div>
-    <p class="fine">Everyone who arrives from this link gets 20% off one order, new or returning, and orders within 30 days count for the box.</p>
+    <p class="fine">Everyone who arrives from this link gets 20% off one order, new or returning, and every two items they buy put one in your closet.</p>
   </div>
   <div>
     ${centre.programmes?.pass_it_on ? `<h2>Pass It On</h2><p>${centre.map_listed ? 'Listed on the donation map' : 'Not listed on the map'}${centre.map_pin_to_closet ? ', pin linked to your closet' : ''}. ${passItOn.routed} customer${passItOn.routed === 1 ? ' was' : 's were'} given your address this month; ${passItOn.mapVisits} visited your closet from the map.</p><a href="/settings#pass-it-on">Manage in Settings</a>` : ''}
@@ -90,7 +90,7 @@ ${notCollected?.length ? `<section><h3>Not collected yet?</h3><p class="soft">Bo
 }
 
 function declineForm({ centre, request, errors = [] }) {
-  const body = `<section class="card narrow"><h1>Decline: ${esc(request.name)}</h1><p>${esc(request.name)} gets a short, kind email: “${esc(centre.name)} couldn't approve this request. You're welcome to request again from [date], or drop by the centre.” Nothing else is said.</p>${errorBox(errors)}
+  const body = `<section class="card narrow"><h1>Decline: ${esc(request.name)}</h1><p>${esc(request.name)} gets a short, kind email: ${esc(centre.name)} wasn't able to approve this request, and they're welcome to drop by the centre. Nothing else is said unless you add a line below.</p>${errorBox(errors)}
 <form class="form" method="post" action="/requests/${request.id}/decline"><label class="check"><input type="checkbox" name="counts" value="1"> Also count this toward their ${centre.requests_per_year} a year <span class="fine">(off by default: a declined request doesn't use up a turn)</span></label><label>A line for them, optional <input type="text" name="note" maxlength="200"></label><div class="doors"><button class="btn btn-fill">Decline and send</button><a class="btn btn-quiet" href="/home">Cancel</a></div></form></section>`;
   return page({ title: 'Decline', mode: 'centre', centre, body });
 }
@@ -198,7 +198,7 @@ function sendBox({ centre, user, preview, fillMode = 'auto', pickupNote, deliver
 <form method="post" action="/send" class="form" style="max-width:none">
 <h3>1 · Requested items go in first</h3>
 <div class="tbl"><table><thead><tr><th>For</th><th>Item</th><th>How</th></tr></thead><tbody>${approved.map(r => `<tr><td>${esc(r.name)}</td><td>${itemsHtml(r.items)}</td><td>${r.delivery === 'ship' ? 'Ships to their door' : 'Pickup'}</td></tr>`).join('') || '<tr><td colspan="3" class="soft">No requests in this box.</td></tr>'}</tbody></table></div>
-<p class="fine">Fixed. Out-of-stock colours are swapped within the same style; the swapped item's price is what the box pays.</p>
+<p class="fine">These are set. If a colour runs out, RUBIES sends the same style in another colour and the box pays that item's price.</p>
 <h3>2 · Fill the rest</h3>
 <label class="radio"><input type="radio" name="fill_mode" value="auto" ${!chosen ? 'checked' : ''} onchange="this.form.submit()"> Let it fill itself: RUBIES picks a spread across your sizes and the five styles</label>
 <label class="radio"><input type="radio" name="fill_mode" value="chosen" ${chosen ? 'checked' : ''} onchange="this.form.submit()"> Choose the rest</label>
@@ -208,7 +208,7 @@ function sendBox({ centre, user, preview, fillMode = 'auto', pickupNote, deliver
 <table style="max-width:480px"><tr><td class="soft">Raised in box #${preview.sum.number}</td><td><b>${dollars(totals.raised)}</b></td></tr><tr><td class="soft">RUBIES match</td><td><b>${dollars(totals.match)}</b></td></tr><tr><td class="soft">Shipping to doors, ${shipped.length} package${shipped.length === 1 ? '' : 's'}</td><td><b>${dollars(totals.doorShipping)}</b></td></tr><tr><td class="soft">Items in the box</td><td><b>${itemsCount}</b></td></tr><tr><td class="soft">Left over, carried to box #${preview.sum.number + 1}</td><td><b>${dollars(totals.carryOut)}</b></td></tr></table>
 <p>Ships to: <b>${esc(centre.name)}, ${esc(addressLine(centre))}</b> · <a href="/settings#centre">Change</a></p>
 <h3>4 · A note to the people who requested</h3>
-<p class="fine">Sent automatically with their emails. ${pickups.length ? `${pickups.map(p => esc(p.name)).join(' and ')} get${pickups.length === 1 ? 's' : ''} the pickup note the day the carrier delivers the box to you` : 'Nobody is picking up from this box'}${shipped.length ? `; ${shipped.map(p => esc(p.name)).join(' and ')} get${shipped.length === 1 ? 's' : ''} the delivery note now, with tracking from RUBIES` : ''}.</p>
+<p class="fine">Goes out with their emails. ${pickups.length ? `${pickups.map(p => esc(p.name)).join(' and ')} get${pickups.length === 1 ? 's' : ''} the pickup note the day the carrier delivers the box to you` : 'Nobody is picking up from this box'}${shipped.length ? `; ${shipped.map(p => esc(p.name)).join(' and ')} get${shipped.length === 1 ? 's' : ''} the delivery note now, and tracking from RUBIES when it leaves` : ''}.</p>
 <label>For pickup (${pickups.length} ${pickups.length === 1 ? 'person' : 'people'}) <textarea name="pickup_note">${esc(pickupNote)}</textarea></label>
 <label>For delivery (${shipped.length} ${shipped.length === 1 ? 'person' : 'people'}) <textarea name="delivery_note">${esc(deliveryNote)}</textarea></label>
 <label class="check"><input type="checkbox" name="remember" value="1" checked> Remember these notes for the next box</label>
@@ -235,7 +235,7 @@ function defaultPickupNote(centre) {
   return centre.pickup_note || `Come to the front desk at ${centre.name}, ${addressLine(centre)}${centre.address?.hours ? `, ${centre.address.hours}` : ''}, and ask for the closet. No need to say what it's for; the desk knows. Nothing to bring.`;
 }
 function defaultDeliveryNote(centre) {
-  return centre.delivery_note || `Your items are coming straight from RUBIES in plain packaging. You'll get a shipping confirmation from RUBIES with tracking. Questions? ${centre.statements_email || 'ask at the centre'}.`;
+  return centre.delivery_note || `From everyone at ${centre.name}: enjoy them. If you ever need anything else, you know where we are.`;
 }
 
 module.exports = { home, declineForm, settings, history, boxDetail, sendBox, sent, ago, defaultPickupNote, defaultDeliveryNote, requestsTable, LINKS };

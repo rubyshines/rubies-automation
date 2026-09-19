@@ -121,3 +121,66 @@ test('the closet page renders every arrangement and state without leaking undefi
   const paused = closetView.render({ centre, sum: { ...base, state: 'in_progress', box: { number: 2 } }, lastSent: null, products: MENU, lead: 'request', words: [], paused: true });
   assert.ok(paused.includes('Requests are paused at Demo Centre'));
 });
+
+test('each style carries its own size run, cut to what the centre offers, and maps to the shelf size', () => {
+  const { sizesFor, storeSize, styleSizes } = require('../../virtual-closet/lib/catalog');
+  assert.ok(!styleSizes('aj').includes('4X'), 'AJ stops at 3X');
+  assert.ok(styleSizes('sassy').includes('4X') && !styleSizes('sassy').includes('12'), 'Sassy runs in letters only');
+  const centre = { sizes: ['S', 'M', '1X', '4X'], kids_sizes: true };
+  assert.deepEqual(sizesFor('aj', centre), ['4', '6', '8', '10', '12', '14', '16', 'S', 'M', '1X']);
+  assert.deepEqual(sizesFor('sassy', centre), ['S', 'M', '1X', '4X']);
+  assert.equal(storeSize('aj', 'S'), '14', 'S on AJ is the 14');
+  assert.equal(storeSize('brooke', 'XS'), '12');
+  assert.equal(storeSize('aj', '1X'), '1X');
+  assert.equal(storeSize('aj', 'XL'), '1X');
+  assert.equal(storeSize('sassy', 'S'), 'S');
+});
+
+test('the request form rejects a size the style does not come in, and describes items with the shelf size', () => {
+  const requests = require('../../virtual-closet/lib/requests');
+  const centre = { name: 'Demo', sizes: ['S', 'M', '4X'], kids_sizes: false, items_per_request: 2 };
+  const bad = requests.cleanItems([{ style: 'aj', colour: 'Black', size: '4X' }], centre);
+  assert.equal(bad.items.length, 0);
+  assert.match(bad.errors[0], /AJ comes in S, M/);
+  const good = requests.cleanItems([{ style: 'aj', colour: 'Black', size: 'S' }, { style: 'sassy', colour: 'Pink', size: '4X' }], centre);
+  assert.deepEqual(good.errors, []);
+  assert.deepEqual(requests.describeItems(good.items).map(i => [i.styleName, i.size, i.storeSize]), [['AJ', 'S', '14'], ['Sassy', '4X', '4X']]);
+});
+
+test('the request form offers each style its own sizes', () => {
+  const view = require('../../virtual-closet/views/request');
+  const centre = { slug: 'demo', name: 'Demo', sizes: SIZES, kids_sizes: true, items_per_request: 2, requests_per_year: 2, ship_to_door: true, address: {} };
+  const html = view.form({ centre, products: MENU });
+  assert.ok(html.includes('data-sizes="4|6|8|10|12|14|16|XS|S|M|L|1X|2X|3X"'), 'numeric styles carry kids sizes and stop at 3X');
+  assert.ok(html.includes('data-sizes="XS|S|M|L|1X|2X|3X|4X"'), 'Sassy carries the letter run');
+  assert.ok(!/undefined|NaN/.test(html));
+  assert.ok(!html.includes('Any age'));
+});
+
+test('emails compose without leaking undefined and keep the audience words', async () => {
+  process.env.VC_EMAIL_MODE = 'console';
+  const emails = require('../../virtual-closet/lib/emails');
+  const log = console.log; const out = [];
+  console.log = (...a) => out.push(a.join(' '));
+  try {
+    const centre = { id: 1, slug: 'demo', name: 'Demo Centre', sizes: SIZES, kids_sizes: false, items_per_request: 2, requests_per_year: 2, goal_cents: 30000, approval_mode: 'automatic', ship_to_door: true, programmes: { closet: true, pass_it_on: true }, address: { city: 'Champaign' } };
+    const request = { name: 'Rosa', email: 'rosa@example.com', delivery: 'pickup', words: 'A sentence.' };
+    const items = [{ styleName: 'AJ', colour: 'Black', size: '1X' }];
+    const box = { number: 2, carrier: 'UPS', tracking_number: '1Z' };
+    await emails.welcome({ centre, to: 'x@example.com' });
+    await emails.requestReceived({ centre, request, items });
+    await emails.requestReceived({ centre, request, items, needsAnswer: true });
+    await emails.requestReceived({ centre, request, items, approved: true });
+    await emails.requestOnItsWay({ centre, request, items });
+    await emails.requestDeclined({ centre, request, againFrom: null });
+    await emails.boxOnItsWay({ centre, to: 'x@example.com', box, items: 38, pickups: ['Rosa', 'Dee'], doors: ['Mel'], nextBox: { number: 3 } });
+    await emails.boxFunded({ centre, to: 'x@example.com', box, raised: 30000 });
+    await emails.sponsorThanks({ centre, to: 'x@example.com', amountCents: 5000, box, raised: 19000, goal: 30000, city: 'Champaign' });
+    await emails.sponsorArrived({ centre, to: 'x@example.com', box, items: 38, requests: 3 });
+  } finally { console.log = log; delete process.env.VC_EMAIL_MODE; }
+  const all = out.join('\n');
+  assert.ok(!/undefined|NaN/.test(all), all);
+  assert.ok(all.includes("You're in, Rosa"), 'by-hand approval has its own subject');
+  assert.ok(all.includes('Thank you from Demo Centre'));
+  assert.ok(!/box you sponsored|next box/i.test(all), 'sponsors read shipment, not box');
+});

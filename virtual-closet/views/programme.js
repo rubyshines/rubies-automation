@@ -37,14 +37,14 @@ function programme({ values = {}, errors = [] } = {}) {
   <h2>How it works</h2>
   <ol class="steps steps-4">
     <li><b>Sign up.</b> Five minutes. Tick the programmes you want. Set your sizes.</li>
-    <li><b>We say hello.</b> A person at RUBIES approves new centres, usually within a few days.</li>
+    <li><b>We approve you.</b> A person at RUBIES reviews every new centre, usually within a few days.</li>
     <li><b>Share your link.</b> On your site, your socials, your noticeboard. That is all the upkeep there is.</li>
     <li><b>Receive the box.</b> Requested items first, the rest filled by you or by us. Hand it out.</li>
   </ol>
 </section>
 <section class="two">
   ${placeholder('photo or illustration: RUBIES product on models', 'ph-hero')}
-  <div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women: tuck-friendly, comfortable, and made to be worn every day. Every pair a centre hands out is one someone can feel like themselves in.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a></p></div>
+  <div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a></p></div>
 </section>
 <section>
   <h2>Two programmes. Tick one or both.</h2>
@@ -93,7 +93,7 @@ ${errorBox(errors)}
   <div class="nudge" id="nudge" hidden><span>That looks like a personal address. Got one at the centre? Contacts change, and a centre address keeps the account with ${esc(centre.name)}.</span><div class="doors">${centreDomain ? `<button type="button" class="btn btn-small btn-line" data-suggest>Use your centre address</button>` : ''}<button type="button" class="btn btn-small btn-quiet" data-keep>Keep this one</button></div></div>
   <label>Password <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
   <button class="btn btn-fill" type="submit">Create account</button>
-  <p class="fine">By continuing you agree to the <a href="/free-pair-terms">programme terms</a>. Any address works; we'll ask you to verify it.</p>
+  <p class="fine">By continuing you agree to the <a href="/free-pair-terms">programme terms</a>. We'll send a link to confirm your email.</p>
 </form></section>`;
   return page({ title: 'Create your account', mode: 'plain', body });
 }

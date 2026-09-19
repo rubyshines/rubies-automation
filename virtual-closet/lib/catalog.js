@@ -12,14 +12,25 @@
 const SIZES = ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const KIDS_SIZES = ['4', '6', '8', '10', '12', '14', '16'];
 
+// Two size systems in the store. AJ, Charlie, Brooke and Ruby run 4 to 16 and
+// then L, 1X, 2X, 3X: their adult XS, S and M are the 12, 14 and 16. Sassy runs
+// in letters, XXS to 4X, adults only. A closet talks in the letter run above;
+// these tables say what each style actually comes in and what to pick from the
+// shelf (see storeSize).
+const NUMERIC_ADULT_TO_STORE = { XS: '12', S: '14', M: '16' };
+const STYLE_SIZES = {
+  numeric: [...KIDS_SIZES, 'XS', 'S', 'M', 'L', '1X', '2X', '3X'],
+  letter: ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'],
+};
+
 const STORE = 'https://rubyshines.com';
 
 const MENU = [
-  { key: 'aj',      name: 'AJ',                 title: 'AJ no-tuck shaping underwear',      kind: 'underwear', retail_cents: 3200, half_cents: 1600, handle: 'the-aj-shaping-underwear',                 colours: ['Black', 'Nude', 'Pink'] },
-  { key: 'charlie', name: 'Charlie',            title: 'Charlie no-tuck shaping underwear', kind: 'underwear', retail_cents: 3300, half_cents: 1650, handle: 'the-extra-cute-shaping-underwear',          colours: ['Black', 'Pink', 'Mint'] },
-  { key: 'sassy',   name: 'Sassy',              title: 'Sassy no-tuck shaping underwear',   kind: 'underwear', retail_cents: 3200, half_cents: 1600, handle: 'the-sassy-no-tuck-shaping-underwear',       colours: ['Black', 'Mint', 'Nude'] },
-  { key: 'brooke',  name: 'Brooke bra',         title: 'Brooke shaping bra',                kind: 'bra',       retail_cents: 4200, half_cents: 2100, handle: 'the-brooke-bra',                            colours: ['Black', 'Pink', 'White'] },
-  { key: 'ruby',    name: 'Ruby bikini bottom', title: 'Ruby no-tuck shaping bikini bottom', kind: 'swim',     retail_cents: 4800, half_cents: 2400, handle: 'the-ruby-no-tuck-shaping-bikini-bottom',    colours: ['Black', 'Turquoise', 'Pink'] },
+  { key: 'aj',      name: 'AJ',                 title: 'AJ no-tuck shaping underwear',                 kind: 'underwear', sizing: 'numeric', retail_cents: 3200, half_cents: 1600, handle: 'the-aj-shaping-underwear',              colours: ['Black', 'Pink'] },
+  { key: 'charlie', name: 'Charlie',            title: 'Charlie no-tuck extra cute shaping underwear', kind: 'underwear', sizing: 'numeric', retail_cents: 3300, half_cents: 1650, handle: 'the-extra-cute-shaping-underwear',       colours: ['Black', 'Sandstone'] },
+  { key: 'sassy',   name: 'Sassy',              title: 'Sassy no-tuck shaping underwear',              kind: 'underwear', sizing: 'letter',  retail_cents: 3200, half_cents: 1600, handle: 'the-sassy-no-tuck-shaping-underwear',    colours: ['Black', 'Pink', 'Sandstone'] },
+  { key: 'brooke',  name: 'Brooke bra',         title: 'Brooke shaping bra',                           kind: 'bra',       sizing: 'numeric', retail_cents: 4200, half_cents: 2100, handle: 'the-brooke-bra',                         colours: ['Black', 'Sandstone'] },
+  { key: 'ruby',    name: 'Ruby bikini bottom', title: 'Ruby no-tuck shaping bikini bottom',           kind: 'swim',      sizing: 'numeric', retail_cents: 4800, half_cents: 2400, handle: 'the-ruby-no-tuck-shaping-bikini-bottom', colours: ['Black', 'Pink'] },
 ];
 
 // Sponsor tiles, half retail per item; the larger amounts are "toward the shipment".
@@ -90,11 +101,31 @@ async function menu() {
 async function inStock(styleKey, colour, size) {
   const live = await loadLive();
   if (!live || !live[styleKey]) return true; // unknown: do not block the request
-  return live[styleKey].inStock.has(`${colour}|${normalizeSize(size)}`);
+  return live[styleKey].inStock.has(`${colour}|${storeSize(styleKey, size)}`);
 }
 
 function styleByKey(key) { return MENU.find(s => s.key === key) || null; }
 
+/** The sizes a style comes in, in the closet's own words (kids numbers, then the letter run). */
+function styleSizes(styleKey) {
+  const style = styleByKey(styleKey);
+  return style ? STYLE_SIZES[style.sizing] : [];
+}
+
+/** What a centre can offer of a style: its own size settings, cut to what the style comes in. */
+function sizesFor(styleKey, centre) {
+  const offered = new Set([...(centre.sizes || []), ...(centre.kids_sizes ? KIDS_SIZES : [])]);
+  return styleSizes(styleKey).filter(s => offered.has(s));
+}
+
+/** The size on the shelf for a size a requester chose: S on AJ is the 14; S on Sassy is S. */
+function storeSize(styleKey, size) {
+  const s = normalizeSize(size);
+  const style = styleByKey(styleKey);
+  if (!style || !s) return s;
+  return style.sizing === 'numeric' ? (NUMERIC_ADULT_TO_STORE[s] || s) : s;
+}
+
 function productUrl(style) { return `${STORE}/products/${style.handle}`; }
 
-module.exports = { SIZES, KIDS_SIZES, STORE, MENU, SPONSOR_TILES, menu, inStock, styleByKey, productUrl, normalizeSize };
+module.exports = { SIZES, KIDS_SIZES, STYLE_SIZES, STORE, MENU, SPONSOR_TILES, menu, inStock, styleByKey, styleSizes, sizesFor, storeSize, productUrl, normalizeSize };
