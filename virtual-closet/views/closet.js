@@ -120,7 +120,7 @@ function allEqual(ctx) {
 <section class="hero">
   <div class="hero-copy">
     ${centreLogo(ctx)}
-    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
+    <h1>${esc(ctx.name)}'s closet</h1>
     <p class="lede">Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Stocked by ${esc(ctx.name)}'s community, matched by RUBIES.</p>
   </div>
   ${illustration('mirror')}
@@ -145,7 +145,7 @@ function shopFirst(ctx) {
 <section class="hero">
   <div class="hero-copy">
     ${centreLogo(ctx)}
-    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
+    <h1>${esc(ctx.name)}'s closet</h1>
     <p class="lede"><b>Shop with 20% off. Every two items puts one in the closet.</b></p>
     <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. 20% off one order from this link, and for every two items bought, ${esc(ctx.name)}'s closet gets one.</p>
     ${shopBtn(ctx, 'Shop the store with 20% off')}
@@ -167,7 +167,7 @@ function requestFirst(ctx) {
 <section class="hero">
   <div class="hero-copy">
     ${centreLogo(ctx)}
-    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
+    <h1>${esc(ctx.name)}'s closet</h1>
     <p class="lede"><b>Need a pair? Request one here.</b></p>
     <p>Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Pick a style and size, and it comes with ${esc(ctx.name)}'s next shipment: collect it at the centre or have it sent to your door in plain packaging. No cost to you.</p>
     <div class="doors">${requestBtn(ctx)}<a class="btn btn-line" href="${LINKS.sizeGuide}">Check my size first</a></div>
@@ -190,7 +190,7 @@ function sponsorFirst(ctx) {
 <section class="hero hero-sponsor">
   <div class="hero-copy">
     ${centreLogo(ctx)}
-    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
+    <h1>${esc(ctx.name)}'s closet</h1>
     ${progress(ctx, { hero: true })}
     <p>Gender-affirming underwear and swimwear for trans girls and women. RUBIES matches every dollar; at the goal, the shipment leaves for ${esc(ctx.name)}.</p>
     <div class="doors"><a class="btn btn-sun" href="#sponsor">Sponsor the closet</a><a class="btn btn-line" href="/${ctx.slug}/shop">Shop with 20% off</a>${requestBtn(ctx)}</div>
