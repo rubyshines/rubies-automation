@@ -103,4 +103,16 @@ async function handle(topic, payload) {
   console.log(`[shopify-orders] Upserted order #${orderRow.order_number} with ${lineItemRows.length} line items`);
 }
 
-module.exports = { handle };
+// Virtual Closet: credit a centre's box when an order carries a closet code or
+// a sponsorship line item. Idempotent in the ledger, so retries are safe; a
+// failure here never fails the order upsert above.
+async function creditVirtualCloset(payload) {
+  try {
+    const { recordOrder } = require('../../virtual-closet/lib/ledger');
+    await recordOrder(payload);
+  } catch (err) {
+    console.warn(`[shopify-orders] virtual closet ledger skipped: ${err.message}`);
+  }
+}
+
+module.exports = { handle: async (topic, payload) => { await handle(topic, payload); await creditVirtualCloset(payload); } };

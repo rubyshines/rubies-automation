@@ -36,6 +36,7 @@
 - [Advisor Accuracy Rebuild](project_advisor_accuracy_rebuild.md) — eval-first attack on draft quality: measurement repair, founder rule audits, prompt-variant A/B, fair Opus 5 test
 - [B2B commitments](project_b2b_commitments.md) — one list of what Jamie owes and is waiting on; On Me derived from it; Wispr notes fetched by the server
 - [Mailing Address Change](project_mailing_address_change.md) — tracked checklist for moving the business mailing address to The Fashion Zone
+- [Virtual Closet build](project_virtual_closet.md) — the whole app at low fidelity from the approved wireframes: public pages, centre accounts, requests, money, boxes, operator section, emails
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

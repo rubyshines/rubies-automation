@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Closets · RUBIES Operations</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .vc { max-width: 1200px; margin: 0 auto; padding: 16px; font-size: 14px; }
+  .vc-top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+  .vc-top h1 { font-size: 20px; margin: 0; }
+  .vc-nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  .vc-nav a { padding: 6px 12px; border: 1px solid #ccc; text-decoration: none; color: inherit; border-radius: 6px; }
+  .vc-nav a.active { background: #222; color: #fff; border-color: #222; }
+  .vc-back { margin-left: auto; font-size: 13px; }
+  .vc h2 { font-size: 16px; margin: 18px 0 8px; }
+  .vc table { width: 100%; border-collapse: collapse; }
+  .vc th, .vc td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid #e5e5e5; }
+  .vc th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #666; }
+  .vc .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; background: #fff; margin-bottom: 10px; }
+  .vc .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .vc .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+  .vc .kpi { border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px; }
+  .vc .kpi b { display: block; font-size: 20px; }
+  .vc .kpi span { color: #666; font-size: 12px; }
+  .vc .pill { display: inline-block; border: 1px solid #ccc; border-radius: 999px; padding: 0 8px; font-size: 12px; }
+  .vc .pill.ok { background: #e8f5e9; border-color: #a5d6a7; } .vc .pill.warn { background: #fff4e0; border-color: #f0c674; } .vc .pill.bad { background: #fde7ea; border-color: #f3b3bd; }
+  .vc button, .vc .btn { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #222; background: #fff; border-radius: 6px; cursor: pointer; text-decoration: none; color: inherit; }
+  .vc button.primary { background: #222; color: #fff; }
+  .vc button.quiet { border-color: #ccc; }
+  .vc .soft { color: #666; }
+  .vc .tabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+  .vc .tabs button { border-radius: 999px; }
+  .vc .tabs button.active { background: #222; color: #fff; }
+  .vc input[type="text"], .vc input[type="number"], .vc select, .vc textarea { font: inherit; padding: 5px 8px; border: 1px solid #bbb; border-radius: 6px; }
+  .vc .detail { display: none; }
+  .vc .detail.show { display: block; }
+  .vc .grid-fill td { text-align: center; }
+  .vc .log li { margin-bottom: 4px; }
+  .vc .empty { color: #888; font-style: italic; }
+  .vc .err { background: #fde7ea; border: 1px solid #f3b3bd; padding: 8px; border-radius: 6px; margin: 8px 0; }
+  .vc .ok-box { background: #e8f5e9; border: 1px solid #a5d6a7; padding: 8px; border-radius: 6px; margin: 8px 0; }
+  @media print { .vc-top, .vc-nav, .no-print, button { display: none !important; } }
+  @media (max-width: 800px) { .vc .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+<div class="vc">
+  <div class="vc-top">
+    <h1>Closets</h1>
+    <nav class="vc-nav">
+      <a href="#attention" data-tab="attention" class="active">Needs attention</a>
+      <a href="#centres" data-tab="centres">Centres</a>
+      <a href="#boxes" data-tab="boxes">Boxes</a>
+      <a href="#requests" data-tab="requests">Requests</a>
+    </nav>
+    <a class="vc-back" href="/">← Dashboard</a>
+  </div>
+  <div id="msg"></div>
+  <section id="tab-attention" class="tab"></section>
+  <section id="tab-centres" class="tab" hidden></section>
+  <section id="tab-boxes" class="tab" hidden></section>
+  <section id="tab-requests" class="tab" hidden></section>
+  <section id="tab-centre" class="tab" hidden></section>
+  <section id="tab-packing" class="tab" hidden></section>
+</div>
+<script src="/closets.js"></script>
+</body>
+</html>

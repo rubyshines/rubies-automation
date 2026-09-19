@@ -73,6 +73,7 @@ const inboundReceivingTools = require('./lib/tools/inboundReceiving');
 const qcInspectionTools = require('./lib/tools/qcInspection');
 const freeOfferTools = require('./lib/tools/freeOffer');
 const freeSwimwearTools = require('./lib/tools/freeSwimwear');
+const virtualClosetTools = require('./lib/tools/virtualCloset');
 const discountTools = require('./lib/tools/discounts');
 const emailStudioTools = require('./lib/tools/emailStudio');
 const irapStatusReportTools = require('./lib/tools/irapStatusReport');
@@ -136,6 +137,7 @@ const allTools = [
   ...qcInspectionTools,
   ...freeOfferTools,
   ...freeSwimwearTools,
+  ...virtualClosetTools,
   ...discountTools,
   ...emailStudioTools,
   ...irapStatusReportTools,
