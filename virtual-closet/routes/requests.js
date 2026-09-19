@@ -108,7 +108,7 @@ async function afterPlacement(centre, request, { newsletter = false } = {}) {
     const declineToken = await auth.issueToken('request_answer', { email: to, payload: { request_id: request.id, centre_id: centre.id, outcome: 'decline' }, ttlHours: 14 * 24 });
     if (to) await emails.requestNeedsAnswer({ centre, to, request, items, approveToken, declineToken });
     // The requester hears "got it" now; approval or decline follows.
-    await emails.requestReceived({ centre, request, items, waiting: false });
+    await emails.requestReceived({ centre, request, items, needsAnswer: true });
   } else {
     await emails.requestReceived({ centre, request, items, waiting: request.status === 'waiting' });
     if (to && request.status === 'approved') {
@@ -141,7 +141,7 @@ r.get('/answer/:token', async (req, res, next) => {
     let updated;
     if (t.payload.outcome === 'approve') {
       updated = await requestsLib.approve(request, centre, 'centre:email');
-      await emails.requestReceived({ centre, request: updated, items: requestsLib.describeItems(updated.items), waiting: updated.status === 'waiting' });
+      await emails.requestReceived({ centre, request: updated, items: requestsLib.describeItems(updated.items), approved: true, waiting: updated.status === 'waiting' });
     } else {
       updated = await requestsLib.decline(request, centre, 'centre:email', { counts: false });
       await emails.requestDeclined({ centre, request: updated, againFrom: null });

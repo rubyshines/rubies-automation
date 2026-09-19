@@ -93,7 +93,7 @@ r.post('/requests/:id/approve', ...guard, async (req, res, next) => {
     const request = await ownRequest(req, res); if (!request) return;
     const updated = await requestsLib.approve(request, req.centre, actorOf(req));
     const items = requestsLib.describeItems(updated.items);
-    await emails.requestReceived({ centre: req.centre, request: updated, items, waiting: updated.status === 'waiting' });
+    await emails.requestReceived({ centre: req.centre, request: updated, items, approved: true, waiting: updated.status === 'waiting' });
     res.redirect(302, '/home?flash=Approved.');
   } catch (err) { next(err); }
 });

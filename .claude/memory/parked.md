@@ -367,3 +367,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: cs
 - Type: refactor (small)
 - Notes: The only open item from the closed CS Advisor Efficiency project. `cs_tone_samples` carries ~50 active samples injected on every advisor call; curating to roughly half saves ~2K tokens per call with no model change. Sweep for contradictions with current voice rulings at the same time (see domain_cs.md: tone samples outrank rules).
+
+## Virtual Closet: the 30-day browser attribution window on the store
+- Parked: 2026-09-18
+- Last touched: 2026-09-18
+- Type: build (small)
+- Domains: community, tech
+- Notes: The programme promised that orders within 30 days of opening a centre's link credit the closet even without the hidden code. That needs a theme script on rubyshines.com (store the centre slug on the click, write it into cart attributes at checkout) plus a ledger rule that reads the attribute. Until it exists the line was removed from the centre's Home share tools and from the Offer details page so nothing is promised that is not delivered. Build the script, add the attribute path to `virtual-closet/lib/ledger.js`, then put the line back in `virtual-closet/views/centre.js` and `virtual-closet/server.js`.
+- Resume when: after the hi-fi pass, before the Uniting Pride pilot goes wide.
+

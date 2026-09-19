@@ -41,7 +41,7 @@ for (const mod of ['./routes/centre', './routes/requests']) {
 }
 
 app.get('/offer-details', (req, res) => {
-  res.type('html').send(page({ title: 'Offer details', mode: 'plain', body: `<section class="card narrow"><h1>Offer details</h1><ul class="list"><li>20% off one order with RUBIES, from a centre's closet link. New or returning customers.</li><li>Applied at checkout, no code to type. Once per customer.</li><li>Not combinable with other discount codes. Excludes gift cards.</li><li>For every two items bought through the link, the closet gets one: 25% of the order goes into the centre's box and RUBIES matches it. Underwear, bras and bikini bottoms all count as one item.</li><li>Orders count for the box for 30 days from using the link.</li></ul></section>` }));
+  res.type('html').send(page({ title: 'Offer details', mode: 'plain', body: `<section class="card narrow"><h1>Offer details</h1><ul class="list"><li>20% off one order with RUBIES, from a centre's closet link. New or returning customers.</li><li>Applied at checkout, no code to type. Once per customer.</li><li>Not combinable with other discount codes. Excludes gift cards.</li><li>For every two items bought through the link, the closet gets one: 25% of the order goes into the centre's box and RUBIES matches it. Underwear, bras and bikini bottoms all count as one item.</li></ul></section>` }));
 });
 
 app.get('/free-pair-terms', (req, res) => {

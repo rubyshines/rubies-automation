@@ -5,27 +5,27 @@
  * which box a request lands in.
  */
 const { db, must, logEvent } = require('./db');
-const { MENU, styleByKey, normalizeSize } = require('./catalog');
+const { MENU, styleByKey, normalizeSize, sizesFor, storeSize } = require('./catalog');
 const money = require('./money');
 const boxes = require('./boxes');
 
 const normEmail = e => String(e || '').trim().toLowerCase();
 
 function describeItems(items) {
-  return (items || []).map(i => ({ ...i, styleName: styleByKey(i.style)?.name || i.style }));
+  return (items || []).map(i => ({ ...i, styleName: styleByKey(i.style)?.name || i.style, storeSize: storeSize(i.style, i.size) }));
 }
 
 /** Validate what the form sent against the centre's settings. Returns { items, errors }. */
 function cleanItems(raw, centre) {
   const errors = [];
   const items = [];
-  const sizes = new Set([...(centre.sizes || []), ...(centre.kids_sizes ? require('./catalog').KIDS_SIZES : [])]);
   for (const it of raw || []) {
     if (!it || !it.style) continue;
     const style = styleByKey(it.style);
     if (!style) { errors.push('Pick a style from the list.'); continue; }
     const size = normalizeSize(it.size);
-    if (!size || !sizes.has(size)) { errors.push(`${style.name}: pick a size ${centre.name} offers.`); continue; }
+    const allowed = sizesFor(style.key, centre);
+    if (!size || !allowed.includes(size)) { errors.push(`${style.name} comes in ${allowed.join(', ') || 'no size ' + centre.name + ' offers'}. Pick one of those.`); continue; }
     const colour = String(it.colour || '').trim();
     if (!colour) { errors.push(`${style.name}: pick a colour.`); continue; }
     items.push({ style: style.key, colour, size });
@@ -78,12 +78,16 @@ async function place(request, centre) {
   return updated;
 }
 
-/** Which box an approved request joins: the open box unless it is already funded, then it waits. */
+/**
+ * An approved request joins the open box, funded or not: the goal grows to
+ * cover it, so "everyone who asked gets theirs" stays true until the centre
+ * taps Send. Sending opens the next box, so later requests land there. The
+ * `waiting` status is kept for rows written before this rule; sendBox still
+ * moves them into the next box.
+ */
 async function approvalPatch(centre, actor) {
   const box = await boxes.getOpenBox(centre.id, { create: true, goalCents: centre.goal_cents });
-  const sum = await boxes.summary(centre, box);
   const now = new Date().toISOString();
-  if (sum.funded) return { status: 'waiting', box_id: null, decided_by: actor, decided_at: now };
   return { status: 'approved', box_id: box.id, decided_by: actor, decided_at: now };
 }
 

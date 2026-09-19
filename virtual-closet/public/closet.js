@@ -90,12 +90,19 @@
   }
 })();
 
-// Request form: the colour list follows the chosen style
+// Request form: the colour and size lists follow the chosen style
 document.addEventListener('change', function (e) {
   var sel = e.target;
   if (!sel.matches('[data-style-select]')) return;
-  var colours = (sel.selectedOptions[0].getAttribute('data-colours') || '').split('|').filter(Boolean);
-  var colourSel = sel.closest('.item').querySelector('[data-colour-select]');
-  if (!colourSel) return;
-  colourSel.innerHTML = colours.map(function (c) { return '<option>' + c + '</option>'; }).join('');
+  var opt = sel.selectedOptions[0];
+  var item = sel.closest('.item');
+  var colours = (opt.getAttribute('data-colours') || '').split('|').filter(Boolean);
+  var colourSel = item.querySelector('[data-colour-select]');
+  if (colourSel) colourSel.innerHTML = colours.map(function (c) { return '<option>' + c + '</option>'; }).join('');
+  var sizes = (opt.getAttribute('data-sizes') || '').split('|').filter(Boolean);
+  var sizeSel = item.querySelector('[data-size-select]');
+  if (sizeSel) {
+    var keep = sizeSel.value;
+    sizeSel.innerHTML = sizes.map(function (s) { return '<option value="' + s + '"' + (s === keep ? ' selected' : '') + '>' + (/^\d+$/.test(s) ? 'Kids ' + s : s) + '</option>'; }).join('');
+  }
 });
