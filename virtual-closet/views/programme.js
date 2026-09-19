@@ -1,7 +1,7 @@
 'use strict';
 /** Programme page with sign-up (1a), confirmation (1b), account pages (1r, 1s, 1u). */
-const { page, esc, LINKS, placeholder } = require('./layout');
-const { SIZES } = require('../lib/catalog');
+const { page, esc, LINKS, img } = require('./layout');
+const { SIZES, MENU } = require('../lib/catalog');
 
 function errorBox(errors) {
   if (!errors || !errors.length) return '';
@@ -13,20 +13,26 @@ function sizeChips(selected, { kids = false, name = 'sizes' } = {}) {
   return `<div class="chips">${SIZES.map(s => `<label class="chip"><input type="checkbox" name="${name}" value="${s}" ${sel.has(s) ? 'checked' : ''}> ${s}</label>`).join('')}<label class="chip"><input type="checkbox" name="kids_sizes" value="1" ${kids ? 'checked' : ''}> Kids sizes</label></div>`;
 }
 
+/** A store photo for the programme page's pictures. */
+function art(key) {
+  const p = MENU.find(x => x.key === key) || MENU[0];
+  return `<div class="hero-art"><img src="${img(p.image, 900)}" alt="${esc(p.title)}" width="600" height="600"></div>`;
+}
+
 function programme({ values = {}, errors = [] } = {}) {
   const v = values;
   const body = `
 <section class="hero">
   <div class="hero-copy">
-    <h1>A closet for your community, stocked by your community.</h1>
+    <h1>A <i>closet</i> for your community, stocked by your community.</h1>
     <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops, requests and sponsors; RUBIES matches every dollar. You receive a box and hand it out. It costs your centre nothing.</p>
     <div class="doors"><a class="btn btn-fill" href="#signup">Sign up your centre</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet%20call">Book a call, if you'd like one</a></div>
   </div>
-  ${placeholder('illustration: a stocked closet, flat vector, site style', 'ph-hero')}
+  ${art('aj')}
 </section>
 <section>
   <h2>Three ways your community can help</h2>
-  <div class="three">
+  <div class="three doors-3">
     <div class="card"><h3>Shop</h3><p>20% off one order, applied from your link. For every two items bought, the closet gets one.</p></div>
     <div class="card"><h3>Request</h3><p>Anyone in your community requests a pair on your page. Approved within the limits you set. They pick it up at the centre or have it shipped home.</p></div>
     <div class="card"><h3>Sponsor</h3><p>Pick an amount, from $16 for a pair to $300 for a full shipment. It goes into the box, and RUBIES matches it.</p></div>
@@ -34,7 +40,7 @@ function programme({ values = {}, errors = [] } = {}) {
   <p class="soft">Everything lands in one box. When the box reaches its goal, it ships to you with everyone's request inside.</p>
 </section>
 <section id="how">
-  <h2>How it works</h2>
+  <h2>How it <i>works</i></h2>
   <ol class="steps steps-4">
     <li><b>Sign up.</b> Five minutes. Tick the programmes you want. Set your sizes.</li>
     <li><b>We approve you.</b> A person at RUBIES reviews every new centre, usually within a few days.</li>
@@ -43,7 +49,7 @@ function programme({ values = {}, errors = [] } = {}) {
   </ol>
 </section>
 <section class="two">
-  ${placeholder('photo or illustration: RUBIES product on models', 'ph-hero')}
+  ${art('ruby')}
   <div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a></p></div>
 </section>
 <section>
@@ -52,14 +58,14 @@ function programme({ values = {}, errors = [] } = {}) {
     <div class="card"><h3>Pass It On</h3><p>Customers' exchanged and returned RUBIES items are routed to your closet. Your centre appears on the public donation map, and its pin links to your closet page.</p><p class="fine">Running today with partners on three continents.</p></div>
     <div class="card"><h3>Virtual Closet</h3><p>A page in your centre's name where people can shop, request a pair or sponsor. Everything goes into a box that RUBIES matches dollar for dollar.</p><p class="fine">You can also add from your own budget any time, paid by card, matched like every other dollar.</p></div>
   </div>
-  <div class="three" style="margin-top:16px">
+  <div class="three" style="margin-top:24px">
     <div><h3>What we ask of you</h3><p>Receive the box and hand things out. Keep one contact reachable. Tell us your sizes once.</p></div>
     <div><h3>What it costs</h3><p>Nothing. Leave any time; anything raised still ships.</p></div>
     <div><h3>Questions?</h3><p>Write to Jamie at <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a>.</p></div>
   </div>
 </section>
 <section id="signup">
-  <h2>Sign up your centre</h2>
+  <h2>Sign up your <i>centre</i></h2>
   ${errorBox(errors)}
   <form class="form" method="post" action="/signup">
     <label>Centre name <input type="text" name="name" value="${esc(v.name || '')}" placeholder="e.g. Uniting Pride" required></label>

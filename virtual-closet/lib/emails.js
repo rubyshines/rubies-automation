@@ -13,6 +13,7 @@
 const { sendEmail } = require('../../shared/sendgridClient');
 const { esc } = require('../views/layout');
 const { dollars } = require('./money');
+const { COLOURS, LOGO_PNG, FONT_STACK } = require('./brand');
 
 const BASE = process.env.VC_BASE_URL || `http://localhost:${process.env.PORT || 3850}`;
 const OPS_BASE = process.env.VC_OPS_BASE_URL || 'https://ops.rubyshines.com';
@@ -20,21 +21,34 @@ const OPERATOR_EMAIL = process.env.VC_OPERATOR_EMAIL || process.env.ALLOWED_EMAI
 const FROM = { fromName: 'RUBIES', fromEmail: 'care@rubyshines.com' };
 const STORE = 'https://rubyshines.com';
 
+// ---- the branded shell ------------------------------------------------------
+// Tables and inline styles, since that is what email clients honour. The
+// store's font falls through the stack (clients do not load web fonts); the
+// colours, the square near-black button and the magenta rule are the site's.
+const font = `font-family:${FONT_STACK};`;
+
 function layout(title, inner, footerLinks = '') {
-  return `<!doctype html><html><body style="margin:0;background:#f6f6f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#222">
-<div style="max-width:560px;margin:0 auto;padding:24px 16px">
-<div style="font-weight:800;letter-spacing:.12em;margin-bottom:16px">RUBIES</div>
-<div style="background:#fff;border:1px solid #ddd;padding:24px">
-<h1 style="font-size:20px;margin:0 0 12px">${esc(title)}</h1>
-${inner}
-</div>
-<p style="font-size:12px;color:#666;margin-top:14px">${footerLinks || `RUBIES · care@rubyshines.com`}</p>
-</div></body></html>`;
+  // Anchors written plainly in the copy get the site's link colour; buttons
+  // and anything already styled are left alone.
+  const styled = inner.replace(/<a href="([^"]+)">/g, `<a href="$1" style="color:${COLOURS.blue}">`);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
+<body style="margin:0;padding:0;background:${COLOURS.grey};${font}color:${COLOURS.ink}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOURS.grey}"><tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
+<tr><td style="padding:0 0 20px"><a href="${STORE}" style="text-decoration:none"><img src="${LOGO_PNG}" width="150" alt="RUBIES" style="display:block;border:0;width:150px;height:auto"></a></td></tr>
+<tr><td style="background:${COLOURS.white};border-top:4px solid ${COLOURS.magenta};padding:32px 32px 24px;${font}color:${COLOURS.ink};font-size:16px;line-height:1.6">
+<h1 style="margin:0 0 16px;font-size:22px;line-height:1.25;font-weight:600;${font}color:${COLOURS.ink}">${esc(title)}</h1>
+${styled}
+</td></tr>
+<tr><td style="padding:16px 4px 0;font-size:12px;line-height:1.6;color:${COLOURS.soft};${font}">${footerLinks ? footerLinks.replace(/<a href="([^"]+)">/g, `<a href="$1" style="color:${COLOURS.soft}">`) : `RUBIES · <a href="mailto:care@rubyshines.com" style="color:${COLOURS.soft}">care@rubyshines.com</a>`}<br>Never stop shining.</td></tr>
+</table></td></tr></table></body></html>`;
 }
-const p = t => `<p style="margin:0 0 12px;line-height:1.5">${t}</p>`;
-const soft = t => p(`<span style="color:#666">${t}</span>`);
-const btn = (href, label) => `<p style="margin:16px 0"><a href="${href}" style="display:inline-block;background:#222;color:#fff;text-decoration:none;padding:10px 18px;font-weight:700">${esc(label)}</a></p>`;
-const btns = pairs => `<p style="margin:16px 0">${pairs.map(([href, label]) => `<a href="${href}" style="display:inline-block;background:#222;color:#fff;text-decoration:none;padding:10px 18px;font-weight:700;margin-right:8px">${esc(label)}</a>`).join('')}</p>`;
+const p = t => `<p style="margin:0 0 14px;line-height:1.6;color:${COLOURS.ink}">${t}</p>`;
+const soft = t => p(`<span style="color:${COLOURS.soft}">${t}</span>`);
+const btnStyle = fill => `display:inline-block;padding:13px 26px;border:1px solid ${COLOURS.black};background:${fill ? COLOURS.black : COLOURS.white};color:${fill ? COLOURS.white : COLOURS.black};text-decoration:none;font-weight:500;font-size:15px;line-height:1.2;${font}`;
+const btn = (href, label) => `<p style="margin:20px 0"><a href="${href}" style="${btnStyle(true)}">${esc(label)}</a></p>`;
+// A pair or trio of actions: the first is the primary, the rest secondary.
+const btns = pairs => `<p style="margin:20px 0">${pairs.map(([href, label], i) => `<a href="${href}" style="${btnStyle(i === 0)}margin:0 8px 8px 0">${esc(label)}</a>`).join('')}</p>`;
 const itemsList = items => (items || []).map(i => `${esc(i.styleName || i.style)} · ${esc(i.colour)} · ${esc(i.size)}`).join(' and ');
 const names = list => (list || []).map(esc).join(' and ');
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -42,6 +56,8 @@ const fmtDate = iso => new Date(iso).toLocaleDateString('en-US', { month: 'long'
 
 async function deliver({ to, subject, html, text, tag }) {
   if (!process.env.SENDGRID_API_KEY || process.env.VC_EMAIL_MODE === 'console') {
+    // VC_EMAIL_DUMP_DIR=<dir> also writes each email's HTML there, to look at.
+    if (process.env.VC_EMAIL_DUMP_DIR) require('fs').writeFileSync(require('path').join(process.env.VC_EMAIL_DUMP_DIR, `${tag || 'email'}.html`), html);
     const links = [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]).filter(u => !u.startsWith('mailto:'));
     console.log(`\n[vc email → ${to}] ${subject}\n  ${(text || '').split('\n').filter(Boolean).slice(0, 3).join('\n  ')}\n  links: ${links.join('\n         ')}\n`);
     return { ok: true, console: true };
@@ -167,10 +183,10 @@ async function boxArrived({ centre, to, box, pickups }) {
     html: layout(`Box #${box.number} arrived`, p(`${pickups} ${plural(pickups, 'person was', 'people were')} told it's ready to collect. Nothing to do.`) + btn(`${BASE}/home`, 'Open your private view')) });
 }
 async function statement({ centre, to, month, stats }) {
-  const rows = Object.entries(stats).map(([k, v]) => `<tr><td style="padding:4px 8px;color:#666">${esc(k)}</td><td style="padding:4px 8px;font-weight:700">${esc(String(v))}</td></tr>`).join('');
+  const rows = Object.entries(stats).map(([k, v]) => `<tr><td style="padding:6px 12px 6px 0;color:${COLOURS.soft};border-bottom:1px solid ${COLOURS.grey}">${esc(k)}</td><td style="padding:6px 0;font-weight:600;border-bottom:1px solid ${COLOURS.grey}">${esc(String(v))}</td></tr>`).join('');
   return deliver({ to, subject: `${centre.name}'s closet in ${month}`, tag: 'statement',
     text: Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join('\n'),
-    html: layout(`${esc(centre.name)}'s closet in ${esc(month)}`, `<table>${rows}</table>` + btn(`${BASE}/history`, 'Open your private view')) });
+    html: layout(`${esc(centre.name)}'s closet in ${esc(month)}`, `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;font-size:15px">${rows}</table>` + btn(`${BASE}/history`, 'Open your private view')) });
 }
 async function byHandReminder({ centre, to, count }) {
   return deliver({ to, subject: `${count} request${plural(count, '', 's')} waiting for your answer`, tag: 'by-hand-reminder',
@@ -252,7 +268,7 @@ async function sponsorArrived({ centre, to, box, items, requests }) {
 }
 
 module.exports = {
-  BASE, OPS_BASE, OPERATOR_EMAIL, deliver,
+  BASE, OPS_BASE, OPERATOR_EMAIL, deliver, layout, btn, btns,
   verifyEmail, resetPassword, invitation, addedToCentre, madeAdmin, emailChanged, confirmEmailChange,
   operatorSignup, operatorNeedsAttention,
   welcome, sponsored, requestNeedsAnswer, requestAutoApproved, boxFunded, boxOnItsWay, boxArrived, statement, byHandReminder,

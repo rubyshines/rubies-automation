@@ -1,6 +1,6 @@
 'use strict';
 /** Request a pair (1g, 1o), sent states (1h, 1p), style sheet and size guide (1ah), by-hand answer pages. */
-const { page, esc, LINKS, addressLine, placeholder } = require('./layout');
+const { page, esc, LINKS, addressLine, img, productCard } = require('./layout');
 const { sizesFor } = require('../lib/catalog');
 const { errorBox } = require('./programme');
 const requestsLib = require('../lib/requests');
@@ -26,7 +26,7 @@ function form({ centre, products, values = {}, errors = [], limit }) {
 <h1>Request a pair</h1>
 <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Tell us what you need; it comes with ${esc(centre.name)}'s next shipment, in plain packaging, and we'll email you when it's ready. Only RUBIES and ${esc(centre.name)} see your request. New to RUBIES? <a href="${LINKS.how}">How RUBIES works</a>.</p>
 <h2>Our styles</h2>
-<div class="products">${products.map(p => `<a class="product" href="/${centre.slug}/style/${p.key}" id="style-${p.key}">${placeholder(p.name, 'ph-sq')}<span class="name">${esc(p.name)}</span><span class="fine">${esc(p.kind === 'underwear' ? 'No-tuck shaping underwear' : p.kind === 'bra' ? 'Shaping bra' : 'Bikini bottom')}</span><span class="soft">Details</span></a>`).join('')}</div>
+<div class="products">${products.map(p => productCard(p, { href: `/${centre.slug}/style/${p.key}`, id: `style-${p.key}`, sub: 'Details' })).join('')}</div>
 <div class="card" style="margin-top:16px"><h3>Check your size first</h3><p>Free pairs can't be exchanged, so a minute with the size guide is worth it. Hips for underwear and bikini bottoms, chest for the bra.</p><a class="btn btn-line" href="${LINKS.sizeGuide}" target="_blank" rel="noopener">Open the size guide</a></div>
 </section>
 <section>
@@ -81,7 +81,7 @@ function confirmed({ centre, request }) {
 }
 
 function styleSheet({ centre, style }) {
-  const body = `<section class="card narrow"><p><a href="/${centre.slug}/request">← Back to the request</a></p><h1>${esc(style.title)}</h1>${placeholder('product photos, swipe', 'ph-hero')}<p><b>What it does:</b> ${style.kind === 'underwear' ? 'smooth, feminine shaping with no tucking.' : style.kind === 'bra' ? 'a soft shaping bra for every day.' : 'no-tuck shaping for the pool and the beach.'} <b>Colours:</b> ${esc(style.colours.join(', '))}.</p><p><a href="${LINKS.sizeGuide}" target="_blank" rel="noopener">Size guide</a> · <a href="https://rubyshines.com/products/${esc(style.handle)}" target="_blank" rel="noopener">Full page on the store</a></p><a class="btn btn-fill" href="/${centre.slug}/request?style=${style.key}">Choose this style</a></section>`;
+  const body = `<section class="card narrow"><p><a href="/${centre.slug}/request">← Back to the request</a></p><h1>${esc(style.title)}</h1><div class="hero-art"><img src="${img(style.image, 900)}" alt="${esc(style.title)}" width="600" height="600"></div><p><b>What it does:</b> ${style.kind === 'underwear' ? 'smooth, feminine shaping with no tucking.' : style.kind === 'bra' ? 'a soft shaping bra for every day.' : 'no-tuck shaping for the pool and the beach.'} <b>Colours:</b> ${esc(style.colours.join(', '))}.</p><p><a href="${LINKS.sizeGuide}" target="_blank" rel="noopener">Size guide</a> · <a href="https://rubyshines.com/products/${esc(style.handle)}" target="_blank" rel="noopener">Full page on the store</a></p><a class="btn btn-fill" href="/${centre.slug}/request?style=${style.key}">Choose this style</a></section>`;
   return page({ title: style.title, centre, mode: 'public', body });
 }
 
