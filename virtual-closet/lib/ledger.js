@@ -56,8 +56,17 @@ async function recordOrder(order, { lineItems = null, emit = true } = {}) {
   // 2. Sponsorship and centre top-up line items.
   const s = await sponsorship.settings();
   const items = lineItems || order.line_items || [];
+  let orderAttrs = sponsorship.readOrderAttributes(order);
+  // Mirror rows carry no note attributes; fetch them from Shopify when a sponsorship line has no properties of its own.
+  if (!orderAttrs.slug && items.some(li => sponsorship.readLineItem(li, s) && !sponsorship.readLineItem(li, s).slug)) {
+    try {
+      const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
+      const data = await shopifyGraphQL('query($id: ID!) { order(id: $id) { customAttributes { key value } } }', { id: `gid://shopify/Order/${orderId}` });
+      orderAttrs = sponsorship.readOrderAttributes(data.order || {});
+    } catch (err) { console.warn(`[vc] order attributes lookup failed for ${orderId}: ${err.message}`); }
+  }
   for (const li of items) {
-    const read = sponsorship.readLineItem(li, s);
+    const read = sponsorship.readLineItem(li, s, orderAttrs);
     if (!read || !read.slug) continue;
     const centre = await centres.getBySlug(read.slug);
     if (!centre) continue;

@@ -100,6 +100,12 @@ test('a sponsorship line item is read from either the webhook or the mirror shap
   const mirror = sponsorship.readLineItem({ shopify_line_item_id: 'gid://shopify/LineItem/10', shopify_variant_id: 'gid://shopify/ProductVariant/222', quantity: 50, unit_price: 1, custom_attributes: [{ key: 'Closet', value: 'demo' }, { key: 'Kind', value: 'centre' }] }, s);
   assert.deepEqual(mirror, { slug: 'demo', boxNumber: null, kind: 'centre_add', amountCents: 5000, lineItemId: '10' });
   assert.equal(sponsorship.readLineItem({ variant_id: 999 }, s), null);
+  const attrs = sponsorship.readOrderAttributes({ note_attributes: [{ name: 'Closet', value: 'demo' }, { name: 'Box', value: '3' }, { name: 'Kind', value: 'centre' }] });
+  assert.deepEqual(attrs, { slug: 'demo', boxNumber: 3, kind: 'centre_add' });
+  const viaOrder = sponsorship.readLineItem({ id: 11, variant_id: 222, quantity: 40, price: '1.00' }, s, attrs);
+  assert.deepEqual(viaOrder, { slug: 'demo', boxNumber: 3, kind: 'centre_add', amountCents: 4000, lineItemId: '11' });
+  const cartUrl = 'https://rubyshines.com/cart/222:40?attributes%5BCloset%5D=demo&attributes%5BBox%5D=3&attributes%5BKind%5D=centre';
+  assert.ok(cartUrl.includes('/cart/222:40'));
 });
 
 test('the closet page renders every arrangement and state without leaking undefined', () => {

@@ -110,11 +110,16 @@ async function sendBox(centre, box, { fillMode, plan, pickupNote, deliveryNote, 
   const now = new Date().toISOString();
   const t = preview.totals;
   const ledgerRows = [
-    { centre_id: centre.id, box_id: box.id, kind: 'match', amount_cents: t.match, source_type: 'box', source_id: `match-${box.id}` },
+    { centre_id: centre.id, box_id: box.id, kind: 'match', amount_cents: t.match, source_type: 'box', source_id: `match-${box.id}`, detail: {} },
   ];
   if (t.doorShipping) ledgerRows.push({ centre_id: centre.id, box_id: box.id, kind: 'door_shipping', amount_cents: -t.doorShipping, source_type: 'box', source_id: `door-${box.id}`, detail: { packages: preview.shipped.length } });
-  if (t.carryOut) ledgerRows.push({ centre_id: centre.id, box_id: box.id, kind: 'carry_out', amount_cents: -t.carryOut, source_type: 'box', source_id: `carry-out-${box.id}` });
-  must(await db().from('vc_ledger').upsert(ledgerRows, { onConflict: 'kind,source_type,source_id', ignoreDuplicates: true }), 'send ledger');
+  if (t.carryOut) ledgerRows.push({ centre_id: centre.id, box_id: box.id, kind: 'carry_out', amount_cents: -t.carryOut, source_type: 'box', source_id: `carry-out-${box.id}`, detail: {} });
+  // Plain inserts, one per row: the ledger's uniqueness is a partial index,
+  // which PostgREST upsert cannot target, so a duplicate is tolerated instead.
+  for (const row of ledgerRows) {
+    const { error } = await db().from('vc_ledger').insert(row);
+    if (error && !/duplicate key|unique/i.test(error.message)) throw new Error(`send ledger: ${error.message}`);
+  }
   must(await db().from('vc_boxes').update({
     status: 'sent', sent_at: now, fill_mode: fillMode === 'chosen' ? 'chosen' : 'auto', fill_plan: preview.plan,
     pickup_note: pickupNote || null, delivery_note: deliveryNote || null, items_count: preview.itemsCount,

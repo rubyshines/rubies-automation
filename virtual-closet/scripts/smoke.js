@@ -22,11 +22,12 @@ function storeCookies(res) {
   for (const c of set) { const [kv] = c.split(';'); const [k, ...v] = kv.split('='); if (v.join('=') === '') jar.delete(k); else jar.set(k, v.join('=')); }
 }
 async function call(path, { method = 'GET', form = null } = {}) {
-  const res = await fetch(`${BASE}${path}`, { method, redirect: 'manual', headers: { cookie: cookieHeader(), ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}) }, body: form ? new URLSearchParams(form).toString() : undefined });
+  const res = await fetch(`${BASE}${path}`, { method, redirect: 'manual', headers: { cookie: cookieHeader(), ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}) }, body: form ? encodeForm(form) : undefined });
   storeCookies(res);
   const text = await res.text();
   return { status: res.status, location: res.headers.get('location'), text };
 }
+function encodeForm(form) { const p = new URLSearchParams(); for (const [k, v] of Object.entries(form)) { if (Array.isArray(v)) v.forEach(x => p.append(k, x)); else p.append(k, v); } return p.toString(); }
 function ok(cond, label) { if (!cond) { console.error(`✗ ${label}`); process.exit(1); } console.log(`✓ ${label}`); }
 async function latestToken(purpose) {
   const rows = must(await db().from('vc_tokens').select('*').eq('purpose', purpose).is('used_at', null).order('created_at', { ascending: false }).limit(1), 'token');
@@ -40,6 +41,7 @@ async function latestToken(purpose) {
 
   // 1. sign-up step 1
   let r = await call('/signup', { method: 'POST', form: { name, website: 'https://example.org', closet: '1', pass_it_on: '', sizes: ['S', 'M', 'L', '1X'], kids_sizes: '' } });
+  if (r.status !== 302) console.error(r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400));
   ok(r.status === 302 && r.location.endsWith('/signup/account'), 'step 1 creates a pending centre');
   // 2. step 2 account
   r = await call('/signup/account', { method: 'POST', form: { name: 'Sam Smoke', role_title: 'Coordinator', email: adminEmail, password: 'correct horse battery' } });
@@ -100,6 +102,7 @@ async function latestToken(purpose) {
   r = await call('/send');
   ok(r.status === 200 && r.text.includes('Send box #1') && r.text.includes('Rosa'), 'send page lists the requested items');
   r = await call('/send', { method: 'POST', form: { fill_mode: 'auto', pickup_note: 'Front desk, ask for the closet.', delivery_note: 'Coming from RUBIES.', remember: '1', action: 'send' } });
+  if (!(r.status === 200 && r.text.includes('Box #1 is on its way to RUBIES'))) console.error(r.status, r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').match(/Something went wrong|error[^.]*\./i)?.[0] || r.text.slice(0, 300));
   ok(r.status === 200 && r.text.includes('Box #1 is on its way to RUBIES'), 'box #1 sends and box #2 opens');
   const boxes = require('../lib/boxes');
   const b1 = await boxes.getBoxByNumber(centre.id, 1);

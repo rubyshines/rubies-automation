@@ -30,18 +30,30 @@ async function checkoutUrl({ centre, box, tile, centreAdd = false }) {
   if (centreAdd) { variant = s.variants.unit; qty = Math.max(1, Math.round(tile.cents / 100)); }
   else { variant = s.variants[tile.key]; qty = 1; }
   if (!variant) return null;
+  // The documented cart permalink: creates a cart with the line and goes to
+  // checkout. Attribution rides as cart attributes, which land on the order
+  // as note attributes; the ledger reads those (see readOrderAttributes).
   const params = new URLSearchParams({
-    id: numericId(variant.id), quantity: String(qty),
-    [`properties[${PROP_CENTRE}]`]: centre.slug,
-    [`properties[${PROP_BOX}]`]: String(box?.number || 1),
-    [`properties[${PROP_KIND}]`]: centreAdd ? 'centre' : 'sponsor',
-    return_to: '/checkout',
+    [`attributes[${PROP_CENTRE}]`]: centre.slug,
+    [`attributes[${PROP_BOX}]`]: String(box?.number || 1),
+    [`attributes[${PROP_KIND}]`]: centreAdd ? 'centre' : 'sponsor',
   });
-  return `${STORE}/cart/add?${params.toString()}`;
+  return `${STORE}/cart/${numericId(variant.id)}:${qty}?${params.toString()}`;
+}
+
+/** Closet/Box/Kind from an order's note attributes (REST webhook shape or GraphQL customAttributes). */
+function readOrderAttributes(order) {
+  const props = {};
+  for (const a of order?.note_attributes || order?.customAttributes || []) props[(a.name || a.key || '').toLowerCase()] = a.value;
+  return {
+    slug: props[PROP_CENTRE.toLowerCase()] || null,
+    boxNumber: parseInt(props[PROP_BOX.toLowerCase()], 10) || null,
+    kind: props[PROP_KIND.toLowerCase()] === 'centre' ? 'centre_add' : 'sponsor',
+  };
 }
 
 /** Read a line item (REST webhook shape or mirror row) and say whether it is ours. */
-function readLineItem(li, s) {
+function readLineItem(li, s, orderAttrs = null) {
   if (!s?.variants) return null;
   const vid = String(li.variant_id || li.shopify_variant_id || '').split('/').pop();
   const known = Object.values(s.variants).find(v => numericId(v.id) === vid);
@@ -50,13 +62,15 @@ function readLineItem(li, s) {
   for (const p of li.properties || li.custom_attributes || []) props[(p.name || p.key || '').toLowerCase()] = p.value;
   const qty = li.quantity || 1;
   const unit = Math.round(parseFloat(li.price ?? li.unit_price ?? known.cents / 100) * 100);
+  const fromLine = props[PROP_CENTRE.toLowerCase()];
+  const o = orderAttrs || {};
   return {
-    slug: props[PROP_CENTRE.toLowerCase()] || null,
-    boxNumber: parseInt(props[PROP_BOX.toLowerCase()], 10) || null,
-    kind: props[PROP_KIND.toLowerCase()] === 'centre' ? 'centre_add' : 'sponsor',
+    slug: fromLine || o.slug || null,
+    boxNumber: parseInt(props[PROP_BOX.toLowerCase()], 10) || o.boxNumber || null,
+    kind: (fromLine ? props[PROP_KIND.toLowerCase()] === 'centre' : o.kind === 'centre_add') ? 'centre_add' : 'sponsor',
     amountCents: unit * qty,
     lineItemId: String(li.id || li.shopify_line_item_id || '').split('/').pop(),
   };
 }
 
-module.exports = { PRODUCT_TITLE, PROP_CENTRE, PROP_BOX, PROP_KIND, SPONSOR_TILES, settings, checkoutUrl, readLineItem, numericId };
+module.exports = { PRODUCT_TITLE, PROP_CENTRE, PROP_BOX, PROP_KIND, SPONSOR_TILES, settings, checkoutUrl, readLineItem, readOrderAttributes, numericId };
