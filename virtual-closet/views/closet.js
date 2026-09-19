@@ -3,7 +3,7 @@
  * The closet page: one page, four arrangements picked by ?lead=
  * (wireframes 1ag, 1c, 1d, 1e, 2a) and the progress module states (1f).
  */
-const { page, esc, LINKS, addressLine, placeholder } = require('./layout');
+const { page, esc, LINKS, img, productCard } = require('./layout');
 const { SPONSOR_TILES, productUrl } = require('../lib/catalog');
 const { dollars } = require('../lib/money');
 const { displaySizes } = require('../lib/centres');
@@ -38,6 +38,18 @@ function requestLine(ctx) {
   return 'It comes with the next shipment, to the closet or to your door.';
 }
 
+/** The centre's own logo above the heading, when it has given us one. */
+function centreLogo(ctx) {
+  return ctx.centre.logo_url ? `<img class="centre-logo" src="${esc(ctx.centre.logo_url)}" alt="${esc(ctx.name)}">` : '';
+}
+
+/** A store photo as the hero's picture: the product itself, the way the store shows it. */
+function heroArt(ctx, key) {
+  const p = ctx.products.find(x => x.key === key) || ctx.products[0];
+  if (!p) return '';
+  return `<div class="hero-art"><img src="${img(p.image, 900)}" alt="${esc(p.title)}" width="600" height="600"></div>`;
+}
+
 function progress(ctx, { hero = false, strip = false } = {}) {
   const s = ctx.sum;
   const pct = s.goal ? Math.min(100, Math.round((s.raised / s.goal) * 100)) : 0;
@@ -56,10 +68,11 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   if (strip) {
     return `<section class="strip" id="progress"><div><b>Shipment #${s.number}</b> · ${dollars(s.raised)} raised of ${dollars(s.goal)} · RUBIES matches every dollar</div><a class="btn btn-small btn-sun" href="#sponsor">Sponsor the closet</a></section>`;
   }
-  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b><span class="soft">${s.state === 'funded' || s.state === 'over' ? 'Funded' : `Ships when ${esc(ctx.name)} sends it`}</span></div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
+  const status = s.state === 'funded' || s.state === 'over' ? `<span class="tag">Funded</span>` : `<span class="soft">Ships when ${esc(ctx.name)} sends it</span>`;
+  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
-function amounts(ctx, { cta = 'Sponsor' } = {}) {
+function amounts(ctx) {
   const tiles = SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${t.label}</b><small>${esc(t.sub)}</small></a>`).join('');
   return `<div class="gifts" id="sponsor">${tiles}</div><p class="fine">Pick an amount; checkout happens at the RUBIES store. RUBIES matches every dollar, so $16 becomes a $32 pair.</p>`;
 }
@@ -67,10 +80,10 @@ function amounts(ctx, { cta = 'Sponsor' } = {}) {
 function productGrid(ctx, { prices = true, discounted = false, details = false } = {}) {
   const cards = ctx.products.map(p => {
     const price = discounted
-      ? `${dollars(p.retail_cents)} · <b>${dollars(Math.round(p.retail_cents * 0.8))}</b> with your 20%`
-      : prices ? `${dollars(p.retail_cents)} · ${'○'.repeat(Math.min(5, p.colours.length))}` : '';
+      ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b> <span class="fine">with your 20%</span>`
+      : prices ? dollars(p.retail_cents) : '';
     const href = details ? `/${ctx.slug}/request#style-${p.key}` : productUrl(p);
-    return `<a class="product" href="${href}">${placeholder(p.name + ' on model', 'ph-sq')}<span class="name">${esc(p.title.toUpperCase())}</span>${price ? `<span class="price">${price}</span>` : ''}${details ? `<span class="soft">Details</span>` : ''}</a>`;
+    return productCard(p, { href, price, sub: details ? 'Details' : '' });
   }).join('');
   return `<div class="products">${cards}</div><p class="fine">${details ? 'No prices here; Details opens the style sheet. ' : 'Cards link to the store with the discount. '}Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.</p>`;
 }
@@ -83,7 +96,7 @@ function howItWorks(ctx, variant = 'default') {
     : [`Shop, request or sponsor. Everything lands in one shipment for ${esc(ctx.name)}.`,
        'RUBIES matches every dollar in it.',
        `At its goal, the shipment goes to ${esc(ctx.name)}. Pairs go to the people who requested, then to anyone who walks in.`];
-  return `<section class="how" id="how"><h2>How it works</h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol><p class="soft">Who RUBIES is: a small brand making gender-affirming underwear and swimwear for trans girls and women. <a href="${LINKS.about}">About RUBIES</a></p></section>`;
+  return `<section class="how" id="how"><h2>How it <i>works</i></h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol><p class="soft">Who RUBIES is: a small brand making gender-affirming underwear and swimwear for trans girls and women. <a href="${LINKS.about}">About RUBIES</a></p></section>`;
 }
 
 function wordsSection(ctx) {
@@ -97,12 +110,13 @@ function allEqual(ctx) {
   return `
 <section class="hero">
   <div class="hero-copy">
-    <h1>${esc(ctx.name)}'s closet</h1>
+    ${centreLogo(ctx)}
+    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
     <p class="lede">Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Stocked by ${esc(ctx.name)}'s community, matched by RUBIES.</p>
   </div>
-  ${placeholder(`${ctx.centre.logo_url ? 'Centre logo' : '[Centre logo]'} + illustration`, 'ph-hero')}
+  ${heroArt(ctx, 'ruby')}
 </section>
-<section class="three">
+<section class="three doors-3">
   <div class="card"><h3>Shop</h3><p>20% off one order with RUBIES, from this link. For every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
   <div class="card"><h3>Request a pair</h3><p>Tell us what you need. ${requestLine(ctx)}</p>${requestBtn(ctx)}</div>
   <div class="card"><h3>Sponsor</h3><p>Put a pair in the shipment. RUBIES matches every dollar.</p><a class="btn btn-sun" href="#sponsor">Sponsor the closet</a></div>
@@ -120,12 +134,13 @@ function shopFirst(ctx) {
   return `
 <section class="hero">
   <div class="hero-copy">
-    <h1>${esc(ctx.name)}'s closet</h1>
+    ${centreLogo(ctx)}
+    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
     <p class="lede"><b>Shop with 20% off. Every two items puts one in the closet.</b></p>
     <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. 20% off one order from this link, and for every two items bought, ${esc(ctx.name)}'s closet gets one.</p>
     ${shopBtn(ctx, 'Shop the store with 20% off')}
   </div>
-  ${placeholder('hero product photo, models in product', 'ph-hero')}
+  ${heroArt(ctx, 'aj')}
 </section>
 <section>${productGrid(ctx, { discounted: true })}</section>
 ${progress(ctx, { strip: true })}
@@ -140,13 +155,14 @@ function requestFirst(ctx) {
   return `
 <section class="hero">
   <div class="hero-copy">
-    <h1>${esc(ctx.name)}'s closet</h1>
+    ${centreLogo(ctx)}
+    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
     <p class="lede"><b>Need a pair? Request one here.</b></p>
     <p>Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Pick a style and size, and it comes with ${esc(ctx.name)}'s next shipment: collect it at the centre or have it sent to your door in plain packaging. No cost to you.</p>
     <div class="doors">${requestBtn(ctx)}<a class="btn btn-line" href="${LINKS.sizeGuide}">Check my size first</a></div>
     <p class="fine">Only RUBIES and ${esc(ctx.name)} see your request. <a href="${LINKS.how}">How RUBIES works</a></p>
   </div>
-  ${placeholder('product photo, calm, no fundraising imagery', 'ph-hero')}
+  ${heroArt(ctx, 'sassy')}
 </section>
 <section><h2>What's in the closet</h2>${productGrid(ctx, { prices: false, details: true })}</section>
 ${howItWorks(ctx, 'request')}
@@ -161,7 +177,8 @@ function sponsorFirst(ctx) {
   return `
 <section class="hero hero-sponsor">
   <div class="hero-copy">
-    <h1>${esc(ctx.name)}'s closet · Shipment #${ctx.sum.number}</h1>
+    ${centreLogo(ctx)}
+    <h1>${esc(ctx.name)}'s <i>closet</i> · Shipment #${ctx.sum.number}</h1>
     ${progress(ctx, { hero: true })}
     <p>Gender-affirming underwear and swimwear for trans girls and women. RUBIES matches every dollar; at the goal, the shipment leaves for ${esc(ctx.name)}.</p>
     <div class="doors"><a class="btn btn-sun" href="#sponsor">Sponsor the closet</a><a class="btn btn-line" href="/${ctx.slug}/shop">Shop with 20% off</a>${requestBtn(ctx)}</div>

@@ -132,7 +132,7 @@ ${!admin ? '<p class="fine">Members can see settings; admins change them.</p>' :
   <h2>Centre</h2>
   <label>Centre name <input type="text" name="name" value="${esc(centre.name)}" ${dis} required></label>
   <label>Website <input type="url" name="website" value="${esc(centre.website || '')}" ${dis}></label>
-  <label>Logo, for your closet page <input type="url" name="logo_url" value="${esc(centre.logo_url || '')}" placeholder="https://… (upload comes with the hi-fi pass)" ${dis}></label>
+  <label>Logo, for your closet page <input type="url" name="logo_url" value="${esc(centre.logo_url || '')}" placeholder="https://" ${dis}></label>
   <fieldset><legend>Address boxes and items ship to</legend>
     <label>Street <input type="text" name="street" value="${esc(centre.address?.street || '')}" ${dis}></label>
     <div class="row"><label>City <input type="text" name="city" value="${esc(centre.address?.city || '')}" ${dis}></label><label>State / province <input type="text" name="region" value="${esc(centre.address?.region || '')}" ${dis}></label><label>Postal code <input type="text" name="postal" value="${esc(centre.address?.postal || '')}" ${dis}></label></div>
