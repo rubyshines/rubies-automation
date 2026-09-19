@@ -3,7 +3,7 @@ name: Virtual Closet
 description: A page in each LGBTQ+ centre's name where its community buys, asks and gives, and RUBIES matches every dollar
 type: initiative
 domains: [community, b2b_sales, marketing, tech]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 ---
 
 ## Goal
@@ -18,7 +18,8 @@ Turn LGBTQ+ centre partnerships into a revenue channel that also stocks their cl
 6. Widen — more centres, campus resource centres as a second wave, partner brand (trans-masc-only) if one fits
 
 ## Current Status
-- **2026-09-18 — Built and live at low fidelity.** Claude Design produced 43 lo-fi wireframes from the brief; the app was built from them in one session and passes an end-to-end smoke test against real data and the real store objects (hidden "Sponsor a closet" product, "Virtual Closet 20%" discount). Next: Jamie's own click-through, then the hi-fi pass in the rubyshines.com design system, then Uniting Pride as the first centre.
+- **2026-09-18 — Built and live at low fidelity.** Claude Design produced 43 lo-fi wireframes from the brief; the app was built from them in one session and passes an end-to-end smoke test against real data and the real store objects (hidden "Sponsor a closet" product, "Virtual Closet 20%" discount). Next: Jamie's own click-through, then Uniting Pride as the first centre.
+- **2026-09-19 — Hi-fi pass done.** Every user-facing surface (public pages, the centre's private view, the emails) is in the rubyshines.com design system: the store's fonts, colours, square buttons, product photography and wordmark. The operator side stays in the CS dashboard's own look. Guarded by `customer-service/test/virtualClosetBrand.test.js`.
 
 Terms as of 2026-09-18: 20% off one order per customer, existing customers included, applied automatically (hidden single-use discount per click, no code shown); 25% of each order into the centre's box; sponsors and the centre's own budget into the same box, matched 1:1; box target set by the centre with a $300 floor, goal grows to cover everyone approved, centre decides past the goal; free pairs approved automatically within centre-set limits and placed in the open box until the centre sends it, auto-swap if out of stock, final; $15 per shipped package charged to the box; menu of five styles (AJ, Charlie, Sassy, Brooke, Ruby). Language is matching, never discount. Uniting Pride has agreed to be first.
 

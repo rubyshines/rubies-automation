@@ -12,7 +12,7 @@ Build spec. The programme design lives in `.claude/plans/org-closet-programme.md
 
 ## Scope
 
-"The entire site, low fidelity": every screen and email in the wireframes, working end to end on real data, with wireframe-grade styling (plain HTML, one small stylesheet, no brand pass). The hi-fi pass comes later and only touches templates and CSS.
+"The entire site, low fidelity": every screen and email in the wireframes, working end to end on real data, with wireframe-grade styling (plain HTML, one small stylesheet). The hi-fi pass followed on 2026-09-19 and touched only templates, CSS and the email shell.
 
 In scope:
 - Public: programme page with sign-up, sign-up confirmation, closet page with the four `?lead=` arrangements and all progress states, request form as its own step with email verification, sent states, sponsor handoff and thank-you, terms and reference pages, requests-paused states, donation-map pin link.
@@ -23,7 +23,6 @@ In scope:
 - Jobs: ledger reconcile, reminders, monthly statement, needs-attention digest.
 
 Out of scope for this project (parked or later):
-- The hi-fi visual pass (stage 2 of the brief).
 - Google and Microsoft sign-in buttons doing anything (rendered, disabled, "coming soon").
 - The 30-day browser attribution window on the store (needs a theme script; the discount code carries attribution for now).
 - "Create store orders" from the packing list (zero-priced store orders per requester). The packing list is built; the button is a stub that says what it will do.
