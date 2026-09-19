@@ -25,6 +25,14 @@ const COLOURS = {
 const LOGO_PNG = 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/rubies-logo-email-480.png?v=1789786411';
 const FAVICON = 'https://rubyshines.com/cdn/shop/files/RUBIES-logo-pink-green-rgb.svg';
 
+// The store's flat vector illustrations (the same files rubyshines.com uses
+// for its homepage hero and the underwear category), so the closet pages show
+// people rather than a cropped product flat-lay.
+const ILLUSTRATIONS = {
+  beach: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/Hero-desktop.svg', alt: 'Four friends on a beach in RUBIES swimwear', ratio: '16 / 10' },
+  mirror: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/under-skinned.svg', alt: 'Putting on lipstick in the mirror, in RUBIES underwear', ratio: '1 / 1' },
+};
+
 // The store's face is Fixel Display; email clients fall through the stack.
 // Single quotes inside, since this lands in style="..." attributes.
 const FONT_STACK = "'Fixel Display', Assistant, 'Helvetica Neue', Arial, sans-serif";
@@ -51,4 +59,4 @@ function swatch(colour) {
   return SWATCHES[colour] || COLOURS.grey;
 }
 
-module.exports = { COLOURS, LOGO_PNG, FAVICON, FONT_STACK, SWATCHES, swatch };
+module.exports = { COLOURS, LOGO_PNG, FAVICON, FONT_STACK, SWATCHES, ILLUSTRATIONS, swatch };

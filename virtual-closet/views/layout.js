@@ -1,6 +1,6 @@
 'use strict';
 const { STORE } = require('../lib/catalog');
-const { FAVICON, swatch } = require('../lib/brand');
+const { FAVICON, ILLUSTRATIONS, swatch } = require('../lib/brand');
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,6 +26,12 @@ function img(url, width) {
 
 const logo = (width = 170) => `<img src="/public/rubies-logo.svg" alt="RUBIES" width="${width}" height="${Math.round(width * 135 / 489)}">`;
 
+/** One of the store's illustrations in a framed art block. */
+function illustration(name, cls = 'hero-art') {
+  const i = ILLUSTRATIONS[name] || ILLUSTRATIONS.beach;
+  return `<div class="${cls}" style="aspect-ratio:${i.ratio}"><img src="${i.src}" alt="${esc(i.alt)}" loading="lazy"></div>`;
+}
+
 /**
  * Every page. `mode` picks the header: public (closet pages), programme (the
  * sign-up site), centre (signed-in private view), plain (account cards). The
@@ -41,7 +47,7 @@ function page({ title, body, centre, mode = 'public', nav = '', user = null, ban
   } else if (mode === 'centre') {
     header = `<header class="hd"><div>${brand}<nav class="hd-nav"><a href="/home">Home</a><a href="/history">History</a><a href="/settings">Settings</a></nav></div><div class="hd-user">${esc(centre?.name || '')}${user ? ` · ${esc(user.name || user.email)}` : ''} <a href="/signout">Sign out</a></div></header>`;
   } else if (mode === 'programme') {
-    header = `<header class="hd"><div>${brand}</div><nav><a href="/#how">How it works</a><a href="${LINKS.how}">How RUBIES works</a><a class="btn btn-line" href="/#signup">Sign up</a><a class="btn btn-line" href="/signin">Sign in</a></nav></header>`;
+    header = `<header class="hd"><div>${brand}</div><nav><a href="/#how">How it works</a><a href="${LINKS.about}">About RUBIES</a><a class="btn btn-line" href="/#signup">Sign up</a><a class="btn btn-line" href="/signin">Sign in</a></nav></header>`;
   } else {
     header = `<header class="hd"><div>${brand}</div><nav>${nav}</nav></header>`;
   }
@@ -93,4 +99,4 @@ function productCard(p, { href, price = '', sub = '', swatches = true, id = '' }
   return `<a class="product" href="${href}"${id ? ` id="${id}"` : ''}><span class="media"><img src="${img(p.image, 600)}" alt="${esc(p.title)}" loading="lazy" width="300" height="315"></span><span class="body"><span class="name">${esc(p.title)}</span>${foot}${sub ? `<span class="fine">${sub}</span>` : ''}</span></a>`;
 }
 
-module.exports = { page, esc, LINKS, addressLine, img, productCard, swatchesHtml };
+module.exports = { page, esc, LINKS, addressLine, img, productCard, swatchesHtml, illustration };

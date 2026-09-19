@@ -3,7 +3,7 @@
  * The closet page: one page, four arrangements picked by ?lead=
  * (wireframes 1ag, 1c, 1d, 1e, 2a) and the progress module states (1f).
  */
-const { page, esc, LINKS, img, productCard } = require('./layout');
+const { page, esc, LINKS, img, productCard, illustration } = require('./layout');
 const { SPONSOR_TILES, productUrl } = require('../lib/catalog');
 const { dollars } = require('../lib/money');
 const { displaySizes } = require('../lib/centres');
@@ -23,7 +23,7 @@ function render({ centre, sum, lastSent, products, lead, words, paused }) {
 // ---- modules -------------------------------------------------------------
 
 function shopBtn(ctx, label = 'Shop with 20% off') {
-  return `<a class="btn btn-fill" href="/${ctx.slug}/shop">${esc(label)}</a><p class="fine">20% off one order with RUBIES, from this link. <a href="${LINKS.offer}">Offer details</a></p>`;
+  return `<a class="btn btn-fill" href="/${ctx.slug}/shop">${esc(label)}</a><p class="fine"><a href="${LINKS.offer}">Offer details</a></p>`;
 }
 
 function requestBtn(ctx, label = 'Request a pair') {
@@ -68,24 +68,30 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   if (strip) {
     return `<section class="strip" id="progress"><div><b>Shipment #${s.number}</b> · ${dollars(s.raised)} raised of ${dollars(s.goal)} · RUBIES matches every dollar</div><a class="btn btn-small btn-sun" href="#sponsor">Sponsor the closet</a></section>`;
   }
-  const status = s.state === 'funded' || s.state === 'over' ? `<span class="tag">Funded</span>` : `<span class="soft">Ships when ${esc(ctx.name)} sends it</span>`;
+  const status = s.state === 'funded' || s.state === 'over' ? `<span class="tag">Funded</span>` : `<span class="soft">Open</span>`;
   return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
 function amounts(ctx) {
   const tiles = SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${t.label}</b><small>${esc(t.sub)}</small></a>`).join('');
-  return `<div class="gifts" id="sponsor">${tiles}</div><p class="fine">Pick an amount; checkout happens at the RUBIES store. RUBIES matches every dollar, so $16 becomes a $32 pair.</p>`;
+  return `<div class="amounts" id="sponsor"><p><b>RUBIES matches every dollar</b>, so $16 becomes a $32 pair. Pick an amount; you pay at the RUBIES store.</p><div class="gifts">${tiles}</div></div>`;
 }
 
-function productGrid(ctx, { prices = true, discounted = false, details = false } = {}) {
+function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true } = {}) {
   const cards = ctx.products.map(p => {
     const price = discounted
       ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b> <span class="fine">with your 20%</span>`
       : prices ? dollars(p.retail_cents) : '';
-    const href = details ? `/${ctx.slug}/request#style-${p.key}` : productUrl(p);
+    const href = details ? `/${ctx.slug}/style/${p.key}` : productUrl(p);
     return productCard(p, { href, price, sub: details ? 'Details' : '' });
   }).join('');
-  return `<div class="products">${cards}</div><p class="fine">${details ? 'No prices here; Details opens the style sheet. ' : 'Cards link to the store with the discount. '}Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.</p>`;
+  const line = details ? `Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.` : `Tap a style to shop it with 20% off. Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.`;
+  return `<div class="products">${cards}</div>${foot ? `<p class="fine">${line}</p>` : ''}`;
+}
+
+/** Who RUBIES is, for the visitor who arrived from a centre's post and has never heard of us. */
+function aboutSection() {
+  return `<section class="about"><div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every pair is tested with our community and comes with a money-back guarantee at the store. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.about}">About us</a></p></div>${illustration('beach', 'about-art')}</section>`;
 }
 
 function howItWorks(ctx, variant = 'default') {
@@ -96,7 +102,7 @@ function howItWorks(ctx, variant = 'default') {
     : [`Shop, request or sponsor. Everything lands in one shipment for ${esc(ctx.name)}.`,
        'RUBIES matches every dollar in it.',
        `At its goal, the shipment goes to ${esc(ctx.name)}. Pairs go to the people who requested, then to anyone who walks in.`];
-  return `<section class="how" id="how"><h2>How it <i>works</i></h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol><p class="soft">Who RUBIES is: a small brand making gender-affirming underwear and swimwear for trans girls and women. <a href="${LINKS.about}">About RUBIES</a></p></section>`;
+  return `<section class="how" id="how"><h2>How it works</h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></section>`;
 }
 
 function wordsSection(ctx) {
@@ -114,7 +120,7 @@ function allEqual(ctx) {
     <h1>${esc(ctx.name)}'s <i>closet</i></h1>
     <p class="lede">Gender-affirming underwear and swimwear for trans girls and women, from RUBIES. Stocked by ${esc(ctx.name)}'s community, matched by RUBIES.</p>
   </div>
-  ${heroArt(ctx, 'ruby')}
+  ${illustration('mirror')}
 </section>
 <section class="three doors-3">
   <div class="card"><h3>Shop</h3><p>20% off one order with RUBIES, from this link. For every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
@@ -126,6 +132,7 @@ function allEqual(ctx) {
   ${amounts(ctx)}
 </section>
 <section><h2>What goes in the closet</h2>${productGrid(ctx)}</section>
+${aboutSection()}
 ${howItWorks(ctx)}
 ${wordsSection(ctx)}`;
 }
@@ -143,6 +150,7 @@ function shopFirst(ctx) {
   ${heroArt(ctx, 'aj')}
 </section>
 <section>${productGrid(ctx, { discounted: true })}</section>
+${aboutSection()}
 ${progress(ctx, { strip: true })}
 <section class="two">
   <div class="card"><h3>Need a pair?</h3><p>Request what you need. ${requestLine(ctx)}</p>${requestBtn(ctx)}</div>
@@ -162,9 +170,10 @@ function requestFirst(ctx) {
     <div class="doors">${requestBtn(ctx)}<a class="btn btn-line" href="${LINKS.sizeGuide}">Check my size first</a></div>
     <p class="fine">Only RUBIES and ${esc(ctx.name)} see your request. <a href="${LINKS.how}">How RUBIES works</a></p>
   </div>
-  ${heroArt(ctx, 'sassy')}
+  ${illustration('mirror')}
 </section>
 <section><h2>What's in the closet</h2>${productGrid(ctx, { prices: false, details: true })}</section>
+${aboutSection()}
 ${howItWorks(ctx, 'request')}
 <section class="two">
   <div class="card"><h3>Want to help instead?</h3><p>Shop with 20% off one order; for every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
@@ -178,7 +187,7 @@ function sponsorFirst(ctx) {
 <section class="hero hero-sponsor">
   <div class="hero-copy">
     ${centreLogo(ctx)}
-    <h1>${esc(ctx.name)}'s <i>closet</i> · Shipment #${ctx.sum.number}</h1>
+    <h1>${esc(ctx.name)}'s <i>closet</i></h1>
     ${progress(ctx, { hero: true })}
     <p>Gender-affirming underwear and swimwear for trans girls and women. RUBIES matches every dollar; at the goal, the shipment leaves for ${esc(ctx.name)}.</p>
     <div class="doors"><a class="btn btn-sun" href="#sponsor">Sponsor the closet</a><a class="btn btn-line" href="/${ctx.slug}/shop">Shop with 20% off</a>${requestBtn(ctx)}</div>
@@ -190,7 +199,8 @@ function sponsorFirst(ctx) {
   <div class="tab-pane" data-pane="shop" hidden><p>20% off one order with RUBIES.</p>${shopBtn(ctx)}${productGrid(ctx)}</div>
   <div class="tab-pane" data-pane="request" hidden><p>Tell us what you need. ${requestLine(ctx)}</p>${requestBtn(ctx)}</div>
 </section>
-<section><h2>What's in the shipment</h2>${productGrid(ctx, { prices: false })}<p class="fine">Five styles, sizes ${esc(ctx.sizes)}. Requested items go in first; the centre picks the rest.</p></section>
+<section><h2>What's in the shipment</h2>${productGrid(ctx, { prices: false, foot: false })}<p class="fine">Five styles, sizes ${esc(ctx.sizes)}. Requested items go in first; the centre picks the rest.</p></section>
+${aboutSection()}
 ${howItWorks(ctx)}`;
 }
 

@@ -51,6 +51,16 @@ test('every public page carries the logo and real product photography, no placeh
   for (const p of MENU) assert.ok(pages['closet default'].includes(p.image.split('?')[0]), `${p.key}: store photo on the closet page`);
   assert.ok(pages['closet default'].includes('class="swatch"'), 'colourway swatches on the cards');
   assert.ok(pages['closet default'].includes('<i>closet</i>'), 'one display word in the heading, the site\'s way');
+  for (const [name, html] of Object.entries(pages)) {
+    assert.ok(!/<h[23][^>]*>[^<]*<i>/.test(html), `${name}: the display word lives in the H1 only`);
+    assert.ok(!/Cards link to the store|No prices here|Who RUBIES is:/.test(html), `${name}: no designer notes in the copy`);
+  }
+  assert.ok(pages['closet default'].includes(brand.ILLUSTRATIONS.mirror.src), 'the closet hero is the store\'s illustration');
+  assert.ok(pages['closet default'].includes('<h2>About RUBIES</h2>'), 'About RUBIES is a real block on the closet page');
+  assert.ok(pages['closet default'].indexOf('<h2>About RUBIES</h2>') < pages['closet default'].indexOf('<h2>How it works</h2>'), 'About sits above How it works');
+  assert.ok(pages.programme.includes(brand.ILLUSTRATIONS.beach.src), 'the programme hero is the beach illustration');
+  assert.ok(pages.request.indexOf('id="request-form"') < pages.request.indexOf('<h2>Our styles</h2>'), 'the request form comes before the style grid');
+  assert.ok(pages.request.includes('data-style-thumb'), 'each item row shows the chosen style');
   assert.ok(pages['closet default'].includes('class="centre-logo"'), 'the centre\'s own logo when it has one');
   assert.ok(pages.style.includes(MENU[0].image.split('?')[0]), 'the style sheet shows the product');
   assert.ok(pages['closet default'].includes('width=600'), 'photos are sized through the CDN');
