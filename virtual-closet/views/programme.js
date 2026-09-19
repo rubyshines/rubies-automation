@@ -1,7 +1,7 @@
 'use strict';
 /** Programme page with sign-up (1a), confirmation (1b), account pages (1r, 1s, 1u). */
-const { page, esc, LINKS, img } = require('./layout');
-const { SIZES, MENU } = require('../lib/catalog');
+const { page, esc, LINKS, illustration } = require('./layout');
+const { SIZES } = require('../lib/catalog');
 
 function errorBox(errors) {
   if (!errors || !errors.length) return '';
@@ -13,12 +13,6 @@ function sizeChips(selected, { kids = false, name = 'sizes' } = {}) {
   return `<div class="chips">${SIZES.map(s => `<label class="chip"><input type="checkbox" name="${name}" value="${s}" ${sel.has(s) ? 'checked' : ''}> ${s}</label>`).join('')}<label class="chip"><input type="checkbox" name="kids_sizes" value="1" ${kids ? 'checked' : ''}> Kids sizes</label></div>`;
 }
 
-/** A store photo for the programme page's pictures. */
-function art(key) {
-  const p = MENU.find(x => x.key === key) || MENU[0];
-  return `<div class="hero-art"><img src="${img(p.image, 900)}" alt="${esc(p.title)}" width="600" height="600"></div>`;
-}
-
 function programme({ values = {}, errors = [] } = {}) {
   const v = values;
   const body = `
@@ -28,7 +22,7 @@ function programme({ values = {}, errors = [] } = {}) {
     <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops, requests and sponsors; RUBIES matches every dollar. You receive a box and hand it out. It costs your centre nothing.</p>
     <div class="doors"><a class="btn btn-fill" href="#signup">Sign up your centre</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet%20call">Book a call, if you'd like one</a></div>
   </div>
-  ${art('aj')}
+  ${illustration('mirror')}
 </section>
 <section>
   <h2>Three ways your community can help</h2>
@@ -40,7 +34,7 @@ function programme({ values = {}, errors = [] } = {}) {
   <p class="soft">Everything lands in one box. When the box reaches its goal, it ships to you with everyone's request inside.</p>
 </section>
 <section id="how">
-  <h2>How it <i>works</i></h2>
+  <h2>How it works</h2>
   <ol class="steps steps-4">
     <li><b>Sign up.</b> Five minutes. Tick the programmes you want. Set your sizes.</li>
     <li><b>We approve you.</b> A person at RUBIES reviews every new centre, usually within a few days.</li>
@@ -48,9 +42,9 @@ function programme({ values = {}, errors = [] } = {}) {
     <li><b>Receive the box.</b> Requested items first, the rest filled by you or by us. Hand it out.</li>
   </ol>
 </section>
-<section class="two">
-  ${art('ruby')}
-  <div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a></p></div>
+<section class="about">
+  <div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every pair is tested with our community and comes with a money-back guarantee at the store. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a> · <a href="${LINKS.about}">About us</a></p></div>
+  ${illustration('beach', 'about-art')}
 </section>
 <section>
   <h2>Two programmes. Tick one or both.</h2>
@@ -65,7 +59,7 @@ function programme({ values = {}, errors = [] } = {}) {
   </div>
 </section>
 <section id="signup">
-  <h2>Sign up your <i>centre</i></h2>
+  <h2>Sign up your centre</h2>
   ${errorBox(errors)}
   <form class="form" method="post" action="/signup">
     <label>Centre name <input type="text" name="name" value="${esc(v.name || '')}" placeholder="e.g. Uniting Pride" required></label>

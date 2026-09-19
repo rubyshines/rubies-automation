@@ -99,6 +99,8 @@ document.addEventListener('change', function (e) {
   var colours = (opt.getAttribute('data-colours') || '').split('|').filter(Boolean);
   var colourSel = item.querySelector('[data-colour-select]');
   if (colourSel) colourSel.innerHTML = colours.map(function (c) { return '<option>' + c + '</option>'; }).join('');
+  var thumb = item.querySelector('[data-style-thumb]');
+  if (thumb && opt.getAttribute('data-image')) { thumb.src = opt.getAttribute('data-image'); var a = thumb.closest('a'); if (a) a.href = a.href.replace(/\/style\/[^/?#]+/, '/style/' + opt.value); }
   var sizes = (opt.getAttribute('data-sizes') || '').split('|').filter(Boolean);
   var sizeSel = item.querySelector('[data-size-select]');
   if (sizeSel) {
