@@ -15,6 +15,7 @@ const ENV_ID = 'd5c0cfea-28ce-4de6-a7fa-e5452d739489';
 const MAIN_SVC = 'cccd4ba0-f219-41d6-85ff-bf7a41387ec1';
 
 const CRON_SERVICES = [
+  { id: '9518acc6-2d28-4454-81c5-574bc570a74c', name: 'virtual-closet' }, // always-on web service
   { id: '75c2d52d-c2b3-4eea-b3ac-18794117af81', name: 'daily-sales-report' },
   { id: 'bc4450d2-b964-4d30-842f-0744b1c7f5c4', name: 'daily-sync-all' },
   { id: 'e10fa9c2-36f9-469e-83f7-7471ed0f2fd9', name: 'daily-order-alerts' },

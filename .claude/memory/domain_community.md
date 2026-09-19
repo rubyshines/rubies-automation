@@ -22,9 +22,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Free Swimwear Program:** Families apply via a Google Form for a free bikini bottom. Applications sync into Supabase (`free_swimwear_requests`, the SSOT) through a deterministic eligibility gate. The operator reviews the queue on the CS dashboard "Free Swimwear" tab (one-line Opus summary per application); one-click approve issues a unique code under the existing "Free RUBIES Program" Shopify price rule and sends the SendGrid acceptance template. A daily lifecycle job reconciles accepted, registered, and ordered states, expires unredeemed codes, and resends on a fixed cadence. Replaces the legacy Google Apps Script + manual sheet workflow.
 
+**Virtual Closet (2026-09-18, low fidelity, live):** `virtual-closet/` is its own Express service (Railway `virtual-closet`, local port 3850). Each LGBTQ+ centre gets a public page at `/<slug>` with three doors (shop with 20% off, request a free pair, sponsor), a private view for its team (accounts, invites, Home with the current box and requests, settings, send the box, history), and a self-service sign-up that also enrols Pass It On (the donation programme's partner-facing name). Money is store sales: sponsorship and add-to-the-box are a hidden Shopify product reached by cart permalink with the centre as order attributes; the 20% is a Shopify discount with a fresh code per click; the ledger is written by the order webhook and a daily reconcile. The operator side is the `/closets` page of the CS dashboard plus `vc_*` MCP tools. Emails are composed in code and sent through SendGrid.
+
 ## Current Status
 
 - **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partners exist in US/CA/CH/AU/DE.
+- **Virtual Closet:** built and smoke-tested against real data; Railway service created, first pilot centre not yet signed up. Public URL is the Railway domain until a subdomain is pointed at it.
 - **Free swimwear:** live in Supabase + the dashboard tab. Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines. Repeat/duplicate handling runs at intake; the queue surfaces returning / possible-2nd-child / repeat badges and filters. Sheet write-back bridge still on.
 
 ## Key Files
@@ -37,10 +40,18 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/freeSwimwearSurvey.js` — form reader + eligibility gate.
 - `customer-service/lib/tools/freeSwimwear.js` — free swimwear MCP tools.
 - `customer-service/sync/freeSwimwearLifecycle.js` — daily lifecycle reconcile (`syncFreeSwimwearRequests.js` alongside imports applications).
+- `virtual-closet/server.js` — the Virtual Closet web service (routes in `virtual-closet/routes/`, templates in `virtual-closet/views/`).
+- `virtual-closet/lib/operator.js` — everything the CS dashboard's `/closets` page and the `vc_*` tools do.
+- `virtual-closet/lib/ledger.js` — box ledger fed from store orders (webhook hook in `webhooks/handlers/shopifyOrders.js`, daily reconcile).
+- `virtual-closet/schema.sql` — the `vc_*` tables.
 
 ## Key Decisions
 
-- **Org onboarding is call-first, on Google Meet:** every new org inquiry gets a video call to walk through RUBIES and assess fit before anything else; only afterwards do we send the partner survey link, and submissions flow through `create_from_survey`. Partners may also buy gender-affirming clothing directly at the same country discount tiers as wholesale: 50% where shipments avoid tariffs (US; AU while packages stay under the de minimis), 30% elsewhere.
+- **Onboarding is self-service, with the operator's approval after sign-up (2026-09-18, replaces call-first):** a centre signs up on the Virtual Closet programme page, ticks Pass It On and/or the Virtual Closet, and its admin verifies their email; the operator approves from the dashboard queue before the page and map listing go live, and a Pass It On tick creates the donation partner row through the existing registry tool. A call is offered, never required. The survey-ingest path (`create_from_survey`) stays for partners who came in before this.
+- **The donation programme is called Pass It On on every partner-facing surface** so it cannot be confused with the Virtual Closet; the registry and CS routing are unchanged underneath.
+- **Virtual Closet money never touches the service:** sponsorships and a centre's own add-to-the-box are ordinary store sales of a hidden product, attributed by order attributes from a cart permalink, and the 20% shopper discount is a Shopify discount with a code per click. Shopify handles cards, tax and receipts; the ledger only reads orders, idempotently.
+- **Centre accounts are the service's own tables, not Supabase Auth:** email and password with verification and reset by single-use tokens, sessions as rows so removing a member signs them out everywhere. Chosen so the pilot needed no external configuration; Google and Microsoft sign-in can be added on top.
+- **Requesters become store customers on confirmation** (the name they go by, tagged with the programme and centre); the newsletter is an explicit opt-in on the request form. Partners may also buy gender-affirming clothing directly at the same country discount tiers as wholesale: 50% where shipments avoid tariffs (US; AU while packages stay under the de minimis), 30% elsewhere.
 - **Single source of truth in `donation_partners`:** the theme reads a published JSON asset and never edits partners through Shopify section blocks. Updates flow only from rubies-automations.
 - **Proximity-tiered routing, load-balanced inside whichever tier fires:** local (same metro) first, then same state/province only when the nearest partner is already in it, then the closest few nationally. The in-state gate is load-bearing: an ungated "same state wins" would ship a return past a closer out-of-state partner. Deliberately trades some national spread for shorter shipping and items staying in the customer's own community.
 - **Load is a trailing-window rate of items, weighted-random, not a lifetime count:** deterministic least-loaded-by-lifetime let a newly added partner monopolize its region until it caught up, and counting routings rather than items undercounted big shipments. A partner younger than the window has its volume projected to a full-window equivalent so it is compared fairly. Outside the local tier, candidates are also weighted by distance so the farthest option is not the likeliest pick just because it is quietest. The lifetime `donations_routed` counter is for impact reporting only.
@@ -62,6 +73,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## What's Next
 
+- Virtual Closet hi-fi pass in the rubyshines.com design system, then the Uniting Pride pilot
 - Donation impact reporting/dashboard
 - Partner feedback loop (items received, condition)
 - Expand international donation partner coverage (intl exchanges outside covered countries still fall back to "donate locally")
