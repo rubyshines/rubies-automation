@@ -65,11 +65,14 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   const arrived = ctx.lastSent && ctx.lastSent.delivered_at
     ? `<p class="fine">Shipment #${ctx.lastSent.number} arrived at ${esc(ctx.name)} on ${fmtDate(ctx.lastSent.delivered_at)}${ctx.lastSent.items_count ? ` with ${ctx.lastSent.items_count} items` : ''}.</p>`
     : ctx.lastSent ? `<p class="fine">Shipment #${ctx.lastSent.number} is on its way to ${esc(ctx.name)}.</p>` : '';
-  if (strip) {
-    return `<section class="strip" id="progress"><div><b>Shipment #${s.number}</b> · ${dollars(s.raised)} raised of ${dollars(s.goal)} · RUBIES matches every dollar</div><a class="btn btn-small btn-sun" href="#sponsor">Sponsor the closet</a></section>`;
-  }
   const status = s.state === 'funded' || s.state === 'over' ? `<span class="tag">Funded</span>` : `<span class="soft">Open</span>`;
-  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)}</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
+  const count = `${s.sources.sponsorCount} sponsor${s.sources.sponsorCount === 1 ? '' : 's'}`;
+  if (strip) {
+    // The fundraiser band: the amount, the goal, the bar and the count the way
+    // GoFundMe shows them, with the sponsor button beside it.
+    return `<section class="fund" id="progress"><div class="fund-copy"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)} goal</small></div>${bar}<p class="fine">${count} · ${s.state === 'funded' || s.state === 'over' ? line : 'RUBIES matches every dollar'}</p></div><div class="fund-cta"><a class="btn btn-fill" href="#sponsor">Sponsor the closet</a><p class="fine">From $16, a pair of underwear.</p></div></section>`;
+  }
+  return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)} goal</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
 function amounts(ctx) {
@@ -179,7 +182,7 @@ ${howItWorks(ctx, 'request')}
   <div class="card"><h3>Want to help instead?</h3><p>Shop with 20% off one order; for every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
   <div class="card"><h3>Sponsor the closet</h3><p>Put a pair in the shipment. RUBIES matches every dollar.</p><a class="btn btn-sun" href="/${ctx.slug}?lead=sponsor#sponsor">Sponsor the closet</a></div>
 </section>
-<section class="strip quiet"><div>Shipment #${ctx.sum.number} · ${dollars(ctx.sum.raised)} raised of ${dollars(ctx.sum.goal)}</div></section>`;
+<section class="strip quiet" id="progress"><div class="quiet-fund"><span><b>Shipment #${ctx.sum.number}</b> · ${dollars(ctx.sum.raised)} raised of ${dollars(ctx.sum.goal)} goal</span><div class="bar bar-slim" role="progressbar" aria-valuenow="${ctx.sum.goal ? Math.min(100, Math.round((ctx.sum.raised / ctx.sum.goal) * 100)) : 0}" aria-valuemin="0" aria-valuemax="100"><span style="width:${ctx.sum.goal ? Math.min(100, Math.round((ctx.sum.raised / ctx.sum.goal) * 100)) : 0}%"></span></div></div></section>`;
 }
 
 function sponsorFirst(ctx) {

@@ -109,6 +109,15 @@ section + section { border-top: 1px solid var(--rule); }
 .sponsor-block { display: grid; grid-template-columns: .9fr 1.1fr; gap: 24px; align-items: start; }
 .strip { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--grey); padding: 14px 20px; flex-wrap: wrap; }
 .strip.quiet { background: transparent; color: var(--soft); font-size: 14px; padding: 0; }
+.quiet-fund { display: grid; gap: 8px; max-width: 420px; }
+.bar-slim { height: 8px; }
+/* the fundraiser band on the shop-first page */
+.fund { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; background: var(--grey); padding: 32px; }
+.fund-copy { display: grid; gap: 10px; max-width: 640px; }
+.fund .amount { font-size: 40px; }
+.fund .amount small { font-size: 16px; }
+.fund-cta { display: grid; gap: 6px; justify-items: center; text-align: center; }
+.fund-cta .btn { min-width: 240px; }
 
 /* progress */
 .progress { background: var(--grey); padding: 24px; display: grid; gap: 10px; }
@@ -215,6 +224,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
 }
 @media (max-width: 989px) {
   .about { grid-template-columns: 1fr; gap: 20px; }
+  .fund { grid-template-columns: 1fr; gap: 20px; padding: 24px; }
+  .fund-cta { justify-items: start; text-align: left; }
 }
 @media (max-width: 749px) {
   .three, .two, .sponsor-block, .row, .steps, .steps-4 { grid-template-columns: 1fr; }
