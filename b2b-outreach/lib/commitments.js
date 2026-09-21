@@ -22,6 +22,10 @@
  * The rule that keeps the list trustworthy: the engine may complete THEIRS,
  * never MINE (`completeCommitment` enforces it). Mine close by Jamie's check or
  * by his send (`settleOnSend`).
+ *
+ * A row may belong to one deliverable (deliverables.js): a piece of internal
+ * work several rows hang off. A blocking deliverable that has not shipped makes
+ * its members `blocked` — they sort last and fold, but are never hidden.
  */
 const OWNERS = new Set(['me', 'them']);
 const SOURCES = new Set(['meeting', 'email', 'claim', 'cadence', 'manual', 'backfill']);
@@ -97,7 +101,10 @@ function todayET(now = new Date()) {
  */
 function orderCommitments(rows, now = new Date()) {
   const today = todayET(now);
-  const rank = r => (r.pinned_at ? 0 : r.due_on && r.due_on < today ? 1 : r.due_on ? 2 : 3);
+  // Blocked (waiting on a deliverable that has not shipped) goes last whatever
+  // its date: the date cannot be met, and it must not compete with what can be
+  // done today. A pin still wins — that is Jamie saying "today" on purpose.
+  const rank = r => (r.pinned_at ? 0 : r.blocked ? 4 : r.due_on && r.due_on < today ? 1 : r.due_on ? 2 : 3);
   return [...rows].sort((a, b) => {
     const ra = rank(a); const rb = rank(b);
     if (ra !== rb) return ra - rb;
@@ -109,8 +116,13 @@ function orderCommitments(rows, now = new Date()) {
   });
 }
 
-/** Decorate a row for a surface: age, overdue, and the company it belongs to. PURE. */
-function decorate(row, company, now = new Date()) {
+/**
+ * Decorate a row for a surface: age, overdue, the company it belongs to, and
+ * the deliverable it sits under. `blocked` is true only while that deliverable
+ * blocks and has not shipped — a batch member and a released member are as
+ * actionable as a loose row. PURE.
+ */
+function decorate(row, company, now = new Date(), deliverable = null) {
   const today = todayET(now);
   const created = row.created_at ? new Date(row.created_at) : now;
   return {
@@ -119,6 +131,11 @@ function decorate(row, company, now = new Date()) {
     channel: company ? company.relationship_type : null,
     days_open: Math.max(0, Math.floor((now - created) / 86400000)),
     overdue: !!(row.status === 'open' && row.due_on && row.due_on < today),
+    deliverable_name: deliverable ? deliverable.name : null,
+    deliverable_blocks: deliverable ? !!deliverable.blocks : null,
+    deliverable_status: deliverable ? deliverable.status : null,
+    deliverable_target_on: deliverable ? deliverable.target_on || null : null,
+    blocked: !!(deliverable && deliverable.blocks && deliverable.status === 'open' && row.status === 'open'),
   };
 }
 
@@ -128,6 +145,24 @@ async function loadCompanies(sb, ids) {
   const { data, error } = await sb.from('b2b_companies').select('id, name, relationship_type').in('id', uniq);
   if (error) throw new Error(error.message);
   return new Map((data || []).map(c => [c.id, c]));
+}
+
+/**
+ * The deliverables some rows sit under, by id. Fails soft to an empty map: the
+ * table arrives by a hand-applied migration, and a list that cannot fold is
+ * better than a list that 500s.
+ */
+async function loadDeliverables(sb, ids) {
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  if (!uniq.length) return new Map();
+  try {
+    const { data, error } = await sb.from('b2b_deliverables').select('*').in('id', uniq);
+    if (error) throw new Error(error.message);
+    return new Map((data || []).map(d => [d.id, d]));
+  } catch (err) {
+    console.warn(`[commitments] deliverables not loaded: ${err.message}`);
+    return new Map();
+  }
 }
 
 /** Open rows for one company, oldest first. */
@@ -179,7 +214,7 @@ async function syncOnMeFlag(sb, companyId) {
  * The one write path. Dedupes against OPEN rows on (owner, normalised text)
  * so any source can re-run without doubling the list.
  *
- * @param items [{ owner, text, due_on?, completes_on_send?, thread_id?, source_message_id?, blocked_by? }]
+ * @param items [{ owner, text, due_on?, completes_on_send?, thread_id?, source_message_id?, blocked_by?, deliverable_id? }]
  * @returns {{ inserted: object[], matched: object[] }}
  */
 async function upsertCommitments(sb, {
@@ -220,6 +255,7 @@ async function upsertCommitments(sb, {
       status: 'open',
       completes_on_send: !!i.completes_on_send,
       blocked_by: i.blocked_by ?? null,
+      deliverable_id: i.deliverable_id ?? null,
       source,
       created_by,
       created_at: stamp,
@@ -250,8 +286,8 @@ async function loadCommitment(sb, id) {
   return data;
 }
 
-/** Edit text / date / owner / company / pin / block. Only the fields passed change. */
-async function updateCommitment(sb, { id, text, due_on, owner, company_id, pinned, blocked_by, now = new Date() } = {}) {
+/** Edit text / date / owner / company / pin / block / deliverable. Only the fields passed change. */
+async function updateCommitment(sb, { id, text, due_on, owner, company_id, pinned, blocked_by, deliverable_id, now = new Date() } = {}) {
   const row = await loadCommitment(sb, id);
   const patch = { updated_at: now.toISOString() };
   if (typeof text === 'string' && text.trim()) patch.text = text.trim();
@@ -260,6 +296,7 @@ async function updateCommitment(sb, { id, text, due_on, owner, company_id, pinne
   if (company_id !== undefined) patch.company_id = company_id || null;
   if (pinned !== undefined) patch.pinned_at = pinned ? now.toISOString() : null;
   if (blocked_by !== undefined) patch.blocked_by = blocked_by || null;
+  if (deliverable_id !== undefined) patch.deliverable_id = deliverable_id || null;
   const { data, error } = await sb.from('b2b_commitments').update(patch).eq('id', id).select('*').single();
   if (error) throw new Error(error.message);
   await syncOnMeFlag(sb, row.company_id);
@@ -360,15 +397,19 @@ async function abandonClaims(sb, { company_id } = {}) {
  * first, capped). Decorated with company name / channel / age / overdue and
  * returned in reading order.
  */
-async function listCommitments(sb, { company_id, owner, status = 'open', channel = null, limit = 500, now = new Date() } = {}) {
+async function listCommitments(sb, { company_id, owner, deliverable_id, status = 'open', channel = null, limit = 500, now = new Date() } = {}) {
   let q = sb.from('b2b_commitments').select('*').eq('status', status);
   if (company_id) q = q.eq('company_id', company_id);
   if (owner) q = q.eq('owner', owner);
+  if (deliverable_id) q = q.eq('deliverable_id', deliverable_id);
   q = status === 'done' ? q.order('done_at', { ascending: false }).limit(limit) : q.order('created_at', { ascending: true }).limit(limit);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  const companies = await loadCompanies(sb, (data || []).map(r => r.company_id));
-  let rows = (data || []).map(r => decorate(r, companies.get(r.company_id), now));
+  const [companies, deliverables] = await Promise.all([
+    loadCompanies(sb, (data || []).map(r => r.company_id)),
+    loadDeliverables(sb, (data || []).map(r => r.deliverable_id)),
+  ]);
+  let rows = (data || []).map(r => decorate(r, companies.get(r.company_id), now, deliverables.get(r.deliverable_id)));
   if (channel) rows = rows.filter(r => r.channel === channel);
   return status === 'done' ? rows : orderCommitments(rows, now);
 }
@@ -382,8 +423,12 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
     .eq('status', 'open').eq('owner', 'me').not('company_id', 'is', null)
     .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
+  // One ingest pass stamps several rows on one created_at, and Postgres
+  // returns ties in physical order — which any UPDATE reshuffles. Id breaks
+  // the tie so "oldest" and the company order do not drift between renders.
+  const ordered = [...(data || [])].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || (a.id - b.id));
   const byCompany = new Map();
-  for (const r of data || []) {
+  for (const r of ordered) {
     if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
     byCompany.get(r.company_id).push(r);
   }
@@ -410,14 +455,14 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
       claim_note: on_me_note,
     });
   }
-  groups.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)));
+  groups.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)) || String(a.company_id).localeCompare(String(b.company_id)));
   return groups;
 }
 
 module.exports = {
   OWNERS, SOURCES,
   normalizeText, classifyOwner, parseNextSteps, todayET, orderCommitments, decorate,
-  openCommitmentsForCompany, syncOnMeFlag, claimProvenance,
+  openCommitmentsForCompany, loadDeliverables, syncOnMeFlag, claimProvenance,
   upsertCommitments, addCommitment, updateCommitment, completeCommitment, reopenCommitment,
   deleteCommitment, settleOnSend, abandonClaims, listCommitments, companiesOnMe,
 };

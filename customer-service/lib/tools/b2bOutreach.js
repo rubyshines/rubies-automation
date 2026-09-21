@@ -549,7 +549,15 @@ function commitmentLine(r) {
   const who = r.company_name ? `[${r.company_name}] ` : '';
   const due = r.due_on ? ` · due ${r.due_on}${r.overdue ? ' (overdue)' : ''}` : '';
   const age = r.days_open != null ? ` · ${r.days_open}d` : '';
-  return `#${r.id} ${who}${r.text}${due}${age}${r.source === 'meeting' ? ' · from a call' : ''}`;
+  const deliv = r.deliverable_name ? (r.blocked ? ` · WAITING ON: ${r.deliverable_name}` : ` · ${r.deliverable_name}`) : '';
+  return `#${r.id} ${who}${r.text}${due}${age}${r.source === 'meeting' ? ' · from a call' : ''}${deliv}`;
+}
+
+function deliverableLine(d) {
+  const kind = d.blocks ? 'blocks' : 'batch';
+  const target = d.target_on ? ` · target ${d.target_on}${d.overdue ? ' (overdue)' : ''}` : '';
+  const when = d.status === 'shipped' ? ` · shipped ${String(d.shipped_at || '').slice(0, 10)}` : ` · ${d.days_open}d`;
+  return `#${d.id} ${d.name} [${kind}] · ${d.open_count} open, ${d.done_count} done${target}${when}${d.detail ? `\n    ${d.detail}` : ''}`;
 }
 
 function commitmentItems(items) {
@@ -595,7 +603,7 @@ async function handleCommitments(input = {}) {
     const action = input.action || 'list';
     if (action === 'list') {
       const rows = await C.listCommitments(sb, {
-        company_id: input.company_id || null, owner: input.owner || null,
+        company_id: input.company_id || null, owner: input.owner || null, deliverable_id: input.deliverable_id || null,
         status: input.status || 'open', channel: input.channel || null,
       });
       if (!rows.length) return text('Nothing on the list for that filter.');
@@ -619,10 +627,62 @@ async function handleCommitments(input = {}) {
     if (action === 'reopen' || action === 'restore') { const r = await C.reopenCommitment(sb, { id: input.id }); return text(`Reopened: #${r.id} ${r.text}`); }
     if (action === 'delete') { const r = await C.deleteCommitment(sb, { id: input.id }); return text(`Deleted: #${r.id} ${r.text} (reopen restores it)`); }
     if (action === 'edit') {
-      const r = await C.updateCommitment(sb, { id: input.id, text: input.text, due_on: input.due_on, owner: input.owner, company_id: input.company_id, pinned: input.pinned });
-      return text(`Updated #${r.id}: ${r.owner === 'me' ? 'Jamie' : 'them'} — ${r.text}${r.due_on ? ` (due ${r.due_on})` : ''}`);
+      const r = await C.updateCommitment(sb, { id: input.id, text: input.text, due_on: input.due_on, owner: input.owner, company_id: input.company_id, pinned: input.pinned, deliverable_id: input.deliverable_id });
+      return text(`Updated #${r.id}: ${r.owner === 'me' ? 'Jamie' : 'them'} — ${r.text}${r.due_on ? ` (due ${r.due_on})` : ''}${r.deliverable_id ? ` · deliverable #${r.deliverable_id}` : ''}`);
     }
     return text(`Error: unknown action '${action}' — expected list, add, done, reopen, delete or edit`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
+async function handleDeliverables(input = {}) {
+  try {
+    const sb = getSupabaseClient();
+    const D = require(path.join(B2B_LIB, 'deliverables'));
+    const C = require(path.join(B2B_LIB, 'commitments'));
+    const action = input.action || 'list';
+    if (action === 'list') {
+      const rows = await D.listDeliverables(sb, { status: input.status || 'open' });
+      if (!rows.length) return text(input.status === 'shipped' ? 'Nothing shipped yet.' : 'No deliverables. Add one when several items wait on the same piece of work.');
+      const lines = [];
+      for (const d of rows) {
+        lines.push(deliverableLine(d));
+        if (input.with_items) {
+          const items = await C.listCommitments(sb, { deliverable_id: d.id, status: 'open' });
+          lines.push(...items.map(r => `    - ${r.owner === 'me' ? 'Jamie' : 'them'}: ${commitmentLine(r)}`));
+        }
+      }
+      return text(lines.join('\n'));
+    }
+    if (action === 'add') {
+      if (!input.name) return text('Error: name required');
+      const d = await D.addDeliverable(sb, { name: input.name, detail: input.detail || null, blocks: input.blocks !== false, target_on: input.target_on || null, notes: input.notes || null });
+      return text(`Added deliverable #${d.id}: ${d.name} [${d.blocks ? 'blocks' : 'batch'}]. Attach items with action 'attach'.`);
+    }
+    if (action === 'attach' || action === 'detach') {
+      if (!input.commitment_id) return text(`Error: commitment_id required for ${action}`);
+      if (action === 'attach') {
+        if (!input.id) return text('Error: id (the deliverable) required for attach');
+        const r = await D.attachCommitment(sb, { commitment_id: input.commitment_id, deliverable_id: input.id });
+        return text(`Attached commitment #${r.id} to deliverable #${input.id}.`);
+      }
+      const r = await D.detachCommitment(sb, { commitment_id: input.commitment_id });
+      return text(`Detached commitment #${r.id}; it is loose again.`);
+    }
+    if (!input.id) return text(`Error: id required for ${action}`);
+    if (action === 'ship') {
+      const { deliverable, released } = await D.shipDeliverable(sb, { id: input.id });
+      const head = `Shipped #${deliverable.id}: ${deliverable.name}. ${released.length} item${released.length === 1 ? '' : 's'} now open to act on — none marked done; each closes on Jamie's check or send.`;
+      return text(released.length ? `${head}\n${released.map(r => `- ${r.owner === 'me' ? 'Jamie' : 'them'}: ${commitmentLine(r)}`).join('\n')}` : head);
+    }
+    if (action === 'reopen') { const d = await D.reopenDeliverable(sb, { id: input.id }); return text(`Reopened #${d.id}: ${d.name}. Its blocking members are blocked again.`); }
+    if (action === 'delete') { const { deleted, detached } = await D.deleteDeliverable(sb, { id: input.id }); return text(`Deleted #${deleted.id}: ${deleted.name}. ${detached} item${detached === 1 ? '' : 's'} detached and left as they were.`); }
+    if (action === 'edit') {
+      const d = await D.updateDeliverable(sb, { id: input.id, name: input.name, detail: input.detail, blocks: input.blocks, target_on: input.target_on, notes: input.notes });
+      return text(`Updated #${d.id}: ${d.name} [${d.blocks ? 'blocks' : 'batch'}]${d.target_on ? ` · target ${d.target_on}` : ''}`);
+    }
+    return text(`Error: unknown action '${action}' — expected list, add, edit, ship, reopen, delete, attach or detach`);
   } catch (err) {
     return text(`Error: ${err.message}`);
   }
@@ -738,11 +798,32 @@ module.exports = [
         company_id: { type: 'string', description: 'b2b_companies id (add, edit, list filter). Omit on add for a general item.' },
         due_on: { type: 'string', description: "YYYY-MM-DD (add, edit). '' on edit clears it." },
         pinned: { type: 'boolean', description: "edit: pin as 'today' (true) or unpin (false)." },
+        deliverable_id: { type: 'number', description: "edit: file the item under a deliverable (see b2b_deliverables); 0 detaches. list: only that deliverable's items." },
         status: { type: 'string', description: "list: 'open' (default) | 'done'." },
         channel: { type: 'string', description: "list: 'wholesale' | 'lgbtq_org' | 'affiliate'." },
       },
     },
     handler: handleCommitments,
+  },
+  {
+    name: 'b2b_deliverables',
+    description: "One piece of internal work that several commitments across several companies hang off (2026-09-21): the affiliate onboarding, the partner collateral kit, the October shipment run. A deliverable is not a promise to anyone — it never appears as a To do row and never affects On Me; it is the fold its items sit under. `blocks` decides what membership means: true (default) — its items cannot be done until it ships, so they fold under 'Waiting on: …' and sort last (never hidden); false — a batch, items actionable now and grouped because they are done in one sitting. action 'list' (default; status open|shipped|all, with_items to print each one's open items), 'add' (name, detail?, blocks?, target_on?, notes?), 'edit', 'ship', 'reopen', 'delete', 'attach' (id + commitment_id) and 'detach' (commitment_id). SHIPPING COMPLETES NOTHING: it returns the items now open to act on, and each still closes only by Jamie's check or Jamie's send. Attaching an item is organisation and may be done from a reading of notes or mail; shipping is Jamie's alone. Never create a deliverable from a single call's items — Jamie creates them, the engine only files into them.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: "'list' (default) | 'add' | 'edit' | 'ship' | 'reopen' | 'delete' | 'attach' | 'detach'" },
+        id: { type: 'number', description: 'b2b_deliverables id (edit, ship, reopen, delete, attach).' },
+        commitment_id: { type: 'number', description: 'b2b_commitments id (attach, detach).' },
+        name: { type: 'string', description: 'The header line (add, edit).' },
+        detail: { type: 'string', description: "What 'shipped' means, one line (add, edit)." },
+        blocks: { type: 'boolean', description: 'true: items wait on this (default). false: a batch.' },
+        target_on: { type: 'string', description: "YYYY-MM-DD (add, edit). '' on edit clears it." },
+        notes: { type: 'string', description: 'Free notes (add, edit).' },
+        status: { type: 'string', description: "list: 'open' (default) | 'shipped' | 'all'." },
+        with_items: { type: 'boolean', description: 'list: print the open items under each deliverable.' },
+      },
+    },
+    handler: handleDeliverables,
   },
   {
     name: 'b2b_draft_attach',

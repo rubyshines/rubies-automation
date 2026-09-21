@@ -3084,9 +3084,56 @@ async function apiB2bCommitmentAction(id, body = {}) {
     case 'done': return C.completeCommitment(sb, { id, by: 'operator' });
     case 'reopen': case 'restore': return C.reopenCommitment(sb, { id });
     case 'delete': return C.deleteCommitment(sb, { id });
-    case 'edit': return C.updateCommitment(sb, { id, text: body.text, due_on: body.due_on, owner: body.owner, company_id: body.company_id, pinned: body.pinned });
+    case 'edit': return C.updateCommitment(sb, { id, text: body.text, due_on: body.due_on, owner: body.owner, company_id: body.company_id, pinned: body.pinned, deliverable_id: body.deliverable_id });
     default: {
       const err = new Error(`unknown commitment action '${body.action}' — expected done, reopen, delete or edit`);
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+}
+
+// Deliverables: the folds above the To do rows (2026-09-21). Open ones for
+// the list and the row editor's picker; shipped ones for the record.
+async function apiB2bDeliverables() {
+  const D = require('../../b2b-outreach/lib/deliverables');
+  const sb = getSupabaseClient();
+  try {
+    const [open, shipped] = await Promise.all([
+      D.listDeliverables(sb, { status: 'open' }),
+      D.listDeliverables(sb, { status: 'shipped', limit: 20 }),
+    ]);
+    return { open, shipped };
+  } catch (err) {
+    // Pre-migration: no table yet. The list still renders, without folds.
+    console.warn(`[deliverables] not loaded: ${err.message}`);
+    return { open: [], shipped: [], unavailable: true };
+  }
+}
+
+async function apiB2bAddDeliverable(body = {}) {
+  const D = require('../../b2b-outreach/lib/deliverables');
+  if (!body.name || !String(body.name).trim()) {
+    const err = new Error('name required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return D.addDeliverable(getSupabaseClient(), {
+    name: body.name, detail: body.detail || null, blocks: body.blocks !== false,
+    target_on: body.target_on || null, notes: body.notes || null,
+  });
+}
+
+async function apiB2bDeliverableAction(id, body = {}) {
+  const D = require('../../b2b-outreach/lib/deliverables');
+  const sb = getSupabaseClient();
+  switch (body.action) {
+    case 'ship': return D.shipDeliverable(sb, { id });
+    case 'reopen': return D.reopenDeliverable(sb, { id });
+    case 'delete': return D.deleteDeliverable(sb, { id });
+    case 'edit': return D.updateDeliverable(sb, { id, name: body.name, detail: body.detail, blocks: body.blocks, target_on: body.target_on, notes: body.notes });
+    default: {
+      const err = new Error(`unknown deliverable action '${body.action}' — expected ship, reopen, delete or edit`);
       err.statusCode = 400;
       throw err;
     }
@@ -4290,6 +4337,7 @@ const routes = {
   'GET /api/b2b/inbound': () => apiB2bInbound(),
   'GET /api/b2b/on-me': (req) => apiB2bOnMe(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/commitments': (req) => apiB2bCommitments(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/deliverables': () => apiB2bDeliverables(),
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/vetting': (req) => apiB2bVetting(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
@@ -4367,6 +4415,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/schedule$/, handler: (body, id) => apiB2bScheduleMeeting(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/commitments$/, handler: (body) => apiB2bAddCommitment(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/commitments\/(\d+)$/, handler: (body, id) => apiB2bCommitmentAction(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/deliverables$/, handler: (body) => apiB2bAddDeliverable(body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/deliverables\/(\d+)$/, handler: (body, id) => apiB2bDeliverableAction(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/inbound\/admit$/, handler: (body) => apiB2bInboundAdmit(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/inbound\/dismiss$/, handler: (body) => apiB2bInboundDismiss(body) },

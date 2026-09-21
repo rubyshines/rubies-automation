@@ -7135,6 +7135,24 @@ main { height: calc(100vh - 56px); }
 .todo-fold-count { font-weight: 400; }
 .todo-empty-mine { padding: 10px 12px; }
 
+/* Deliverables (2026-09-21): the fold a group of rows sits under. A batch
+   reads as a small heading over work to do today; a blocking fold is quieter
+   and closed, its count the one thing that must be seen without opening it.
+   The Shipped button sits at the right of that line. */
+.todo-fold-deliverable > .todo-fold-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.todo-fold-deliverable > .todo-fold-title::before { flex-shrink: 0; }
+.todo-fold-name { min-width: 0; }
+.todo-fold-batch > .todo-fold-title { color: var(--text-secondary); font-size: 12px; }
+.todo-fold-blocking > .todo-fold-title { color: var(--text-tertiary); }
+.todo-fold-blocking .todo-row { opacity: 0.8; }
+.todo-fold-ship { margin-left: auto; }
+.todo-fold-detail, .todo-fold-empty { padding: 0 12px 6px; font-size: 11.5px; color: var(--text-tertiary); }
+.todo-add-deliverable { padding: 0 10px 2px; }
+.todo-deliverable { color: var(--text-tertiary); }
+.todo-deliverable-blocked { color: var(--yellow); }
+.todo-deliverable-shipped { color: var(--teal); }
+.todo-editor-deliverable { flex: 1 1 40%; min-width: 0; }
+
 /* The same items inside "Where this stands". */
 .outreach-commitments { margin-top: 10px; }
 .todo-inline { padding: 3px 0; }
