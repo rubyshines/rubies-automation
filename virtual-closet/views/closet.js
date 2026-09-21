@@ -131,7 +131,7 @@ ${totalLine(ctx)}
   <div class="gifts gifts-4">${tiles(ctx)}</div>
   <p class="fine fine-after">You pay at the RUBIES online store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
-<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off.</p></section>`;
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off. <a href="${LINKS.how}">Learn how RUBIES works</a>.</p></section>`;
 }
 
 function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true, note = true } = {}) {
@@ -149,7 +149,7 @@ function productGrid(ctx, { prices = true, discounted = false, details = false, 
 /** Who RUBIES is, for the visitor who arrived from a centre's post and has never heard of us. */
 function aboutSection(copy) {
   // Link page: the beach illustration on the left, the words on the right (Jamie, 2026-09-21).
-  if (copy) return `<section class="about">${illustration('beach', 'about-art')}<div><h2>About RUBIES</h2><p>${copy}</p></div></section>`;
+  if (copy) return `<section class="about">${illustration('beach', 'about-art')}<div><h2>About RUBIES</h2><p>${copy}</p><p>Learn more <a href="${LINKS.about}">about RUBIES</a>.</p></div></section>`;
   return `<section class="about"><div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every pair is tested with our community and comes with a money-back guarantee at the store. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.about}">About us</a></p></div>${illustration('beach', 'about-art')}</section>`;
 }
 
