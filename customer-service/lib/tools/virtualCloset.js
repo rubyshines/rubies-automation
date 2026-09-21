@@ -26,7 +26,8 @@ module.exports = [
       properties: {
         name: { type: 'string' }, notify_email: { type: 'string', description: 'Where the welcome and the activity digests go' }, slug: { type: 'string' },
         website: { type: 'string' }, logo_url: { type: 'string' }, city: { type: 'string' }, region: { type: 'string' }, country: { type: 'string', description: 'ISO alpha-2, default US' },
-        donation_partner_id: { type: 'number' }, confirmed: { type: 'boolean' }, operator_email: { type: 'string' },
+        donation_partner_id: { type: 'number' }, goal_dollars: { type: 'number', description: 'The goal the running total is drawn against; default $1,000' },
+        confirmed: { type: 'boolean' }, operator_email: { type: 'string' },
       },
       required: ['notify_email'],
     },
@@ -44,6 +45,7 @@ module.exports = [
         website: params.website || seed.website || null, logo_url: params.logo_url || seed.logo_url || null,
         city: params.city || seed.city || null, region: params.region || seed.region || null, country: params.country || seed.country || 'US',
         donation_partner_id: params.donation_partner_id || null,
+        goal_cents: params.goal_dollars ? Math.round(params.goal_dollars * 100) : require('../../../virtual-closet/lib/money').LINK_DEFAULT_GOAL_CENTS,
       };
       if (!row.name) return { content: [{ type: 'text', text: 'A centre needs a name (or a donation_partner_id to take it from).' }], isError: true };
       const slug = row.slug ? centresLib.slugify(row.slug) : await centresLib.uniqueSlug(row.name);
@@ -55,6 +57,7 @@ module.exports = [
         `  welcome + digests to: ${row.notify_email} (from ${process.env.VC_OPERATOR_EMAIL || process.env.ALLOWED_EMAIL || 'jamie@rubyshines.com'})`,
         `  website: ${row.website || '(none)'} · logo: ${row.logo_url || '(none)'}${rehost ? ' (will be re-hosted on the Shopify CDN)' : ''}`,
         `  where: ${[row.city, row.region, row.country].filter(Boolean).join(', ')}${row.donation_partner_id ? ` · Pass It On partner #${row.donation_partner_id}` : ''}`,
+        `  goal: ${dollars(row.goal_cents)}`,
       ];
       if (!params.confirmed) return { content: [{ type: 'text', text: preview.concat('', 'Call again with confirmed=true to create the centre and send the welcome.').join('\n') }], _structured: { preview: { ...row, slug } } };
       if (rehost) {
@@ -68,6 +71,17 @@ module.exports = [
       const sent = await require('../../../virtual-closet/lib/emails').welcome({ centre, to: centre.statements_email });
       preview.push(`Enrolled #${centre.id} ${centre.name} (${centre.slug}). Welcome email ${sent?.ok ? 'sent' : `NOT sent: ${sent?.error || 'unknown'}`}.`);
       return { content: [{ type: 'text', text: preview.join('\n') }], _structured: { centre, welcome: sent } };
+    },
+  },
+  {
+    name: 'vc_set_goal',
+    description: "Virtual Closet: set a centre's goal, the amount its running total is drawn against on the page and in the digest (default $1,000; the centre tells Jamie, Jamie sets it here). Minimum $300.",
+    inputSchema: { type: 'object', properties: { centre_id: { type: 'number' }, goal_dollars: { type: 'number' }, operator_email: { type: 'string' } }, required: ['centre_id', 'goal_dollars'] },
+    handler: async ({ centre_id, goal_dollars, operator_email } = {}) => {
+      const before = await centresLib.getById(centre_id);
+      if (!before) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
+      const c = await centresLib.update(centre_id, { goal_cents: Math.round(goal_dollars * 100) }, `operator:${operator_email || process.env.ALLOWED_EMAIL || 'operator'}`);
+      return text(`${c.name}: goal ${dollars(before.goal_cents)} → ${dollars(c.goal_cents)}.`);
     },
   },
   {
@@ -129,7 +143,7 @@ module.exports = [
       if (!d) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
       const c = d.centre;
       if (c.mode === 'link') {
-        const lines = [`${c.name} (${c.slug}) · ${c.status} · link mode · page ${BASE()}/${c.slug} · notifications to ${c.statements_email || '(none)'}${c.digest_through ? ` · digest through ${c.digest_through}` : ''}`];
+        const lines = [`${c.name} (${c.slug}) · ${c.status} · link mode · goal ${dollars(c.goal_cents)} · page ${BASE()}/${c.slug} · notifications to ${c.statements_email || '(none)'}${c.digest_through ? ` · digest through ${c.digest_through}` : ''}`];
         lines.push(linkSummary(d) + ` · codes issued ${d.codes.issued}, used ${d.codes.used} · visits (90d) ${d.visits}${d.balance?.lastActivityAt ? ` · last activity ${d.balance.lastActivityAt}` : ''}`);
         lines.push('Ledger:');
         for (const l of d.ledgerLines || []) lines.push(`  ${l.created_at.slice(0, 10)} · ${l.kind} · ${dollars(l.amount_cents)}${l.source_id ? ` · ${l.source_type} ${l.source_id}` : ''}${l.detail?.note ? ` · ${l.detail.note}` : ''}${l.detail?.order_number ? ` · store order ${l.detail.order_number}` : ''}`);

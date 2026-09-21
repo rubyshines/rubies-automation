@@ -12,6 +12,10 @@
  */
 
 const MIN_GOAL_CENTS = 30000;
+// Link mode (2026-09-21): every centre has a goal the running total is drawn
+// against, $1,000 unless the centre tells Jamie otherwise. Lifetime raised,
+// never reset; past the goal the bar stays full.
+const LINK_DEFAULT_GOAL_CENTS = 100000;
 const DOOR_SHIPPING_CENTS = 1500;
 const ORDER_CREDIT_RATE = 0.25;
 
@@ -115,7 +119,7 @@ function dollars(cents) {
 }
 
 module.exports = {
-  MIN_GOAL_CENTS, DOOR_SHIPPING_CENTS, ORDER_CREDIT_RATE, RAISE_KINDS,
+  MIN_GOAL_CENTS, LINK_DEFAULT_GOAL_CENTS, DOOR_SHIPPING_CENTS, ORDER_CREDIT_RATE, RAISE_KINDS,
   requestCostCents, boxGoalCents, raisedCents, sourcesCents, orderCreditCents,
   sendTotals, autoFill, planValueCents, dollars,
 };

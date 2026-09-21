@@ -8,6 +8,8 @@ done_when: On the Railway service, a centre enrolled by `vc_enrol_centre` (seede
 
 # Virtual Closet, the minimal cut
 
+**Status 2026-09-21:** shipped in PR #222; The Attic enrolled (#9) with the welcome to Jamie's own inbox; the simulation (sale, sponsorship, digest, redemption) ran on a test centre and every email arrived. PR #223 carries the goal bar and Jamie's phone-review copy. Left on the done_when: a real order and a real $10 sponsorship through the live page, then the next daily digest.
+
 Build spec. The full app (accounts, requests, boxes, operator pages) was built and merged 2026-09-18 to 21 (PRs #212 to #219) and runs at the Railway domain. On 2026-09-21 Jamie cut the pilot back to an affiliate-shaped programme because the risk is execution, for the centre and for RUBIES, not build cost. The programme record with every decision is `.claude/plans/org-closet-programme.md`, section "The minimal cut". This file says how the code changes.
 
 **The principle:** the full app stays in the codebase behind a per-centre mode. Nothing is deleted. Every centre enrolled from now on is in `link` mode; no centre is in `closet` mode and nothing links to closet-mode surfaces, but the code and tests for them stay green.
@@ -65,12 +67,11 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 ### `virtual-closet/views/closet.js`
 - New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
   1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo as enrolled). Sample centre in the design: The Attic Youth Center. (Jamie, 2026-09-21.)
-  2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link under it (Jamie, 2026-09-21).
-  3. Total: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." with "from 9 orders and 3 sponsors". At zero: "Nothing raised yet. Be the first." No bar, no number sign, no goal.
-  4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
-  5. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it.
-  6. How it works, three lines: "Shop, and 20% comes off at checkout." "A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it." "RUBIES sends [Centre] underwear and swimwear from what is raised."
-  7. `aboutSection()` and the footer as today.
+  2. Headline "Shop 20% off gender-affirming gear." then "Shop RUBIES and support [Centre] Virtual Closet. RUBIES will donate a quarter of the value of your order to the closet." Button "Shop with 20% off" → `/[slug]/shop`. Beside it the store's mirror illustration (under-skinned.svg), not a product photo; no fine print, no size guide link, no brand paragraph (Jamie, 2026-09-21, phone review).
+  3. About RUBIES, right under the button, with the beach illustration and Jamie's copy and no links: "RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear. No tucking or tight compression."
+  4. The fundraiser band (Jamie, 2026-09-21, after the first ship): "$88 raised of $1,000 goal", the magenta bar, then "RUBIES matches it: $176 of underwear and swimwear for the closet." and "From 9 orders and 3 sponsors." Every centre has a goal, $1,000 by default (`vc_centres.goal_cents`, reused); the centre tells Jamie theirs and Jamie sets it with `vc_set_goal`; no centre-facing setting. Lifetime raised against the goal, never reset; past it the bar stays full and the line says "Goal reached". The digest says "Raised so far: $X of your $Y goal."
+  5. Sponsor row: heading "Not shopping? Sponsor the closet. Help someone feel comfortable and confident.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
+  6. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it, then the footer (How RUBIES works, Our styles; no size guide link anywhere on the link page). (The "How it works" section was removed on Jamie's phone review, 2026-09-21.)
 - `render` takes `balance` in ctx for link mode; `progress`, `wordsSection`, request buttons are not called.
 
 ### `virtual-closet/server.js`

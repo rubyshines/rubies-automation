@@ -5,7 +5,8 @@
  */
 const { page, esc, LINKS, img, productCard, illustration } = require('./layout');
 const { SPONSOR_TILES, productUrl } = require('../lib/catalog');
-const { dollars } = require('../lib/money');
+const money = require('../lib/money');
+const { dollars } = money;
 const { displaySizes } = require('../lib/centres');
 
 const LEADS = new Set(['shop', 'request', 'sponsor']);
@@ -91,47 +92,52 @@ function amounts(ctx) {
 
 // ---- link mode: the whole page ---------------------------------------------
 
-/** "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." */
+/**
+ * The fundraiser band: "$88 raised of $1,000 goal", the bar, then the match
+ * line. Lifetime raised against the centre's goal (Jamie, 2026-09-21).
+ */
 function totalLine(ctx) {
   const b = ctx.balance;
-  if (!b.raisedCents) {
-    return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">Nothing raised yet.</div><p>Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.</p></div></section>`;
-  }
+  const goal = Math.max(1, ctx.centre.goal_cents || money.LINK_DEFAULT_GOAL_CENTS);
+  const pct = Math.min(100, Math.round((b.raisedCents / goal) * 100));
+  const bar = `<div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>`;
   const n = (c, one, many) => `${c} ${c === 1 ? one : many}`;
-  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised so far</small></div><p>RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.</p><p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.</p></div></section>`;
+  let line, fine;
+  if (!b.raisedCents) { line = `Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.`; fine = ''; }
+  else {
+    line = `RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.`;
+    fine = `<p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.${b.raisedCents >= goal ? ' Goal reached, and everything from here keeps the closet stocked.' : ''}</p>`;
+  }
+  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised of ${dollars(goal)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
 }
 
+// The About RUBIES copy on the link page, as Jamie wrote it (2026-09-21).
+const LINK_ABOUT = 'RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear. No tucking or tight compression.';
+
 function linkOnly(ctx) {
-  const steps = [
-    'Shop, and 20% comes off at checkout.',
-    'A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it.',
-    `RUBIES sends ${esc(ctx.name)} underwear and swimwear from what is raised.`,
-  ];
   return `
 <section class="hero">
   <div class="hero-copy">
-    <h1>Shop with 20% off.</h1>
-    <p class="lede">A quarter of your order goes to ${esc(ctx.name)}'s Virtual Closet, and RUBIES matches it.</p>
-    <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear.</p>
+    <h1>Shop 20% off gender-affirming gear.</h1>
+    <p class="lede">Shop RUBIES and support ${esc(ctx.name)} Virtual Closet. RUBIES will donate a quarter of the value of your order to the closet.</p>
     ${shopBtn(ctx)}
   </div>
-  ${heroArt(ctx, 'aj')}
+  ${illustration('mirror')}
 </section>
+${aboutSection(LINK_ABOUT)}
 ${totalLine(ctx)}
 <section id="sponsor">
-  <h2>Not shopping? Put money in the closet.</h2>
+  <h2>Not shopping? Sponsor the closet. Help someone feel comfortable and confident.</h2>
   <div class="gifts gifts-4">${tiles(ctx)}</div>
-  <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
+  <p class="fine fine-after">You pay at the RUBIES online store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
-<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>
-<section class="how" id="how"><h2>How it works</h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></section>
-${aboutSection()}`;
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off. <a href="${LINKS.how}">Learn how RUBIES works</a>.</p></section>`;
 }
 
-function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true } = {}) {
+function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true, note = true } = {}) {
   const cards = ctx.products.map(p => {
     const price = discounted
-      ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b> <span class="fine">with your 20%</span>`
+      ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b>${note ? ' <span class="fine">with your 20%</span>' : ''}`
       : prices ? dollars(p.retail_cents) : '';
     const href = details ? `/${ctx.slug}/style/${p.key}` : productUrl(p);
     return productCard(p, { href, price, sub: details ? 'Details' : '' });
@@ -141,7 +147,9 @@ function productGrid(ctx, { prices = true, discounted = false, details = false, 
 }
 
 /** Who RUBIES is, for the visitor who arrived from a centre's post and has never heard of us. */
-function aboutSection() {
+function aboutSection(copy) {
+  // Link page: the beach illustration on the left, the words on the right (Jamie, 2026-09-21).
+  if (copy) return `<section class="about">${illustration('beach', 'about-art')}<div><h2>About RUBIES</h2><p>${copy}</p><p>Learn more <a href="${LINKS.about}">about RUBIES</a>.</p></div></section>`;
   return `<section class="about"><div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every pair is tested with our community and comes with a money-back guarantee at the store. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.about}">About us</a></p></div>${illustration('beach', 'about-art')}</section>`;
 }
 

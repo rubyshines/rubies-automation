@@ -29,6 +29,11 @@ const logo = (width = 170) => `<img src="/public/rubies-logo.svg" alt="RUBIES" w
 /** One of the store's illustrations in a framed art block. */
 function illustration(name, cls = 'hero-art') {
   const i = ILLUSTRATIONS[name] || ILLUSTRATIONS.beach;
+  if (i.mobile) {
+    // A phone crop when the store has one: <picture> picks it under 750px and
+    // the box takes that crop's proportions (see .has-mobile in closet.css).
+    return `<div class="${cls} has-mobile" style="--desk:${i.ratio};--mob:${i.mobile.ratio};aspect-ratio:var(--desk)"><picture><source media="(max-width: 749px)" srcset="${i.mobile.src}"><img src="${i.src}" alt="${esc(i.alt)}" loading="lazy"></picture></div>`;
+  }
   return `<div class="${cls}" style="aspect-ratio:${i.ratio}"><img src="${i.src}" alt="${esc(i.alt)}" loading="lazy"></div>`;
 }
 
@@ -46,7 +51,9 @@ function page({ title, body, centre, mode = 'public', nav = '', user = null, ban
   if (mode === 'public' && link) {
     // Link mode (Jamie, 2026-09-21): the centre's name as the title on the
     // left, "RUBIES × [centre logo]" on the right.
-    const clogo = centre.logo_url ? `<span class="hd-x-mark">×</span><img class="hd-clogo" src="${esc(centre.logo_url)}" alt="${esc(centre.name)}">` : '';
+    // The centre's logo links to its website when it has one (Jamie, 2026-09-21).
+    const logoImg = centre.logo_url ? `<img class="hd-clogo" src="${esc(centre.logo_url)}" alt="${esc(centre.name)}">` : '';
+    const clogo = logoImg ? `<span class="hd-x-mark">×</span>${centre.website ? `<a class="hd-clogo-link" href="${esc(centre.website)}" target="_blank" rel="noopener" aria-label="${esc(centre.name)}">${logoImg}</a>` : logoImg}` : '';
     header = `<header class="hd hd-link"><div><span class="hd-title">${esc(centre.name)} Virtual Closet</span></div><div class="hd-x">${brand}${clogo}</div></header>`;
   } else if (mode === 'public' && centre) {
     header = `<header class="hd"><div>${brand}<span class="hd-sub">${esc(centre.name)}'s closet</span></div><nav>${nav}</nav></header>`;
@@ -60,7 +67,7 @@ function page({ title, body, centre, mode = 'public', nav = '', user = null, ban
   const ftBrand = `<div class="ft-brand"><a class="brand" href="${STORE}" aria-label="RUBIES">${logo(96)}</a><span>Never stop shining.</span></div>`;
   const footer = mode === 'centre' || mode === 'plain'
     ? `<footer class="ft">${ftBrand}<span>Questions? <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a></span></footer>`
-    : `<footer class="ft">${ftBrand}<div class="ft-links"><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a> · <a href="${LINKS.sizeGuide}">Size guide</a>${link || mode === 'programme' ? '' : ` · <a href="${LINKS.offer}">Offer details</a> · <a href="${LINKS.terms}">Free pair terms</a>`}${mode === 'programme' ? ` · <a href="${LINKS.map}">Donation map</a>` : ''}</div>${centre ? `<div class="soft">${esc(centre.name)}${addressLine(centre) ? `, ${esc(addressLine(centre))}` : ''}${centre.website ? ` · <a href="${esc(centre.website)}">${esc(centre.website.replace(/^https?:\/\//, ''))}</a>` : ''}</div>` : ''}</footer>`;
+    : `<footer class="ft">${ftBrand}${link ? '' : `<div class="ft-links"><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a> · <a href="${LINKS.sizeGuide}">Size guide</a>${mode === 'programme' ? '' : ` · <a href="${LINKS.offer}">Offer details</a> · <a href="${LINKS.terms}">Free pair terms</a>`}${mode === 'programme' ? ` · <a href="${LINKS.map}">Donation map</a>` : ''}</div>`}${centre ? `<div class="soft">${esc(centre.name)}${addressLine(centre) ? `, ${esc(addressLine(centre))}` : ''}${centre.website ? ` · <a href="${esc(centre.website)}">${esc(centre.website.replace(/^https?:\/\//, ''))}</a>` : ''}</div>` : ''}</footer>`;
   return `<!doctype html>
 <html lang="en">
 <head>

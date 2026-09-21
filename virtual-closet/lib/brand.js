@@ -29,7 +29,9 @@ const FAVICON = 'https://rubyshines.com/cdn/shop/files/RUBIES-logo-pink-green-rg
 // for its homepage hero and the underwear category), so the closet pages show
 // people rather than a cropped product flat-lay.
 const ILLUSTRATIONS = {
-  beach: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/Hero-desktop.svg', alt: 'Four friends on a beach in RUBIES swimwear', ratio: '16 / 10' },
+  beach: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/Hero-desktop.svg', alt: 'Four friends on a beach in RUBIES swimwear', ratio: '16 / 10',
+    // The store's own phone crop of the same scene (393 × 700), swapped in under 750px.
+    mobile: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/Hero-mobile.svg?v=1775075974', ratio: '393 / 700' } },
   mirror: { src: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/under-skinned.svg', alt: 'Putting on lipstick in the mirror, in RUBIES underwear', ratio: '1 / 1' },
 };
 
