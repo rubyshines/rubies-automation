@@ -84,7 +84,7 @@ function isLink(centre) { return !!centre && centre.mode === 'link'; }
  * sign-up). Active at once, no approval step, no box. Sends nothing: the
  * tool sends the welcome so it can preview first.
  */
-async function enrol({ name, slug, notify_email, website, logo_url, city, region, country, donation_partner_id, actor }) {
+async function enrol({ name, slug, notify_email, website, logo_url, city, region, country, donation_partner_id, goal_cents, actor }) {
   if (!name || !String(name).trim()) throw new Error('A centre needs a name.');
   if (!notify_email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(notify_email))) throw new Error('A centre needs a notification email.');
   const clean = slug ? slugify(slug) : null;
@@ -99,6 +99,7 @@ async function enrol({ name, slug, notify_email, website, logo_url, city, region
     programmes: { closet: true, pass_it_on: !!donation_partner_id },
     donation_partner_id: donation_partner_id || null,
     statements_email: String(notify_email).trim().toLowerCase(),
+    goal_cents: Math.max(30000, Math.round(goal_cents || 0) || require('./money').LINK_DEFAULT_GOAL_CENTS),
     status: 'active',
     approved_at: new Date().toISOString(),
     approved_by: actor || 'operator',

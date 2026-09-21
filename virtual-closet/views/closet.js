@@ -5,7 +5,8 @@
  */
 const { page, esc, LINKS, img, productCard, illustration } = require('./layout');
 const { SPONSOR_TILES, productUrl } = require('../lib/catalog');
-const { dollars } = require('../lib/money');
+const money = require('../lib/money');
+const { dollars } = money;
 const { displaySizes } = require('../lib/centres');
 
 const LEADS = new Set(['shop', 'request', 'sponsor']);
@@ -91,14 +92,23 @@ function amounts(ctx) {
 
 // ---- link mode: the whole page ---------------------------------------------
 
-/** "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." */
+/**
+ * The fundraiser band: "$88 raised of $1,000 goal", the bar, then the match
+ * line. Lifetime raised against the centre's goal (Jamie, 2026-09-21).
+ */
 function totalLine(ctx) {
   const b = ctx.balance;
-  if (!b.raisedCents) {
-    return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">Nothing raised yet.</div><p>Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.</p></div></section>`;
-  }
+  const goal = Math.max(1, ctx.centre.goal_cents || money.LINK_DEFAULT_GOAL_CENTS);
+  const pct = Math.min(100, Math.round((b.raisedCents / goal) * 100));
+  const bar = `<div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>`;
   const n = (c, one, many) => `${c} ${c === 1 ? one : many}`;
-  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised so far</small></div><p>RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.</p><p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.</p></div></section>`;
+  let line, fine;
+  if (!b.raisedCents) { line = `Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.`; fine = ''; }
+  else {
+    line = `RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.`;
+    fine = `<p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.${b.raisedCents >= goal ? ' Goal reached, and everything from here keeps the closet stocked.' : ''}</p>`;
+  }
+  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised of ${dollars(goal)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
 }
 
 function linkOnly(ctx) {
