@@ -112,11 +112,6 @@ function totalLine(ctx) {
 }
 
 function linkOnly(ctx) {
-  const steps = [
-    'Shop, and 20% comes off at checkout.',
-    'A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it.',
-    `RUBIES sends ${esc(ctx.name)} underwear and swimwear from what is raised.`,
-  ];
   return `
 <section class="hero">
   <div class="hero-copy">
@@ -134,7 +129,6 @@ ${totalLine(ctx)}
   <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
 <section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>
-<section class="how" id="how"><h2>How it works</h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></section>
 ${aboutSection()}`;
 }
 

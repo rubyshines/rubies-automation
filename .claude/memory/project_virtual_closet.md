@@ -69,8 +69,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
   3. The fundraiser band (Jamie, 2026-09-21, after the first ship): "$88 raised of $1,000 goal", the magenta bar, then "RUBIES matches it: $176 of underwear and swimwear for the closet." and "From 9 orders and 3 sponsors." Every centre has a goal, $1,000 by default (`vc_centres.goal_cents`, reused); the centre tells Jamie theirs and Jamie sets it with `vc_set_goal`; no centre-facing setting. Lifetime raised against the goal, never reset; past it the bar stays full and the line says "Goal reached". The digest says "Raised so far: $X of your $Y goal."
   4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
   5. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it.
-  6. How it works, three lines: "Shop, and 20% comes off at checkout." "A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it." "RUBIES sends [Centre] underwear and swimwear from what is raised."
-  7. `aboutSection()` and the footer as today.
+  6. `aboutSection()` and the footer as today. (The "How it works" section was removed on Jamie's phone review, 2026-09-21.)
 - `render` takes `balance` in ctx for link mode; `progress`, `wordsSection`, request buttons are not called.
 
 ### `virtual-closet/server.js`
