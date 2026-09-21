@@ -67,7 +67,6 @@ b, strong { font-weight: 600; }
 .hd-x-mark { font-size: 22px; color: var(--soft); line-height: 1; }
 .hd-clogo { max-height: 48px; max-width: 160px; display: block; }
 .fund-link { grid-template-columns: 1fr; }
-.gifts-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; }
 .hd-user a { margin-left: 8px; }
 .ft { border-top: 1px solid var(--rule); margin-top: 56px; padding-top: 24px; display: grid; gap: 8px; color: var(--soft); font-size: 14px; }
 .ft-brand { display: flex; align-items: center; gap: 14px; }
@@ -146,6 +145,7 @@ section + section { border-top: 1px solid var(--rule); }
 .gift:hover { background: var(--blue-tint); color: var(--ink); }
 .gift b { font-size: 24px; font-weight: 600; }
 .gift small { color: var(--soft); font-size: 13px; }
+.gifts-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; }
 
 /* products: the store's card, square photo on the light grey ground */
 .products { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }

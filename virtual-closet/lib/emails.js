@@ -175,20 +175,19 @@ async function welcomeLink({ centre, to }) {
       `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`) });
 }
 
-/** Link mode: at most one a day, only on a day with activity. From Jamie. */
+/** Link mode: at most one a day, only on a day with activity. From care@, so a reply lands in CS; the welcome is the one from Jamie (Jamie, 2026-09-21). */
 async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, sponsorCents = 0, balanceCents = 0, raisedCents = 0 }) {
   const lines = [];
   if (orders) lines.push(`${orders} order${plural(orders, '', 's')} through your link put <b>${dollars(orderCents)}</b> in.`);
   if (sponsors) lines.push(`${sponsors} sponsor${plural(sponsors, '', 's')} put <b>${dollars(sponsorCents)}</b> in.`);
   const textLines = lines.map(l => l.replace(/<[^>]+>/g, ''));
-  return deliver({ to, subject: `${centre.name}'s Virtual Closet activity today`, tag: 'activity', from: FROM_JAMIE,
-    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents)}. Raised so far: ${dollars(raisedCents)}. Keep sharing your link: ${BASE}/${centre.slug}. To order, email me. Jamie`,
+  return deliver({ to, subject: `${centre.name}'s Virtual Closet activity today`, tag: 'activity',
+    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents)}. Raised so far: ${dollars(raisedCents)}. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
     html: layout(`${esc(centre.name)}'s Virtual Closet activity today`,
       lines.map(p).join('') +
       p(`Your balance is <b>${dollars(balanceCents)}</b>. Raised so far: ${dollars(raisedCents)}.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
-      p(`To order, email me.<br>Jamie`),
-      `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`) });
+      p(`To order, email Jamie at <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>.`)) });
 }
 
 async function welcome({ centre, to }) {

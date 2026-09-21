@@ -188,7 +188,7 @@ test('the daily digest sends once per centre for a day with activity, advances t
   assert.equal(fake.tables.vc_centres[0].digest_through, undefined, 'a dry run moves no watermark');
   const live = await quiet(async () => { const r = await daily.run({ live: true }); assert.equal(r.digests, 1, JSON.stringify(r)); });
   assert.ok(live.includes(`[vc email → ${centre.statements_email}] The Attic Youth Center's Virtual Closet activity today`));
-  assert.ok(live.includes('from jamie@rubyshines.com'), 'the digest comes from Jamie');
+  assert.ok(live.includes('activity today (from care@rubyshines.com)'), 'the digest comes from care@');
   assert.ok(fake.tables.vc_centres[0].digest_through, 'the watermark moved');
   const again = await quiet(async () => { const r = await daily.run({ live: true }); assert.equal(r.digests, 0); });
   assert.ok(!again.includes('activity today'), 'nothing new, nothing sent');
@@ -223,7 +223,7 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   assert.ok(!/undefined|NaN/.test(out), out);
   assert.ok(out.includes('Your RUBIES Virtual Closet is ready. (from jamie@rubyshines.com)'));
   assert.ok(out.includes('attachments: closet-qr.png'));
-  assert.ok(out.includes("The Attic's Virtual Closet activity today (from jamie@rubyshines.com)"));
+  assert.ok(out.includes("The Attic's Virtual Closet activity today (from care@rubyshines.com)"));
   assert.ok(out.includes("Thank you from The Attic's Virtual Closet (from care@rubyshines.com)"));
   assert.ok(out.includes('3 orders through your link put $24.60 in.'));
   assert.ok(out.includes('Your balance is $112.40.'));
