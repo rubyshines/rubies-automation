@@ -41,8 +41,8 @@ function layout(title, inner, footerLinks = '', { centre } = {}) {
     ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="vertical-align:middle">${rubies}</td><td style="vertical-align:middle;padding:0 14px;${font}font-size:22px;color:${COLOURS.soft}">×</td><td style="vertical-align:middle">${centre.website ? `<a href="${esc(centre.website)}" style="text-decoration:none">` : ''}<img src="${esc(centre.logo_url)}" alt="${esc(centre.name)}" height="44" style="display:block;border:0;height:44px;width:auto;max-width:160px">${centre.website ? '</a>' : ''}</td></tr></table>`
     : rubies;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
-<body style="margin:0;padding:0;background:${COLOURS.grey};${font}color:${COLOURS.ink}">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOURS.grey}"><tr><td align="center" style="padding:32px 16px">
+<body style="margin:0;padding:0;background:${COLOURS.white};${font}color:${COLOURS.ink}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOURS.white}"><tr><td align="center" style="padding:32px 16px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
 <tr><td style="padding:0 0 20px">${head}</td></tr>
 <tr><td style="background:${COLOURS.white};border-top:4px solid ${COLOURS.magenta};padding:32px 32px 24px;${font}color:${COLOURS.ink};font-size:16px;line-height:1.6">
