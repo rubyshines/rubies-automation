@@ -176,13 +176,13 @@ async function welcomeLink({ centre, to }) {
   const attachments = await welcomeAttachments(centre);
   const hasSign = attachments.some(a => a.filename === 'closet-sign.pdf');
   return deliver({ to, subject: 'Your RUBIES Virtual Closet is ready.', tag: 'welcome', from: FROM_JAMIE, attachments,
-    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ' Attached is a sign you can print and put up, with a QR code that opens your Virtual Closet; the QR code is attached on its own too.' : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
+    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ` Attached is a table sign you can print, fold and stand up, with a QR code that opens your Virtual Closet; reprint it any time at ${url}/qr-sign. The QR code is attached on its own too.` : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
     html: layout('Your RUBIES Virtual Closet is ready.',
       p(`Hi ${esc(centre.name)} team,`) +
       p(`Congratulations, ${esc(centre.name)}'s Virtual Closet is ready.`) +
       shareBlock(centre) +
       p(hasSign
-        ? `<b>Attached is a sign you can print</b> and put up wherever your community will see it: at the front desk, on a noticeboard, at events. Its QR code opens your Virtual Closet, so anyone can scan it to shop or sponsor. The QR code is attached on its own too, for your website, socials and newsletter.`
+        ? `<b>Attached is a table sign you can print</b>, fold and stand up wherever your community will see it: the front desk, a counter, your table at events. Its QR code opens your Virtual Closet, so anyone can scan it to shop or sponsor, and the back tells whoever is at the table what to say. Print it at 100%, not fit to page, so the folds line up; reprint it any time at <a href="${url}/qr-sign">${esc(url.replace(/^https?:\/\//, ''))}/qr-sign</a>. The QR code is attached on its own too, for your website, socials and newsletter.`
         : `Your QR code is attached${attachments.length ? '' : ` (or fetch it any time at <a href="${url}/qr.png">${esc(url.replace(/^https?:\/\//, ''))}/qr.png</a>)`}.`) +
       p(`<b>How it adds up.</b> Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar.`) +
       p(`<b>When you're ready to order,</b> email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more.`) +

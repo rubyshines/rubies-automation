@@ -139,6 +139,16 @@ async function qrFor(req, res, next, type) {
 app.get('/:slug/qr.png', loadCentre, (req, res, next) => qrFor(req, res, next, 'png'));
 app.get('/:slug/qr.svg', loadCentre, (req, res, next) => qrFor(req, res, next, 'svg'));
 
+// The printable table sign, the same PDF the welcome email attaches, so a
+// centre can reprint it from the address printed on the sign itself.
+app.get('/:slug/qr-sign', loadCentre, async (req, res, next) => {
+  try {
+    if (!centres.isLink(req.centre)) return next('route');
+    const pdf = await require('./lib/sign').signPdf(req.centre, { url: `${BASE_URL}/${req.centre.slug}` });
+    res.type('application/pdf').set('Content-Disposition', `inline; filename="${req.centre.slug}-virtual-closet-sign.pdf"`).send(pdf);
+  } catch (err) { next(err); }
+});
+
 app.get('/:slug/thanks', loadCentre, async (req, res, next) => {
   try {
     const ctx = await closetContext(req.centre);
