@@ -23,8 +23,9 @@ function render({ centre, sum, lastSent, products, lead, words, paused }) {
 // ---- modules -------------------------------------------------------------
 
 function shopBtn(ctx, label = 'Shop with 20% off') {
-  return `<a class="btn btn-fill" href="/${ctx.slug}/shop">${esc(label)}</a><p class="fine"><a href="${LINKS.offer}">Offer details</a></p>`;
+  return `<a class="btn btn-fill" href="/${ctx.slug}/shop">${esc(label)}</a>`;
 }
+const offerLink = `<a href="${LINKS.offer}">Offer details</a>`;
 
 function requestBtn(ctx, label = 'Request a pair') {
   if (ctx.paused) {
@@ -126,13 +127,16 @@ function allEqual(ctx) {
   ${illustration('mirror')}
 </section>
 <section class="three doors-3">
-  <div class="card"><h3>Shop</h3><p>20% off one order with RUBIES, from this link. For every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
+  <div class="card"><h3>Shop</h3><p>20% off one order with RUBIES, from this link. For every two items bought, the closet gets one. ${offerLink}</p>${shopBtn(ctx)}</div>
   <div class="card"><h3>Request a pair</h3><p>Tell us what you need. ${requestLine(ctx)}</p>${requestBtn(ctx)}</div>
   <div class="card"><h3>Sponsor</h3><p>Put a pair in the shipment. RUBIES matches every dollar.</p><a class="btn btn-sun" href="#sponsor">Sponsor the closet</a></div>
 </section>
-<section class="sponsor-block">
+<section>
+  <h2>Sponsor the closet</h2>
+  <div class="sponsor-block">
   ${progress(ctx)}
   ${amounts(ctx)}
+  </div>
 </section>
 <section><h2>What goes in the closet</h2>${productGrid(ctx)}</section>
 ${aboutSection()}
@@ -149,6 +153,7 @@ function shopFirst(ctx) {
     <p class="lede"><b>Shop with 20% off. Every two items puts one in the closet.</b></p>
     <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. 20% off one order from this link, and for every two items bought, ${esc(ctx.name)}'s closet gets one.</p>
     ${shopBtn(ctx, 'Shop the store with 20% off')}
+    <p class="fine">${offerLink}</p>
   </div>
   ${heroArt(ctx, 'aj')}
 </section>
@@ -179,7 +184,7 @@ function requestFirst(ctx) {
 ${aboutSection()}
 ${howItWorks(ctx, 'request')}
 <section class="two">
-  <div class="card"><h3>Want to help instead?</h3><p>Shop with 20% off one order; for every two items bought, the closet gets one.</p>${shopBtn(ctx)}</div>
+  <div class="card"><h3>Want to help instead?</h3><p>Shop with 20% off one order; for every two items bought, the closet gets one. ${offerLink}</p>${shopBtn(ctx)}</div>
   <div class="card"><h3>Sponsor the closet</h3><p>Put a pair in the shipment. RUBIES matches every dollar.</p><a class="btn btn-sun" href="/${ctx.slug}?lead=sponsor#sponsor">Sponsor the closet</a></div>
 </section>
 <section class="strip quiet" id="progress"><div class="quiet-fund"><span><b>Shipment #${ctx.sum.number}</b> · ${dollars(ctx.sum.raised)} raised of ${dollars(ctx.sum.goal)} goal</span><div class="bar bar-slim" role="progressbar" aria-valuenow="${ctx.sum.goal ? Math.min(100, Math.round((ctx.sum.raised / ctx.sum.goal) * 100)) : 0}" aria-valuemin="0" aria-valuemax="100"><span style="width:${ctx.sum.goal ? Math.min(100, Math.round((ctx.sum.raised / ctx.sum.goal) * 100)) : 0}%"></span></div></div></section>`;
@@ -199,7 +204,7 @@ function sponsorFirst(ctx) {
 <section class="tabs" data-tabs>
   <div class="tab-row"><button class="tab active" data-tab="sponsor">Sponsor</button><button class="tab" data-tab="shop">Shop</button><button class="tab" data-tab="request">Request</button></div>
   <div class="tab-pane" data-pane="sponsor"><p>Pick what to put in the shipment.</p>${amounts(ctx)}</div>
-  <div class="tab-pane" data-pane="shop" hidden><p>20% off one order with RUBIES.</p>${shopBtn(ctx)}${productGrid(ctx)}</div>
+  <div class="tab-pane" data-pane="shop" hidden><p>20% off one order with RUBIES. ${offerLink}</p>${shopBtn(ctx)}${productGrid(ctx)}</div>
   <div class="tab-pane" data-pane="request" hidden><p>Tell us what you need. ${requestLine(ctx)}</p>${requestBtn(ctx)}</div>
 </section>
 <section><h2>What's in the shipment</h2>${productGrid(ctx, { prices: false, foot: false })}<p class="fine">Five styles, sizes ${esc(ctx.sizes)}. Requested items go in first; the centre picks the rest.</p></section>

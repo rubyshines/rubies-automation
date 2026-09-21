@@ -96,7 +96,8 @@ function swatchesHtml(colours) {
  */
 function productCard(p, { href, price = '', sub = '', swatches = true, id = '' } = {}) {
   const foot = price || swatches ? `<span class="price">${price ? `<span>${price}</span>` : ''}${swatches ? swatchesHtml(p.colours) : ''}</span>` : '';
-  return `<a class="product" href="${href}"${id ? ` id="${id}"` : ''}><span class="media"><img src="${img(p.image, 600)}" alt="${esc(p.title)}" loading="lazy" width="300" height="315"></span><span class="body"><span class="name">${esc(p.title)}</span>${foot}${sub ? `<span class="fine">${sub}</span>` : ''}</span></a>`;
+  const hover = p.hover ? `<img src="${img(p.hover, 600)}" alt="" loading="lazy" width="300" height="315" class="media-hover">` : '';
+  return `<a class="product" href="${href}"${id ? ` id="${id}"` : ''}><span class="media">${hover}<img src="${img(p.image, 600)}" alt="${esc(p.title)}" loading="lazy" width="300" height="315"></span><span class="body"><span class="name">${esc(p.title)}</span>${foot}${sub ? `<span class="fine">${sub}</span>` : ''}</span></a>`;
 }
 
 module.exports = { page, esc, LINKS, addressLine, img, productCard, swatchesHtml, illustration };

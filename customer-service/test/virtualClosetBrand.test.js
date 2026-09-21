@@ -26,6 +26,7 @@ test('the stylesheet is the store\'s: its fonts, its colours, square buttons, no
   const css = fs.readFileSync(path.join(__dirname, '../../virtual-closet/public/closet.css'), 'utf8');
   assert.ok(css.includes('font-family: "Fixel Display"'), 'Fixel Display is declared');
   assert.ok(css.includes('Motter Corpus Std'), 'the display face is declared');
+  assert.match(css, /\nh1\s*{[^}]*var\(--display\)[^}]*var\(--blue\)/, 'page titles are whole in Motter Corpus, in the site\'s blue');
   for (const c of ['#310C48', '#FB00FF', '#2000A0', '#F3F3F3', '#121212']) assert.ok(css.includes(c), `${c} is in the palette`);
   assert.ok(!/\.ph\b|wire-note|#222\b|#e8e8e8/i.test(css), 'wireframe tokens are gone');
   assert.match(css, /\.btn\s*{[^}]*border-radius:\s*4px/, 'buttons have the store\'s 4px corners');
@@ -52,8 +53,7 @@ test('every public page carries the logo and real product photography, no placeh
   }
   for (const p of MENU) assert.ok(pages['closet default'].includes(p.image.split('?')[0]), `${p.key}: store photo on the closet page`);
   assert.ok(pages['closet default'].includes('class="swatch"'), 'colourway swatches on the cards');
-  assert.ok(pages.programme.includes('<i>closet</i>'), 'the programme headline carries the site\'s display word');
-  assert.ok(!pages['closet default'].includes('<i>'), 'a centre\'s closet H1 stays plain Fixel');
+  assert.ok(!/<h1[^>]*>[^<]*<i>/.test(pages['closet default'] + pages.programme), 'no half-and-half headings: the H1 is set whole');
   for (const [name, html] of Object.entries(pages)) {
     assert.ok(!/<h[23][^>]*>[^<]*<i>/.test(html), `${name}: the display word lives in the H1 only`);
     assert.ok(!/Cards link to the store|No prices here|Who RUBIES is:/.test(html), `${name}: no designer notes in the copy`);
