@@ -367,10 +367,12 @@ r.post('/send', ...guard, async (req, res, next) => {
 });
 
 // ---- share tools -------------------------------------------------------------------------------------
-r.get('/share/qr.svg', ...guard, (req, res) => {
-  // Low-fi: a labelled placeholder square. The hi-fi pass inlines a real QR encoder.
-  const url = `${emails.BASE}/${req.centre.slug}${req.query.lead ? `?lead=${req.query.lead}` : ''}`;
-  res.type('image/svg+xml').send(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="260" viewBox="0 0 240 260"><rect width="240" height="240" fill="#fff" stroke="#222" stroke-width="4"/><text x="120" y="120" font-family="system-ui" font-size="14" text-anchor="middle">QR placeholder</text><text x="120" y="254" font-family="system-ui" font-size="10" text-anchor="middle">${url.replace(/&/g, '&amp;')}</text></svg>`);
+r.get('/share/qr.svg', ...guard, async (req, res, next) => {
+  try {
+    const url = `${emails.BASE}/${req.centre.slug}${req.query.lead ? `?lead=${req.query.lead}` : ''}`;
+    const svg = await require('qrcode').toString(url, { type: 'svg', margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } });
+    res.type('image/svg+xml').send(svg);
+  } catch (err) { next(err); }
 });
 
 // Operator impersonation starts here: the dashboard mints a session and a

@@ -8,7 +8,8 @@
  * failure. Leaves the rows in place (slug smoke-<timestamp>) for a look.
  *
  *   PORT=3850 VC_EMAIL_MODE=console node virtual-closet/server.js &
- *   node virtual-closet/scripts/smoke.js
+ *   node virtual-closet/scripts/smoke.js          # the full closet-mode flow, then the link-mode pass
+ *   node virtual-closet/scripts/smoke.js --link   # the link-mode pass only (the minimal cut, 2026-09-21)
  */
 require('dotenv').config();
 const BASE = process.env.VC_BASE_URL || `http://localhost:${process.env.PORT || 3850}`;
@@ -34,7 +35,59 @@ async function latestToken(purpose) {
   return rows[0];
 }
 
-(async () => {
+// ---- link mode: enrol, page, shop, a fake order and a fake sponsorship, digest, redeem ----
+async function linkPass() {
+  const stamp = Date.now().toString(36);
+  const centres = require('../lib/centres');
+  const ledger = require('../lib/ledger');
+  const emails = require('../lib/emails');
+  const daily = require('../jobs/daily');
+  const centre = await centres.enrol({ name: `Smoke Link ${stamp}`, notify_email: `smoke-link-${stamp}@example.org`, city: 'Philadelphia', region: 'PA', actor: 'smoke' });
+  ok(centre.mode === 'link' && centre.status === 'active', 'enrol creates an active link-mode centre');
+  const w = await emails.welcome({ centre, to: centre.statements_email });
+  ok(w.ok, 'welcome email composes (console mode) with the QR attached');
+  let r = await call(`/${centre.slug}`);
+  ok(r.status === 200 && r.text.includes(`${centre.name} Virtual Closet`) && r.text.includes('Nothing raised yet') && !/undefined|NaN/.test(r.text), 'link page renders empty');
+  ok(!/\/request|Shipment #|Free pair terms/.test(r.text), 'no request door, shipment or terms on the link page');
+  r = await call(`/${centre.slug}?lead=request`);
+  ok(r.status === 200 && !r.text.includes('Request a pair'), '?lead is ignored in link mode');
+  r = await call(`/${centre.slug}/request`);
+  ok(r.status === 404, 'the request form is gone for a link-mode centre');
+  r = await call(`/${centre.slug}/qr.png`);
+  ok(r.status === 200, 'the QR is served');
+  r = await call(`/${centre.slug}/shop`);
+  ok(r.status === 302 && /rubyshines\.com/.test(r.location), `shop redirects to the store (${r.location})`);
+  // A fake paid order carrying one of the centre's codes, and a fake sponsorship line.
+  must(await db().from('vc_discount_codes').insert({ centre_id: centre.id, code: `VC-SMOKE-${stamp.toUpperCase()}` }), 'code');
+  let res = await ledger.recordOrder({ id: `smoke-${stamp}-1`, order_number: `S${stamp}`, email: 'buyer@example.com', financial_status: 'paid', discount_codes: [{ code: `VC-SMOKE-${stamp.toUpperCase()}` }], subtotal_price: '25.60', line_items: [] });
+  ok(res.credited.length === 1 && res.credited[0].amount_cents === 640 && !res.credited[0].box_id, 'an order through the link credits a quarter of what was paid, with no box');
+  const sponsorship = require('../lib/sponsorship');
+  const s = await sponsorship.settings();
+  if (s?.variants?.unit) {
+    res = await ledger.recordOrder({ id: `smoke-${stamp}-2`, order_number: `S${stamp}b`, email: 'sponsor@example.com', financial_status: 'paid', discount_codes: [], line_items: [{ id: `smoke-li-${stamp}`, variant_id: sponsorship.numericId(s.variants.unit.id), quantity: 10, price: '1.00', properties: [{ name: 'Closet', value: centre.slug }, { name: 'Kind', value: 'sponsor' }] }] });
+    ok(res.credited.length === 1 && res.credited[0].kind === 'sponsor' && res.credited[0].amount_cents === 1000, 'a $10 sponsorship credits $10 and thanks the sponsor');
+  } else console.log('· sponsorship product not set up on this database; skipping the sponsor order');
+  r = await call(`/${centre.slug}`);
+  ok(r.text.includes('raised so far') && r.text.includes('RUBIES matches it'), 'the total line shows what was raised');
+  const dry = await daily.run({ live: false });
+  ok(dry.digests >= 1, 'a dry daily run counts the digest without sending');
+  const live = await daily.run({ live: true });
+  ok(live.digests >= 1, 'a live daily run sends the digest (console)');
+  const after = await centres.getById(centre.id);
+  ok(!!after.digest_through, 'the digest watermark moved');
+  const again = await daily.run({ live: true });
+  const mine = must(await db().from('vc_events').select('id').eq('centre_id', centre.id).eq('kind', 'digest.sent'), 'digest events');
+  ok(mine.length === 1 && again.digests === 0, 'a second run sends nothing new');
+  const bal = await ledger.redeem({ centre, amountCents: 500, orderNumber: `W-${stamp}`, note: 'smoke', actor: 'smoke' });
+  ok(bal.balanceCents === (await ledger.balance(centre)).balanceCents && bal.redeemedCents === 500, 'a redemption debits the balance');
+  const dup = await ledger.redeem({ centre, amountCents: 500, orderNumber: `W-${stamp}`, actor: 'smoke' });
+  ok(dup.duplicate === true, 'the same order number is a no-op');
+  console.log(`link-mode smoke done: ${BASE}/${centre.slug}`);
+}
+
+if (process.argv.includes('--link')) {
+  linkPass().then(() => process.exit(0)).catch(err => { console.error('✗ crashed:', err); process.exit(1); });
+} else (async () => {
   const stamp = Date.now().toString(36);
   const name = `Smoke Centre ${stamp}`;
   const adminEmail = `smoke-admin-${stamp}@example.org`;
@@ -119,5 +172,6 @@ async function latestToken(purpose) {
   const p = await operator.packingList(b1.id);
   ok(p && p.requests.length === 2, 'packing list shows both requests');
   console.log(`\nAll good. Centre ${centre.slug}: ${BASE}/${centre.slug}`);
+  await linkPass();
   process.exit(0);
 })().catch(err => { console.error('✗ crashed:', err); process.exit(1); });

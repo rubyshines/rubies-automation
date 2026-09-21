@@ -105,6 +105,12 @@ async function listCentres({ status } = {}) {
   const out = [];
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
   for (const c of rows) {
+    if (centres.isLink(c)) {
+      const ledger = require('./ledger');
+      const [bal, orders] = await Promise.all([ledger.balance(c), must(await db().from('vc_ledger').select('id').eq('centre_id', c.id).eq('kind', 'order_credit').gte('created_at', monthAgo), 'orders 30d')]);
+      out.push({ ...c, box: null, balance: bal, unanswered: 0, orders30d: orders.length, lastSignIn: null, admins: 0 });
+      continue;
+    }
     const box = await boxes.getOpenBox(c.id);
     const sum = box ? await boxes.summary(c, box) : null;
     const [orders, unanswered, team] = await Promise.all([
@@ -135,8 +141,13 @@ async function centreDetail(id) {
   const boxRows = [];
   for (const b of boxList) { const sum = await boxes.summary(centre, b); boxRows.push({ ...b, raised: sum.raised, goal: sum.goal, funded: sum.funded, sources: sum.sources, requests: sum.requests.length, ledger: sum.ledger }); }
   const published = requests.filter(r => r.words_published_at).length;
+  let balance = null, ledgerLines = [];
+  if (centres.isLink(centre)) {
+    const ledger = require('./ledger');
+    [balance, ledgerLines] = await Promise.all([ledger.balance(centre), ledger.lines(centre)]);
+  }
   return {
-    centre, team, boxes: boxRows, requests: requests.map(r => ({ ...r, items_text: requestsLib.describeItems(r.items).map(i => `${i.styleName} · ${i.colour} · ${i.size}`).join(', '), status_label: requestsLib.statusLabel(r) })),
+    centre, balance, ledgerLines, team, boxes: boxRows, requests: requests.map(r => ({ ...r, items_text: requestsLib.describeItems(r.items).map(i => `${i.styleName} · ${i.colour} · ${i.size}`).join(', '), status_label: requestsLib.statusLabel(r) })),
     events, codes: { issued: codes.length, used: codes.filter(c => c.used_at).length }, visits: visits.length, published,
   };
 }

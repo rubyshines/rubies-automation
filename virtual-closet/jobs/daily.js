@@ -2,6 +2,7 @@
 /**
  * Virtual Closet daily job, run as a daily-sync-all sub-pipeline:
  *   1. ledger reconcile over the order mirror (anything the webhook missed)
+ *   1b. link-mode centres: the activity digest, one email on a day with activity
  *   2. by-hand reminders at 7 days; 14-day escalation shows in Needs attention
  *   3. pickup reminders 14 days after a box arrived
  *   4. monthly statements on the 1st, only when something happened
@@ -18,8 +19,28 @@ const operator = require('../lib/operator');
 const { dollars } = require('../lib/money');
 
 async function run({ live = true, today = new Date() } = {}) {
-  const out = { reconcile: null, byHandReminders: 0, pickupReminders: 0, statements: 0, attention: 0, warnings: [] };
+  const out = { reconcile: null, digests: 0, byHandReminders: 0, pickupReminders: 0, statements: 0, attention: 0, warnings: [] };
   try { out.reconcile = await ledger.reconcile(); } catch (err) { out.warnings.push(`reconcile: ${err.message}`); }
+
+  // 1b. link-mode digests. The watermark moves only after a send that
+  // succeeded, so a failed send is retried next run and a re-run never
+  // repeats a row. A dry run counts what would go out and moves nothing.
+  try {
+    for (const centre of (await centres.list({ status: 'active' })).filter(centres.isLink)) {
+      const d = await ledger.digestActivity(centre, { since: centre.digest_through });
+      if (!d.any) continue;
+      const to = centre.statements_email;
+      if (!to) { out.warnings.push(`digest: ${centre.name} has no notification email`); continue; }
+      if (live) {
+        const bal = await ledger.balance(centre);
+        const r = await emails.activity({ centre, to, orders: d.orders, orderCents: d.orderCents, sponsors: d.sponsors, sponsorCents: d.sponsorCents, balanceCents: bal.balanceCents, raisedCents: bal.raisedCents });
+        if (!r?.ok) { out.warnings.push(`digest: ${centre.name} send failed`); continue; }
+        must(await db().from('vc_centres').update({ digest_through: d.maxCreatedAt, updated_at: today.toISOString() }).eq('id', centre.id), 'digest watermark');
+        await logEvent(centre.id, 'system', 'digest.sent', { orders: d.orders, sponsors: d.sponsors, through: d.maxCreatedAt });
+      }
+      out.digests++;
+    }
+  } catch (err) { out.warnings.push(`digest: ${err.message}`); }
 
   const day = 86400000;
   // 2. by-hand reminders
@@ -49,7 +70,7 @@ async function run({ live = true, today = new Date() } = {}) {
     const month = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
     const label = prev.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
     const from = prev.toISOString(), to = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)).toISOString();
-    for (const centre of await centres.list({ status: 'active' })) {
+    for (const centre of (await centres.list({ status: 'active' })).filter(c => !centres.isLink(c))) {
       const exists = must(await db().from('vc_statements').select('id').eq('centre_id', centre.id).eq('month', month).maybeSingle(), 'statement?');
       if (exists) continue;
       const [visits, led, reqs, routed] = await Promise.all([

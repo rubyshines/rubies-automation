@@ -12,7 +12,15 @@ const closetView = require('../views/closet');
 
 const r = express.Router();
 
-function loadCentre(req, res, next) { return require('../server').loadCentre(req, res, next); }
+// A link-mode centre has no request door (the minimal cut, 2026-09-21): every
+// request route 404s for it, so nothing reachable ever mentions requests.
+function loadCentre(req, res, next) {
+  return require('../server').loadCentre(req, res, err => {
+    if (err) return next(err);
+    if (req.centre && req.centre.mode === 'link') return next('route');
+    next();
+  });
+}
 
 function itemsFromBody(b) {
   const out = [];

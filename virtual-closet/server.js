@@ -71,6 +71,12 @@ async function loadCentre(req, res, next) {
 }
 
 async function closetContext(centre) {
+  if (centres.isLink(centre)) {
+    // Link mode: no boxes, no words, no pause. The page needs the styles and the balance.
+    const ledger = require('./lib/ledger');
+    const [products, balance] = await Promise.all([catalog.menu(), ledger.balance(centre)]);
+    return { centre, products, balance, sum: null, lastSent: null, words: [], paused: false };
+  }
   const [box, lastSent, products] = await Promise.all([
     boxes.getOpenBox(centre.id, { create: centre.status === 'active', goalCents: centre.goal_cents }),
     boxes.lastSentBox(centre.id),
@@ -107,20 +113,41 @@ app.get('/:slug/sponsor/:tile', loadCentre, async (req, res, next) => {
     const tile = catalog.SPONSOR_TILES.find(t => t.key === req.params.tile);
     if (!tile) return res.redirect(302, `/${req.centre.slug}?lead=sponsor`);
     const sponsorship = safeRequire('./lib/sponsorship');
-    const box = await boxes.getOpenBox(req.centre.id, { create: true, goalCents: req.centre.goal_cents });
+    const box = centres.isLink(req.centre) ? null : await boxes.getOpenBox(req.centre.id, { create: true, goalCents: req.centre.goal_cents });
     if (sponsorship) {
       const url = await sponsorship.checkoutUrl({ centre: req.centre, box, tile });
       if (url) return res.redirect(302, url);
     }
-    res.type('html').send(page({ title: 'Sponsor', centre: req.centre, mode: 'public', body: `<section class="card narrow"><h1>${tile.label}, ${esc(tile.sub)}</h1><p>Checkout for sponsorships is wired in the money step. This link will send you to the RUBIES store with the amount in your cart and ${esc(req.centre.name)}'s closet attached.</p><a class="btn btn-line" href="/${req.centre.slug}?lead=sponsor">Back</a></section>` }));
+    res.type('html').send(page({ title: 'Sponsor', centre: req.centre, mode: 'public', body: `<section class="card narrow"><h1>${tile.label}${tile.sub ? `, ${esc(tile.sub)}` : ''}</h1><p>Checkout for sponsorships is not set up on this deployment. This link will send you to the RUBIES store with the amount in your cart and ${esc(req.centre.name)}'s closet attached.</p><a class="btn btn-line" href="/${req.centre.slug}#sponsor">Back</a></section>` }));
   } catch (err) { next(err); }
 });
+
+// The centre's link as a QR, for the welcome email and anything printed.
+// Public, so the centre can fetch it again without asking. Link mode only.
+async function qrFor(req, res, next, type) {
+  try {
+    if (!centres.isLink(req.centre)) return next('route');
+    const QRCode = require('qrcode');
+    const url = `${BASE_URL}/${req.centre.slug}`;
+    if (type === 'svg') {
+      res.type('image/svg+xml').send(await QRCode.toString(url, { type: 'svg', margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } }));
+    } else {
+      res.type('image/png').send(await QRCode.toBuffer(url, { type: 'png', width: 720, margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } }));
+    }
+  } catch (err) { next(err); }
+}
+app.get('/:slug/qr.png', loadCentre, (req, res, next) => qrFor(req, res, next, 'png'));
+app.get('/:slug/qr.svg', loadCentre, (req, res, next) => qrFor(req, res, next, 'svg'));
 
 app.get('/:slug/thanks', loadCentre, async (req, res, next) => {
   try {
     const ctx = await closetContext(req.centre);
     const { dollars } = require('./lib/money');
     const amount = parseInt(req.query.cents || '0', 10);
+    if (centres.isLink(req.centre)) {
+      const b = ctx.balance;
+      return res.type('html').send(page({ title: 'Thank you', centre: req.centre, mode: 'public', body: `<section class="card narrow"><p class="soft">Order ${esc(req.query.order || '')} · confirmed</p><h1>Thank you.</h1><p>Your ${amount ? dollars(amount) : 'sponsorship'} went to ${esc(req.centre.name)}'s Virtual Closet. Thanks for your support.</p>${b.raisedCents ? `<p><b>${dollars(b.raisedCents)}</b> raised so far. RUBIES matches it: ${dollars(b.raisedCents * 2)} of underwear and swimwear for the closet.</p>` : ''}<div class="doors"><a class="btn btn-fill" href="/${req.centre.slug}">Back to ${esc(req.centre.name)}'s Virtual Closet</a></div><p class="fine">A receipt is on its way from the store.</p></section>` }));
+    }
     res.type('html').send(page({ title: 'Thank you', centre: req.centre, mode: 'public', body: `<section class="card narrow"><p class="soft">Order ${esc(req.query.order || '')} · confirmed</p><h1>Thank you.</h1><p>Your ${amount ? dollars(amount) : 'sponsorship'} went into ${esc(req.centre.name)}'s shipment. RUBIES matched it.</p><p><b>Shipment #${ctx.sum.number}</b> · ${dollars(ctx.sum.raised)} raised of ${dollars(ctx.sum.goal)}</p><div class="doors"><a class="btn btn-fill" href="/${req.centre.slug}">Back to ${esc(req.centre.name)}'s closet</a><a class="btn btn-line" href="/${req.centre.slug}?lead=sponsor">Share the closet</a></div><p class="fine">A receipt is on its way from the store.</p></section>` }));
   } catch (err) { next(err); }
 });

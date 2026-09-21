@@ -69,15 +69,17 @@ async function sendTemplate({ to, templateId, data = {}, fromName = 'RUBIES', fr
  * @param {string} [opts.text]
  * @param {string} [opts.fromName='RUBIES']
  * @param {string} [opts.fromEmail='care@rubyshines.com']
+ * @param {Array<{content:string, filename:string, type?:string, disposition?:string}>} [opts.attachments] base64 content, SendGrid's own shape
  * @returns {Promise<{ok:boolean, statusCode:?number, error?:string}>}
  */
-async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEmail = 'care@rubyshines.com' }) {
+async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEmail = 'care@rubyshines.com', attachments }) {
   const sgMail = getSendgridClient();
   if (!sgMail) return { ok: false, statusCode: null, error: 'SendGrid not configured (SENDGRID_API_KEY missing)' };
   try {
     const msg = { to, from: { email: fromEmail, name: fromName }, subject };
     if (html) msg.html = html;
     if (text) msg.text = text;
+    if (attachments?.length) msg.attachments = attachments.map(a => ({ disposition: 'attachment', ...a }));
     const [resp] = await sgMail.send(msg);
     const statusCode = resp?.statusCode ?? null;
     return { ok: statusCode >= 200 && statusCode < 300, statusCode };

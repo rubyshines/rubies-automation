@@ -19,6 +19,10 @@ const BASE = process.env.VC_BASE_URL || `http://localhost:${process.env.PORT || 
 const OPS_BASE = process.env.VC_OPS_BASE_URL || 'https://ops.rubyshines.com';
 const OPERATOR_EMAIL = process.env.VC_OPERATOR_EMAIL || process.env.ALLOWED_EMAIL || 'jamie@rubyshines.com';
 const FROM = { fromName: 'RUBIES', fromEmail: 'care@rubyshines.com' };
+// Link-mode emails to a centre come from Jamie, so replies and orders land
+// with him (Jamie, 2026-09-21). Needs the address to be a verified SendGrid
+// sender or under the authenticated domain.
+const FROM_JAMIE = { fromName: 'Jamie at RUBIES', fromEmail: OPERATOR_EMAIL };
 const STORE = 'https://rubyshines.com';
 
 // ---- the branded shell ------------------------------------------------------
@@ -54,15 +58,16 @@ const names = list => (list || []).map(esc).join(' and ');
 const plural = (n, one, many) => (n === 1 ? one : many);
 const fmtDate = iso => new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 
-async function deliver({ to, subject, html, text, tag }) {
+async function deliver({ to, subject, html, text, tag, from = FROM, attachments }) {
   if (!process.env.SENDGRID_API_KEY || process.env.VC_EMAIL_MODE === 'console') {
     // VC_EMAIL_DUMP_DIR=<dir> also writes each email's HTML there, to look at.
     if (process.env.VC_EMAIL_DUMP_DIR) require('fs').writeFileSync(require('path').join(process.env.VC_EMAIL_DUMP_DIR, `${tag || 'email'}.html`), html);
     const links = [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]).filter(u => !u.startsWith('mailto:'));
-    console.log(`\n[vc email → ${to}] ${subject}\n  ${(text || '').split('\n').filter(Boolean).slice(0, 3).join('\n  ')}\n  links: ${links.join('\n         ')}\n`);
+    const att = attachments?.length ? `\n  attachments: ${attachments.map(a => a.filename).join(', ')}` : '';
+    console.log(`\n[vc email → ${to}] ${subject} (from ${from.fromEmail})\n  ${(text || '').split('\n').filter(Boolean).slice(0, 3).join('\n  ')}\n  links: ${links.join('\n         ')}${att}\n`);
     return { ok: true, console: true };
   }
-  const r = await sendEmail({ to, subject, html, text: text || undefined, ...FROM });
+  const r = await sendEmail({ to, subject, html, text: text || undefined, ...from, attachments });
   if (!r.ok) console.warn(`[vc email] ${tag || subject} to ${to} failed: ${r.error}`);
   return r;
 }
@@ -133,7 +138,61 @@ function settingsLine(centre) {
 }
 const handy = `Worth passing on: <a href="${STORE}/pages/how-it-works">How RUBIES works</a> · <a href="${STORE}/collections/all">Our styles</a> · <a href="${STORE}/pages/size-guide">Size guide</a> · <a href="${BASE}/free-pair-terms">Free pair terms</a>`;
 
+/** The ready-made post a link-mode centre can paste as is. */
+function linkPost(centre) {
+  return `${centre.name} now has a Virtual Closet with RUBIES, gender-affirming underwear and swimwear for trans girls and women. Shop through our link and get 20% off, and a quarter of your order goes to our closet. Or sponsor the closet directly. ${BASE}/${centre.slug}`;
+}
+
+/** The sharing block, the same in the welcome and in every digest (Jamie, 2026-09-21). */
+function shareBlock(centre) {
+  const url = `${BASE}/${centre.slug}`;
+  return p(`<b>Your link</b><br><a href="${url}">${esc(url.replace(/^https?:\/\//, ''))}</a><br>Share it on your socials, your website and your newsletter. Anyone who opens it gets 20% off a RUBIES order, and every order and every sponsor dollar adds to your closet.`) +
+    p(`Here's a post you can use as is:<br><span style="color:${COLOURS.soft}">${esc(linkPost(centre))}</span>`);
+}
+
+/** The QR for the welcome email, as a SendGrid attachment. */
+async function qrAttachment(centre) {
+  try {
+    const buf = await require('qrcode').toBuffer(`${BASE}/${centre.slug}`, { type: 'png', width: 720, margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } });
+    return [{ content: buf.toString('base64'), filename: 'closet-qr.png', type: 'image/png' }];
+  } catch (err) { console.warn(`[vc email] QR attachment skipped: ${err.message}`); return []; }
+}
+
+/** Link mode: from Jamie, congratulations, the link, the QR, the terms in plain words. */
+async function welcomeLink({ centre, to }) {
+  const url = `${BASE}/${centre.slug}`;
+  const attachments = await qrAttachment(centre);
+  return deliver({ to, subject: 'Your RUBIES Virtual Closet is ready.', tag: 'welcome', from: FROM_JAMIE, attachments,
+    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter. Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
+    html: layout('Your RUBIES Virtual Closet is ready.',
+      p(`Hi ${esc(centre.name)} team,`) +
+      p(`Congratulations, ${esc(centre.name)}'s Virtual Closet is ready.`) +
+      shareBlock(centre) +
+      p(`Your QR code is attached${attachments.length ? '' : ` (or fetch it any time at <a href="${url}/qr.png">${esc(url.replace(/^https?:\/\//, ''))}/qr.png</a>)`}.`) +
+      p(`<b>How it adds up.</b> Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar.`) +
+      p(`<b>When you're ready to order,</b> email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more.`) +
+      p(`Questions any time.<br>Jamie<br><a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`),
+      `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`) });
+}
+
+/** Link mode: at most one a day, only on a day with activity. From Jamie. */
+async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, sponsorCents = 0, balanceCents = 0, raisedCents = 0 }) {
+  const lines = [];
+  if (orders) lines.push(`${orders} order${plural(orders, '', 's')} through your link put <b>${dollars(orderCents)}</b> in.`);
+  if (sponsors) lines.push(`${sponsors} sponsor${plural(sponsors, '', 's')} put <b>${dollars(sponsorCents)}</b> in.`);
+  const textLines = lines.map(l => l.replace(/<[^>]+>/g, ''));
+  return deliver({ to, subject: `${centre.name}'s Virtual Closet activity today`, tag: 'activity', from: FROM_JAMIE,
+    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents)}. Raised so far: ${dollars(raisedCents)}. Keep sharing your link: ${BASE}/${centre.slug}. To order, email me. Jamie`,
+    html: layout(`${esc(centre.name)}'s Virtual Closet activity today`,
+      lines.map(p).join('') +
+      p(`Your balance is <b>${dollars(balanceCents)}</b>. Raised so far: ${dollars(raisedCents)}.`) +
+      p(`<b>Keep it going.</b>`) + shareBlock(centre) +
+      p(`To order, email me.<br>Jamie`),
+      `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`) });
+}
+
 async function welcome({ centre, to }) {
+  if (centre.mode === 'link') return welcomeLink({ centre, to });
   const url = `${BASE}/${centre.slug}`;
   const byHand = centre.approval_mode === 'by_hand';
   return deliver({ to, subject: `Your closet is open, ${centre.name}`, tag: 'welcome',
@@ -256,6 +315,13 @@ async function requestEnded({ centre, request }) {
 
 // ---- sponsor emails (1ad) ---------------------------------------------------
 async function sponsorThanks({ centre, to, amountCents, box, raised, goal, city }) {
+  if (centre.mode === 'link') {
+    // Link mode: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." (Jamie, 2026-09-21)
+    const total = raised ? p(`<b>${dollars(raised)}</b> raised so far. RUBIES matches it: ${dollars(raised * 2)} of underwear and swimwear for the closet.`) : '';
+    return deliver({ to, subject: `Thank you from ${centre.name}'s Virtual Closet`, tag: 'sponsor-thanks',
+      text: `Your ${dollars(amountCents)} went to ${centre.name}'s Virtual Closet. Thanks for your support.`,
+      html: layout(`Thank you from ${esc(centre.name)}'s Virtual Closet`, p(`Your <b>${dollars(amountCents)}</b> went to ${esc(centre.name)}'s Virtual Closet. Thanks for your support.`) + total + btn(`${BASE}/${centre.slug}`, `${centre.name}'s Virtual Closet`)) });
+  }
   const pairs = Math.max(1, Math.round((amountCents * 2) / 3200));
   return deliver({ to, subject: `Thank you from ${centre.name}'s closet`, tag: 'sponsor-thanks',
     text: `Your ${dollars(amountCents)} went into ${centre.name}'s shipment, and RUBIES matched it.`,
@@ -271,7 +337,7 @@ module.exports = {
   BASE, OPS_BASE, OPERATOR_EMAIL, deliver, layout, btn, btns,
   verifyEmail, resetPassword, invitation, addedToCentre, madeAdmin, emailChanged, confirmEmailChange,
   operatorSignup, operatorNeedsAttention,
-  welcome, sponsored, requestNeedsAnswer, requestAutoApproved, boxFunded, boxOnItsWay, boxArrived, statement, byHandReminder,
+  welcome, welcomeLink, activity, linkPost, sponsored, requestNeedsAnswer, requestAutoApproved, boxFunded, boxOnItsWay, boxArrived, statement, byHandReminder,
   requestConfirm, requestReceived, requestOnItsWay, requestReady, requestDeclined, requestEnded,
   sponsorThanks, sponsorArrived,
 };
