@@ -6250,6 +6250,20 @@ function siteHost(url) {
   return String(url || '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[/?#].*$/, '');
 }
 
+// What the research profile says the store stocks. A named product (a gaff, a
+// binder) is the one signal worth reading before opening the site, so it gets
+// a chip and the sentence it came from — the catalog check that caught a
+// "Transgender Products" category made entirely of toys starts here.
+function vetEvidenceHtml(c) {
+  const ev = c.ga_evidence;
+  if (!ev || ev.level === 'none') return '';
+  if (ev.level === 'audience') {
+    return `<span class="badge badge-muted" title="${esc(ev.quote || '')}">trans-aware, no product named</span>`;
+  }
+  const ours = ev.femme.length ? ' vet-stocks-ours' : '';
+  return `<span class="badge vet-stocks${ours}" title="${esc(ev.quote || '')}">stocks ${esc(ev.terms.join(', '))}</span>`;
+}
+
 function outreachVettingRowHtml(c) {
   const id = esc(c.id);
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
@@ -6272,10 +6286,12 @@ function outreachVettingRowHtml(c) {
       </div>
       <div class="outreach-row-reason">${esc(outreachVettingSubtitle(c))}${score != null ? ` &middot; score ${esc(String(score))}` : ''}</div>
       <div class="queue-item-row2 vet-contact">
+        ${vetEvidenceHtml(c)}
         <span class="badge ${cls}" title="${esc(title)}">${esc(label)}</span>
         ${c.verification === 'undeliverable' ? '<span class="badge badge-warn" title="Kickbox says this mailbox does not exist. A send would be refused; fix the address or drop.">address dead</span>' : ''}
         ${contactLine ? `<span class="vet-contact-line">${contactLine}</span>` : ''}
       </div>
+      ${c.ga_evidence?.level === 'stocks' && c.ga_evidence.quote ? `<div class="vet-angle vet-evidence-quote">${esc(c.ga_evidence.quote)}</div>` : ''}
       ${c.discovery?.angle ? `<div class="vet-angle">${esc(c.discovery.angle)}</div>` : ''}
       <div class="vet-actions" onclick="event.stopPropagation()">
         <button class="btn btn-ghost vet-keep" onclick="vetKeep('${id}')"

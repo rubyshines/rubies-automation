@@ -29,6 +29,7 @@ const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL }
 const { defaultReplyCc, computeReplyCc, pickReplyAnchor, replySubject } = require('./replyCc');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
+const { readGaEvidence } = require('./gaEvidence');
 
 /** One-line preview of a draft body for queue rows. Pure. */
 function draftSnippet(body, max = 140) {
@@ -1427,13 +1428,35 @@ function contactStatus({ email, website, contact_form_url } = {}) {
   return 'own_domain';
 }
 
+// The whole business is the audience: a shop of this kind needs no product
+// evidence, because its own category IS the evidence. Read off the
+// researcher's subcategory, which is the only place that judgment is stored.
+const SPECIALIST_SUBCATEGORIES = new Set(['gender-affirming-boutique', 'online-trans-retail']);
+
 /**
- * Every unvetted prospect, best discovery score first. Deferred rows (paused,
+ * Where a row sits in the vetting order. Pure.
+ *
+ * Discovery score alone put the rows worth a human minute at ranks 4, 17 and
+ * 61 of 100, so the list read as a hundred identical boutiques and the
+ * operator's eye was spent on the wrong ones. Score is a sum of weak signals;
+ * these two are the strong ones, so they lead and score breaks ties beneath.
+ *   0  the profile names gender-affirming stock — confirm the catalog is real
+ *   1  a trans or gender-affirming shop — decide if they are a retail buyer
+ *   2  everything else, best score first
+ */
+function vetRank(row) {
+  if (row.ga_evidence?.level === 'stocks') return 0;
+  if (SPECIALIST_SUBCATEGORIES.has(row.discovery?.subcategory)) return 1;
+  return 2;
+}
+
+/**
+ * Every unvetted prospect, strongest evidence first. Deferred rows (paused,
  * on me) are left out: a deferral already IS a decision about the company.
  */
 async function fetchVetting(sb, { channel } = {}) {
   let q = sb.from('b2b_companies')
-    .select('id, name, relationship_type, relationship_state, website, general_email, contact_form_url, city, region, country, source, enrich_facts, metadata, created_at, contact_unknown, triage_reason')
+    .select('id, name, relationship_type, relationship_state, website, general_email, contact_form_url, city, region, country, source, description, enrich_facts, metadata, created_at, contact_unknown, triage_reason')
     .is('vetted_at', null).eq('relationship_state', 'prospect')
     .is('outreach_paused_at', null).is('on_me_at', null);
   if (channel) q = q.eq('relationship_type', channel);
@@ -1477,6 +1500,10 @@ async function fetchVetting(sb, { channel } = {}) {
       contact_name: primary?.full_name || null,
       contact_status: contactStatus({ email, website: c.website, contact_form_url: c.contact_form_url }),
       verification: email ? (byEmail.get(String(email).trim().toLowerCase())?.status || null) : null,
+      // Read from the stored research profile on every fetch rather than
+      // stamped onto the row: the profile is the only input, so a copy could
+      // only ever go stale, and re-reading 100 short strings costs nothing.
+      ga_evidence: readGaEvidence(c.description),
       discovery: {
         score: facts.discovery_score ?? meta.discovery?.score ?? null,
         subcategory: facts.discovery_subcategory || meta.discovery?.subcategory || null,
@@ -1485,6 +1512,8 @@ async function fetchVetting(sb, { channel } = {}) {
     };
   });
   rows.sort((a, b) => {
+    const ra = vetRank(a), rb = vetRank(b);
+    if (ra !== rb) return ra - rb;
     const sa = a.discovery.score, sb2 = b.discovery.score;
     if (sa != null && sb2 != null && sa !== sb2) return sb2 - sa;
     if ((sa == null) !== (sb2 == null)) return sa == null ? 1 : -1;
@@ -1494,7 +1523,7 @@ async function fetchVetting(sb, { channel } = {}) {
 }
 
 module.exports = {
-  fetchVetting, contactStatus,
+  fetchVetting, contactStatus, vetRank, SPECIALIST_SUBCATEGORIES,
   draftSnippet,
   attachDrafts,
   mergePendingDraftEntries,

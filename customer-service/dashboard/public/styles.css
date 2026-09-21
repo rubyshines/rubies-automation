@@ -7263,6 +7263,22 @@ body.sidebar-resizing .sidebar, body.sidebar-resizing .detail { pointer-events: 
   margin-top: 6px;
   line-height: 1.45;
 }
+.vet-stocks {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+/* Gaffs and breast forms are what WE sell. Binders and packers prove the shop
+   serves trans customers but sit on the other side of the catalog. */
+.vet-stocks-ours {
+  background: var(--green-bg);
+  color: var(--green);
+}
+.vet-evidence-quote {
+  color: var(--text-primary);
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
 .vet-actions {
   display: flex;
   gap: 2px;

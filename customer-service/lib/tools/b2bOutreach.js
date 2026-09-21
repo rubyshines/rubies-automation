@@ -707,6 +707,7 @@ async function handleAbReport(input = {}) {
 async function handleVetting(input = {}) {
   try {
     const { fetchVetting } = require(path.join(B2B_LIB, 'queueService'));
+    const { describeGaEvidence } = require(path.join(B2B_LIB, 'gaEvidence'));
     const { companies, total } = await fetchVetting(getSupabaseClient(), { channel: input.channel || undefined });
     if (!total) return text('Nothing waiting to be vetted.');
     const limit = input.limit || 40;
@@ -715,7 +716,9 @@ async function handleVetting(input = {}) {
     for (const c of companies.slice(0, limit)) {
       const where = [c.city, c.region, c.country].filter(Boolean).join(', ');
       const d = c.discovery;
+      const ev = c.ga_evidence;
       lines.push(`- **${c.name}** (${c.id}) — ${c.relationship_type}${where ? `, ${where}` : ''}${d.score != null ? `, score ${d.score}` : ''}${d.subcategory ? `, ${d.subcategory}` : ''} — ${CONTACT[c.contact_status] || c.contact_status}${c.contact_email ? ` <${c.contact_email}>` : ''}${c.website ? ` — ${c.website}` : ''}`);
+      if (ev?.level === 'stocks') lines.push(`  ${describeGaEvidence(ev)}${ev.quote ? ` — "${ev.quote}"` : ''}`);
       if (d.angle) lines.push(`  ${d.angle}`);
     }
     if (total > limit) lines.push('', `…and ${total - limit} more (pass limit to see them).`);
@@ -1066,7 +1069,7 @@ module.exports = [
   },
   {
     name: 'b2b_vetting',
-    description: "Every prospect waiting to be vetted — imported rows that Tier 4 will not surface until a human keeps them. Best discovery score first, with how we can reach them (own-domain email, free-mail, another domain, contact form only, nothing) and the researcher's angle. The panel's Vet mode is the same list; decisions go through b2b_triage (keep / drop with a reason).",
+    description: "Every prospect waiting to be vetted — imported rows that Tier 4 will not surface until a human keeps them. Ordered by evidence: stores whose research profile NAMES gender-affirming stock (gaffs, breast forms, binders, packers) first with the sentence it came from, then shops whose whole business is trans or gender-affirming, then everything else by discovery score. With how we can reach them (own-domain email, free-mail, another domain, contact form only, nothing) and the researcher's angle. The panel's Vet mode is the same list; decisions go through b2b_triage (keep / drop with a reason).",
     inputSchema: {
       type: 'object',
       properties: {
