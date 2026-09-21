@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   statedNextTouch, withoutStatedNextTouch, resolveNextActionDate, nextActionDateAfterSend, STATED_TOUCH_MIN_LEAD_DAYS, nextScheduledTouch,
+  carriesNoTiming, owedCommitmentTouch, statedTouchConsumed,
 } = require('../../b2b-outreach/lib/cadence');
 const { computeQueueEntry } = require('../../b2b-outreach/lib/queue');
 const {
@@ -133,4 +134,112 @@ test('the header prediction names the touch they asked for, even before a close 
   assert.deepEqual(t, { message_type: 'stated_touch', date: '2027-01-15', label: 'touch they asked for' });
   assert.equal(nextScheduledTouch(org(), {}, NOW), null);
   assert.equal(nextScheduledTouch(org(stated('2026-06-01')), {}, NOW), null); // behind us: not a prediction
+});
+
+// ── cadence: a timing-neutral send never pulls a standing date earlier ───────
+// 2026-09-21. Five partners returned a month after their annual check-in
+// because Jamie's own hand-written reply the next day replaced the 365-day date
+// with the blind 30-day default. `operator_message` is the most common outbound
+// in the system, so this was 37 companies, not five.
+
+const held = (over = {}) => org({ next_action_date: '2027-08-19', ...over });
+
+test('a type with no table entry carries no timing, and one with an entry does', () => {
+  assert.equal(carriesNoTiming('operator_message'), true);
+  assert.equal(carriesNoTiming('meeting_confirmation'), true);
+  assert.equal(carriesNoTiming('inbound_inquiry_response'), true);
+  assert.equal(carriesNoTiming('reply'), true);
+  assert.equal(carriesNoTiming('community_checkin'), false);
+  assert.equal(carriesNoTiming('followup_1'), false);
+});
+
+test('a hand-written reply holds the standing date rather than pulling it in', () => {
+  const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: held() });
+  assert.deepEqual(r, { date: '2027-08-19', source: 'held' });
+});
+
+test('a hand-written reply with a standing date already behind us still gets the table — never stuck in the past', () => {
+  const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: held({ next_action_date: '2026-01-04' }) });
+  assert.equal(r.source, 'cadence');
+  assert.equal(r.date, nextActionDateAfterSend('operator_message', NOW));
+  assert.ok(r.date > NOW.toISOString().slice(0, 10));
+});
+
+test('a follow-up rung STILL shortens the date — chasing sooner is the whole point of a chase', () => {
+  const r = resolveNextActionDate({ message_type: 'followup_1', sentAt: NOW, company: held() });
+  assert.equal(r.source, 'cadence');
+  assert.equal(r.date, nextActionDateAfterSend('followup_1', NOW));
+  assert.ok(r.date < '2027-08-19', 'the ladder must not be held back by a standing date');
+});
+
+test('a typed cadence send sets its own date even when a later one is standing', () => {
+  const r = resolveNextActionDate({ message_type: 'community_checkin', sentAt: NOW, company: held({ next_action_date: '2028-01-01' }) });
+  assert.equal(r.source, 'cadence');
+  assert.equal(r.date, nextActionDateAfterSend('community_checkin', NOW));
+});
+
+test('a garbage standing date is ignored, never thrown on', () => {
+  for (const bad of [null, '', 'soon', '2026-13-45', '2026-02-31', 12345]) {
+    const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: org({ next_action_date: bad }) });
+    assert.equal(r.source, 'cadence', `standing date ${JSON.stringify(bad)} should fall through`);
+  }
+});
+
+// ── cadence: a dated promise of ours sets the date ──────────────────────────
+
+const owe = (over = {}) => ({ id: 1, owner: 'me', status: 'open', text: 'send samples', due_on: '2026-10-03', ...over });
+
+test('a dated promise we owe sets the date, carrying what it was', () => {
+  const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: held(), commitments: [owe()] });
+  assert.equal(r.source, 'commitment');
+  assert.equal(r.date, '2026-10-03');
+  assert.equal(r.basis, 'send samples');
+  assert.equal(r.commitment_id, 1);
+});
+
+test('only our own open dated promises still ahead of us count', () => {
+  const ignored = [
+    owe({ owner: 'them' }),                    // theirs to deliver, not ours
+    owe({ status: 'done' }),                   // already settled
+    owe({ due_on: null }),                     // "soon" is not a date
+    owe({ due_on: 'October' }),                // not a date either
+    owe({ due_on: '2026-02-31' }),             // shaped like one, but no such day
+    owe({ due_on: '2026-01-04' }),             // past: the commitments list chases that
+    owe({ due_on: NOW.toISOString().slice(0, 10) }), // today is not ahead
+  ];
+  for (const c of ignored) {
+    const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: org(), commitments: [c] });
+    assert.equal(r.source, 'cadence', `${JSON.stringify(c)} should not set the date`);
+  }
+  assert.equal(owedCommitmentTouch(ignored, NOW), null);
+  assert.equal(owedCommitmentTouch(null, NOW), null);
+});
+
+test('the soonest of several promises wins', () => {
+  const r = owedCommitmentTouch([owe({ id: 1, due_on: '2026-12-01' }), owe({ id: 2, due_on: '2026-10-03' }), owe({ id: 3, due_on: '2027-01-01' })], NOW);
+  assert.equal(r.date, '2026-10-03');
+  assert.equal(r.commitment_id, 2);
+});
+
+test('between a date they asked for and one we promised, the sooner wins', () => {
+  const sooner = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: org(stated('2027-01-15')), commitments: [owe()] });
+  assert.equal(sooner.source, 'commitment', 'we owe them before they asked us back');
+  const later = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, company: org(stated('2026-09-25')), commitments: [owe()] });
+  assert.equal(later.source, 'stated', 'they asked for a date before our promise falls due');
+});
+
+test("the advisor's explicit override still outranks a dated promise", () => {
+  const r = resolveNextActionDate({ message_type: 'operator_message', sentAt: NOW, next_touch_days: 45, company: org(stated('2027-01-15')), commitments: [owe()] });
+  assert.equal(r.source, 'advisor');
+});
+
+// ── cadence: which sends burn the date they stated ──────────────────────────
+
+test('a stated date is burnt when it is spent or explicitly overridden, and kept otherwise', () => {
+  const live = org(stated('2027-01-15'));
+  assert.equal(statedTouchConsumed({ company: live, sentAt: NOW, resolvedSource: 'stated' }), false, 'it won');
+  assert.equal(statedTouchConsumed({ company: live, sentAt: NOW, resolvedSource: 'commitment' }), false, 'a nearer promise does not burn a further ask');
+  assert.equal(statedTouchConsumed({ company: live, sentAt: NOW, resolvedSource: 'advisor' }), true, 'the operator chose otherwise');
+  assert.equal(statedTouchConsumed({ company: org(stated('2026-09-01')), sentAt: NOW, resolvedSource: 'cadence' }), true, 'past: this send was the contact');
+  assert.equal(statedTouchConsumed({ company: org(), sentAt: NOW, resolvedSource: 'cadence' }), false, 'nothing to burn');
 });
