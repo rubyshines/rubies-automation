@@ -439,4 +439,11 @@ Jamie, with the full app built and on main: execution risk is the worry, for the
 - **Jamie enrols centres** by MCP tool for now. No sign-up, no accounts, no team, no settings a centre maintains. The programme page's sign-up form becomes a "talk to Jamie" contact.
 - **Email only when there is activity.** Nothing scheduled, nothing empty.
 
-**Still open (asked 2026-09-21):** whether the match stays and how the centre hears about it; a minimum before a centre can redeem, and how redemption happens (email Jamie, ship double via the wholesale order tool, debit by tool); whether the page shows a running total with no goal; per-order email versus a daily digest on active days; whether Uniting Pride gets this cut for the October pilot.
+- **Redemption is a partner order (Jamie, 2026-09-21):** the closet balance is credit against the existing partner terms, 50% off with a $300 minimum after discount, per shipment. The centre emails RUBIES; the operator places the wholesale order and a tool debits the ledger. Five styles only (AJ, Charlie, Sassy, Brooke bra, Ruby bikini bottom). Nothing built beyond the debit tool.
+- **Daily digest**, at most one email a day and only on a day with activity. No monthly statement.
+- **Uniting Pride gets this cut** for the October pilot, subject to seeing it flow.
+- **Enrol tool** seeds from the donation partner row when there is one, and takes name, logo, city and contact email directly otherwise, since some centres will do only this programme.
+
+**Open (2026-09-21):** what to say about the match (see the wording note below); whether the centre may add its own money to reach the $300 minimum; the credit base (25% of the pre-discount retail value keeps "every two pairs buys one" exactly true; the code uses the post-discount subtotal today, which makes it 2.5 to 1).
+
+**Wording note (Claude, 2026-09-21):** buyers and sponsors ask different questions, so they get different sentences that describe one fact (credit is spent at half retail). A buyer asks what their purchase does: answer in pairs, "every two pairs you buy puts one in the closet", no percentage. A sponsor asks what $25 does, and $25 is not a pair, so answer in matched dollars on the running total: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." The word "25%" appears only in the centre's terms; "match" appears once, on the total. The centre's terms say it plainly: credit is spent at partner pricing, $300 minimum per shipment.
