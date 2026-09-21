@@ -143,7 +143,8 @@ test('the link-only page has one door, four tiles, the total line and none of th
   assert.ok(empty.includes('$0 <small>raised of $1,000 goal</small>') && empty.includes('width:0%'));
   assert.ok(html.includes('RUBIES matches it: <b>$176</b> of underwear and swimwear for the closet.'));
   assert.ok(html.includes('From 9 orders and 3 sponsors.'));
-  assert.ok(html.includes("A quarter of your order goes to The Attic's Virtual Closet, and RUBIES matches it."));
+  assert.ok(html.includes('Shop 20% off gender-affirming gear.') && html.includes('RUBIES will donate a quarter of the value of your order to the closet.'));
+  assert.ok(!html.includes('hero-art'), 'no product photo beside the hero');
   assert.equal((html.match(/\/attic\/sponsor\//g) || []).length, 4, 'four sponsor tiles');
   assert.ok(html.includes('href="/attic/shop"'));
   assert.ok(!/\/attic\/request|Request a pair|Free pair terms|Offer details|Shipment #|\bbox\b/i.test(html), 'no request door, no box, no terms links');

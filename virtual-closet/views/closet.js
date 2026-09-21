@@ -116,13 +116,12 @@ const LINK_ABOUT = 'RUBIES makes great fitting, super comfortable clothing made 
 
 function linkOnly(ctx) {
   return `
-<section class="hero">
+<section class="hero hero-link">
   <div class="hero-copy">
-    <h1>Shop 20% off RUBIES, support ${esc(ctx.name)}.</h1>
-    <p class="lede">A quarter of your order goes to ${esc(ctx.name)}'s Virtual Closet, and RUBIES matches it.</p>
+    <h1>Shop 20% off gender-affirming gear.</h1>
+    <p class="lede">Shop RUBIES and support the ${esc(ctx.name)} Virtual Closet. RUBIES will donate a quarter of the value of your order to the closet.</p>
     ${shopBtn(ctx)}
   </div>
-  ${heroArt(ctx, 'aj')}
 </section>
 ${aboutSection(LINK_ABOUT)}
 ${totalLine(ctx)}

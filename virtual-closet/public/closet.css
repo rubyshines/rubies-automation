@@ -97,7 +97,8 @@ b, strong { font-weight: 600; }
 section { padding: 40px 0; }
 section + section { border-top: 1px solid var(--rule); }
 .hero { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: center; }
-.hero-sponsor { grid-template-columns: 1fr; }
+.hero-sponsor, .hero-link { grid-template-columns: 1fr; }
+.hero-link .hero-copy { max-width: 720px; }
 .hero-art { background: var(--grey); aspect-ratio: 1 / 1; overflow: hidden; }
 .hero-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* About RUBIES: text beside a landscape illustration */
