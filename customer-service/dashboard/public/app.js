@@ -7683,9 +7683,16 @@ function outreachHistoryHtml() {
       const body = bounce
         ? 'This message could not be delivered.'
         : (m.body_text || '(no text captured)');
-      // Cc is part of who a message is with — hiding it is how a reply ends up
-      // silently dropping the colleague the contact deliberately included.
-      const ccLine = m.cc_email ? `<div class="msg-cc">cc: ${esc(m.cc_email)}</div>` : '';
+      // Who a message is with, not just who it is from: a send addressed to a
+      // stale contact, or a reply that quietly dropped the colleague they had
+      // deliberately included, is invisible when only the sender is named.
+      // Skipped on a bounce — a DSN's To: is our own inbox and reads as if we
+      // had sent it there.
+      const addrs = bounce ? [] : [
+        m.to_email ? `to: ${esc(m.to_email)}` : '',
+        m.cc_email ? `cc: ${esc(m.cc_email)}` : '',
+      ].filter(Boolean);
+      const addrLines = addrs.length ? `<div class="msg-cc">${addrs.join('<br>')}</div>` : '';
       const isLast = i === list.length - 1;
       // B2B messages are stored plain-text only, so the body goes through the
       // same artifact-stripping/linkifying renderer as the inbound strip —
@@ -7694,7 +7701,7 @@ function outreachHistoryHtml() {
       if (isLast) {
         return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
           <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
-          ${ccLine}
+          ${addrLines}
           <div class="msg-body">${intakeParse.renderEmailText(body)}</div>
         </div>`;
       }
@@ -7705,7 +7712,7 @@ function outreachHistoryHtml() {
           <span class="msg-collapsed-snippet">${esc(intakeParse.stripLinkCodes(body).replace(/\s+/g, ' ').slice(0, 90))}</span>
           <span class="msg-collapsed-date">${msgDate(m.sent_at)}</span>
         </summary>
-        ${ccLine}
+        ${addrLines}
         <div class="msg-body">${intakeParse.renderEmailText(body)}</div>
       </details>`;
     }).join('');
