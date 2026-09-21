@@ -92,3 +92,40 @@ test('emails wear the brand: hosted logo, purple text, square near-black button,
   assert.ok(!/style="[^"]*"[^">]*"[^>]*>/.test(html.replace(/<a href="[^"]*" style="[^"]*">/g, '')), 'no style attribute is cut short by a quote');
   assert.ok(html.includes('Never stop shining.'));
 });
+
+// A table marked .stack becomes one card per row on a phone and its headings
+// are thrown away, so each cell has to carry its own. Nothing catches a cell
+// added without one: the page renders, the suite passes, and the value shows
+// up on a phone with no idea what it is.
+test('every cell of a stacking table carries the heading it loses on a phone', () => {
+  const rendered = {
+    home: centreView.home({ centre, user, role: 'admin', sum, lastSent: null, requests: [{ id: 1, name: 'Rosa', items: [{ style: 'aj', colour: 'Black', size: '1X' }], delivery: 'ship', words: 'A sentence.', words_shareable: true, status: 'approved', created_at: new Date().toISOString(), box_id: 9 }], month: { visits: 1, orders: 1, sponsors: 1, requests: 1 }, share: { links: [{ url: 'http://x/demo', note: 'plain' }], post: 'p' }, passItOn: { routed: 0, mapVisits: 0 }, filter: 'all', notCollected: [] }),
+    settings: centreView.settings({ centre, user, role: 'admin', team: { members: [user, { id: 2, name: 'Sam', email: 'sam@example.org', role: 'member' }], invites: [{ id: 3, email: 'new@example.org', role: 'member', created_at: new Date().toISOString() }] } }),
+    history: centreView.history({ centre, user, role: 'admin', boxes: [{ number: 2, status: 'open', raised: 14000, match: 0, items_count: null, requestsFilled: 1, waiting: 0 }], donations: [], statements: [] }),
+  };
+  let tables = 0;
+  let cells = 0;
+  for (const [name, html] of Object.entries(rendered)) {
+    for (const [, attrs, inner] of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/g)) {
+      if (!/class="[^"]*\bstack\b/.test(attrs)) continue;
+      tables++;
+      for (const [cell, cellAttrs] of inner.matchAll(/<td\b([^>]*)>/g)) {
+        // A colspan cell is an empty-state line ("No requests yet"), not a value.
+        if (/\bcolspan=/.test(cellAttrs)) continue;
+        cells++;
+        assert.match(cellAttrs, /\bdata-label="/, `${name}: ${cell} has no data-label`);
+      }
+    }
+  }
+  // A regex that matches nothing passes forever, so assert the scan found work.
+  assert.ok(tables >= 3, `found ${tables} stacking tables, expected at least 3`);
+  assert.ok(cells >= 20, `found ${cells} cells to check, expected at least 20`);
+
+  const css = fs.readFileSync(path.join(__dirname, '../../virtual-closet/public/closet.css'), 'utf8');
+  const phone = css.match(/@media \(max-width: 749px\) \{[\s\S]*?\n\}/);
+  assert.ok(phone, 'the phone breakpoint is still there');
+  assert.match(phone[0], /table\.stack[^{]*\{[^}]*display:\s*block/, 'stacking tables drop table layout on a phone');
+  assert.match(phone[0], /table\.stack td\[data-label\]::before\s*\{[^}]*content:\s*attr\(data-label\)/, 'each cell prints its own heading');
+  assert.match(phone[0], /\.grid-fill th:first-child[^{]*\{[^}]*position:\s*sticky/, 'the size grid keeps its style column in view while the sizes scroll');
+  assert.match(css, /\.tbl\s*\{[^}]*background-attachment:\s*local/, 'a table too wide for its column shows a scroll edge');
+});

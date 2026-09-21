@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const config = require('./config');
 const { db, must } = require('./db');
 const { STORE } = require('./catalog');
+const { allowLiveWrite } = require('../../shared/liveWrites');
 
 const TITLE = 'Virtual Closet 20%';
 const PERCENT = 20;
@@ -44,6 +45,13 @@ async function ensureDiscount() {
 
 /** Issue a code for this click and return the store URL that applies it. */
 async function shopUrlFor(centre, { redirect = '/collections/all' } = {}) {
+  // A public page click writes a permanent code to the live store, so off the
+  // real deployment this sends the shopper to the store without one. Guarding
+  // the click rather than the store call keeps ensureDiscount's lookup working
+  // locally, which is what tells us the discount is configured at all.
+  if (!allowLiveWrite(`mint a Shopify discount code for ${centre.slug}`)) {
+    return `${STORE}${redirect}`;
+  }
   const discount = await ensureDiscount();
   const shopify = require('../../customer-service/lib/shopify');
   let code;
