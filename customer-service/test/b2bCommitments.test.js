@@ -289,3 +289,17 @@ test('syncOnMeFlag stamps operator provenance for a typed row', async () => {
   await C.addCommitment(sb, { company_id: 'shop-x', owner: 'me', text: 'Ring them', source: 'manual', created_by: 'operator' });
   assert.equal(sb.tables.b2b_companies.find(r => r.id === 'shop-x').on_me_source, 'operator');
 });
+
+test('On Me breaks created_at ties by id and company, so an update cannot reorder it', async () => {
+  const sb = fakeSb({ b2b_companies: [company('lejag'), company('colage')] });
+  const stamp = '2026-09-10T18:14:21.438Z';
+  // Inserted in the "wrong" physical order on purpose: the same instant, ids descending.
+  sb.tables.b2b_commitments.push(
+    { id: 9, company_id: 'lejag', owner: 'me', status: 'open', text: 'newer id', created_at: stamp },
+    { id: 8, company_id: 'lejag', owner: 'me', status: 'open', text: 'older id', created_at: stamp },
+    { id: 7, company_id: 'colage', owner: 'me', status: 'open', text: 'colage item', created_at: stamp },
+  );
+  const groups = await C.companiesOnMe(sb, { now: NOW });
+  assert.deepEqual(groups.map(g => g.company_id), ['colage', 'lejag'], 'same on_me_at: company id decides');
+  assert.equal(groups[1].oldest_text, 'older id', 'same created_at: the lower id is the oldest');
+});

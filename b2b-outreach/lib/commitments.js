@@ -423,8 +423,12 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
     .eq('status', 'open').eq('owner', 'me').not('company_id', 'is', null)
     .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
+  // One ingest pass stamps several rows on one created_at, and Postgres
+  // returns ties in physical order — which any UPDATE reshuffles. Id breaks
+  // the tie so "oldest" and the company order do not drift between renders.
+  const ordered = [...(data || [])].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || (a.id - b.id));
   const byCompany = new Map();
-  for (const r of data || []) {
+  for (const r of ordered) {
     if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
     byCompany.get(r.company_id).push(r);
   }
@@ -451,7 +455,7 @@ async function companiesOnMe(sb, { channel = null, now = new Date() } = {}) {
       claim_note: on_me_note,
     });
   }
-  groups.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)));
+  groups.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)) || String(a.company_id).localeCompare(String(b.company_id)));
   return groups;
 }
 

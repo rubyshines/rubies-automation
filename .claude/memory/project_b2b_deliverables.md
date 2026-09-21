@@ -32,17 +32,22 @@ commitment is.
 
 ## Progress
 
-- 2026-09-21: schema, lib, tests, tool, endpoints written. Panel next, then seed.
+- 2026-09-21: everything above built; suite 3580 green; migration applied by Jamie; seeded
+  **four** deliverables (the plan's three, minus Forbidden Fruit's done item, plus a fourth the
+  eleven rows added since the plan made obvious — the Virtual Closet programme write-up, blocking
+  Lumenus, Colors+, Attic and the Center on Colfax). 16 members attached: 18 of Jamie's rows
+  read as 9 blocked in three folds, 5 in the October batch, 4 loose. On Me verified: same
+  companies, counts, stamps and flag columns before/after; the only movement was created_at
+  tie order, now broken by id (regression test). Ship→reopen round trip verified on the live
+  affiliate deliverable through the endpoints: members stayed open, unblocked, re-blocked.
 
 ## Remaining (in order)
 
-1. Panel folds + Shipped + picker + chip; CSS.
-2. Full suite green; restart dashboard; walk the To do view.
-3. Jamie applies the migration in the Supabase SQL editor.
-4. Seed the three deliverables and attach the members listed in the plan.
-5. Push, PR, deploy; verify On Me unchanged on the live rows.
-6. Close-out memory: domain Key Decision (one line), parked entry for phase 3 (suggested
-   membership) if not built in this pass.
+1. Jamie walks the To do view on desktop and phone; presses Shipped on one for real when it is.
+2. Merge, deploy; confirm the nightly ingest still adds rows (loose, until phase 3).
+3. Close-out memory: domain Key Decision (one line), parked entry for phase 3 (suggested
+   membership). Decide what to do with commitment #50 ("build automation system for virtual
+   closet"), which is the deliverable itself wearing a commitment's clothes.
 
 ## done_when
 
