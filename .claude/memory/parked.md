@@ -8,6 +8,14 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Deliverables phase 3: the engine files new items into open deliverables
+- Parked: 2026-09-21
+- Domains: b2b_sales, community, tech
+- Type: enhancement
+- Plan: `.claude/plans/b2b-deliverables.md` ("The AI part")
+- Notes: One shared `suggestDeliverable(items, { deliverables })` called from `meetingNotes.js` (after the deterministic Next Steps parse) and `relationshipSummary.js`; Sonnet, fails closed to loose, routes through `callClaude` with `component: 'b2b_deliverable_grouping'`; never creates a deliverable, only files into the open ones Jamie made. Also open: whether a company whose only open me-item is blocked should still be On Me (v1 leaves it — four readers depend on the flag), and commitment #50 ("build automation system for virtual closet"), which is the deliverable itself wearing a commitment's clothes.
+- Resume when: Jamie has used the folds by hand for a week or two and knows which buckets he actually wants.
+
 ## Virtual Closet: deferred pieces after the low-fidelity build
 - Parked: 2026-09-18
 - Domains: community, tech, marketing
