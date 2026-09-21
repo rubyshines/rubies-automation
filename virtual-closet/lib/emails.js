@@ -197,9 +197,11 @@ async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, 
   if (orders) lines.push(`${orders} order${plural(orders, '', 's')} through your link put <b>${dollars(orderCents)}</b> in.`);
   if (sponsors) lines.push(`${sponsors} sponsor${plural(sponsors, '', 's')} put <b>${dollars(sponsorCents)}</b> in.`);
   const textLines = lines.map(l => l.replace(/<[^>]+>/g, ''));
-  return deliver({ to, subject: `${centre.name}'s Virtual Closet activity today`, tag: 'activity',
+  // The subject leads with the money that came in (Jamie, 2026-09-21): "$49.60 added to [Centre]'s Virtual Closet today".
+  const subject = `${dollars(orderCents + sponsorCents)} added to ${centre.name}'s Virtual Closet today`;
+  return deliver({ to, subject, tag: 'activity',
     text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents)}. Raised so far: ${dollars(raisedCents)} of your ${dollars(goalCents)} goal. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
-    html: layout(`${esc(centre.name)}'s Virtual Closet activity today`,
+    html: layout(esc(subject),
       lines.map(p).join('') +
       p(`Your balance is <b>${dollars(balanceCents)}</b>. Raised so far: ${dollars(raisedCents)} of your ${dollars(goalCents)} goal.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
