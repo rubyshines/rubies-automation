@@ -14,7 +14,7 @@
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { isFlagEnabled } = require('../../shared/systemFlags');
-const { resolveNextActionDate, withoutStatedNextTouch } = require('./cadence');
+const { resolveNextActionDate, withoutStatedNextTouch, statedTouchConsumed } = require('./cadence');
 const { defaultReplyCc, splitAddresses, replySubject } = require('./replyCc');
 
 const FROM_EMAIL = 'jamie@rubyshines.com';
@@ -634,9 +634,27 @@ async function sendB2bEmail(p = {}) {
   // A date they stated ("reach out in September") outranks the per-type table
   // now that this send closes the conversation; one that is past or about to be
   // acted on by this very send is consumed so it cannot resurface us as overdue.
-  const { data: cadenceRow } = await sb.from('b2b_companies').select('metadata').eq('id', company_id).maybeSingle();
-  const resolved = resolveNextActionDate({ message_type, sentAt: new Date(sentAt), next_touch_days: next_touch_days ?? null, company: cadenceRow });
-  const consumed = !!cadenceRow?.metadata?.stated_next_touch && resolved.source !== 'stated';
+  // A dated promise of ours ranks alongside it, and the standing date is read
+  // so a timing-neutral send cannot pull it earlier (see resolveNextActionDate).
+  const { data: cadenceRow } = await sb.from('b2b_companies')
+    .select('metadata, next_action_date').eq('id', company_id).maybeSingle();
+  // AFTER settleOnSend above on purpose: an item this very send completed must
+  // not then set the date we come back on. Fail-soft — the email is already
+  // gone, and a bookkeeping read must never be what fails a send.
+  let openCommitments = [];
+  try {
+    const { data } = await sb.from('b2b_commitments')
+      .select('id, owner, text, due_on, status')
+      .eq('company_id', company_id).eq('status', 'open').eq('owner', 'me');
+    openCommitments = data || [];
+  } catch (err) {
+    console.error(`[sendB2bEmail] commitment dates unread (sent ok): ${err.message}`);
+  }
+  const resolved = resolveNextActionDate({
+    message_type, sentAt: new Date(sentAt), next_touch_days: next_touch_days ?? null,
+    company: cadenceRow, commitments: openCommitments,
+  });
+  const consumed = statedTouchConsumed({ company: cadenceRow, sentAt: new Date(sentAt), resolvedSource: resolved.source });
   await sb.from('b2b_companies').update({
     last_outbound_at: sentAt,
     next_action_date: resolved.date,

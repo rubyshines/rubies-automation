@@ -96,20 +96,121 @@ function withoutStatedNextTouch(metadata) {
 }
 
 /**
+ * A real calendar day, not merely something shaped like one. PURE.
+ *
+ * The round-trip is the point: `2026-13-45` passes a regex, and `2026-02-31`
+ * passes both a regex and Date parsing (JS rolls it to 3 March). Both reach
+ * here — one from a stored column, one from a model writing a commitment's
+ * due date — and either would be written straight back onto next_action_date.
+ */
+function isCalendarDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/**
+ * Does this message type say anything about when to make contact next?
+ *
+ * The absence of a NEXT_ACTION_DAYS entry IS the signal: we shipped the type
+ * without an opinion on its timing, so it falls to DEFAULT_NEXT_ACTION_DAYS.
+ * Today that is `operator_message` (a reply Jamie typed himself, and the most
+ * common outbound in the system), `meeting_confirmation`,
+ * `inbound_inquiry_response` and the legacy `reply`. Keyed on the table rather
+ * than a hardcoded list so a type added later gets whatever the table says and
+ * a type added without one keeps this protection. PURE.
+ */
+function carriesNoTiming(messageType) {
+  return !(messageType in NEXT_ACTION_DAYS);
+}
+
+/**
+ * The soonest deadline WE owe this company that still lies ahead. PURE.
+ *
+ * The summariser already reads mail in both directions, extracts what each
+ * side promised and records a due date when one was actually stated
+ * (relationshipSummary.js). A promise with a date on it is a date a human
+ * named, so it ranks with a date THEY named rather than under the blind table:
+ * telling an org we will ship samples by the 3rd is a better answer to "when
+ * should this be in front of me" than thirty days from now.
+ *
+ * Only ours (`owner: 'me'`), and only while still ahead. A past deadline is the
+ * commitments list's job to chase; writing one here would pin the company at
+ * Tier 5 for ever, which is the very failure this whole change is about.
+ */
+function owedCommitmentTouch(commitments, now = new Date()) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const dated = (commitments || []).filter(c => c
+    && c.status !== 'done'
+    && c.owner === 'me'
+    && isCalendarDate(c.due_on)
+    && c.due_on > today);
+  if (!dated.length) return null;
+  const soonest = dated.reduce((a, b) => (a.due_on <= b.due_on ? a : b));
+  return { date: soonest.due_on, basis: soonest.text || null, commitment_id: soonest.id ?? null };
+}
+
+/**
  * The next-action date a send stamps. PURE.
  *
  * Precedence: the advisor's explicit next_touch_days (the operator saw that in
- * the panel before sending) > the date they stated > the per-type table. The
- * table is what a reply used to get regardless of what the thread said, which
- * is how "we relaunch in the new year" turned into a generic 30-day nag.
+ * the panel before sending) > the soonest date a human actually named, whether
+ * they asked for it or we promised it > a standing date this send has no
+ * business moving > the per-type table. The table is what a reply used to get
+ * regardless of what the thread said, which is how "we relaunch in the new
+ * year" turned into a generic 30-day nag.
+ *
+ * `held` is the 2026-09-21 fix. A send carrying no timing of its own must never
+ * pull an existing date EARLIER: answering someone is not new information about
+ * when to reach out next. Five partners came back a month after their annual
+ * check-in because Jamie's own hand-written reply the next day replaced a
+ * 365-day date with the blind 30-day default. Scoped to timing-neutral types on
+ * purpose — a follow-up rung shortens the date deliberately, and that is the
+ * entire point of a chase.
  */
-function resolveNextActionDate({ message_type, sentAt = new Date(), next_touch_days = null, company = null } = {}) {
+function resolveNextActionDate({
+  message_type, sentAt = new Date(), next_touch_days = null, company = null, commitments = [],
+} = {}) {
   if (Number.isInteger(next_touch_days)) {
     return { date: nextActionDateAfterSend(message_type, sentAt, next_touch_days), source: 'advisor' };
   }
+
+  // Two dates a person named; the sooner wins, because both are real and being
+  // late on the earlier one is the worse failure.
   const stated = statedNextTouch(company, sentAt);
-  if (stated) return { date: stated.date, source: 'stated', basis: stated.basis };
-  return { date: nextActionDateAfterSend(message_type, sentAt, null), source: 'cadence' };
+  const owed = owedCommitmentTouch(commitments, sentAt);
+  const statedEntry = stated ? { date: stated.date, source: 'stated', basis: stated.basis } : null;
+  const owedEntry = owed
+    ? { date: owed.date, source: 'commitment', basis: owed.basis, commitment_id: owed.commitment_id }
+    : null;
+  if (statedEntry && owedEntry) return owedEntry.date < statedEntry.date ? owedEntry : statedEntry;
+  if (statedEntry) return statedEntry;
+  if (owedEntry) return owedEntry;
+
+  const table = nextActionDateAfterSend(message_type, sentAt, null);
+  if (carriesNoTiming(message_type)) {
+    const standing = String(company?.next_action_date || '').slice(0, 10);
+    if (isCalendarDate(standing) && standing > table) {
+      return { date: standing, source: 'held' };
+    }
+  }
+  return { date: table, source: 'cadence' };
+}
+
+/**
+ * Does this send burn the date they stated? PURE.
+ *
+ * Yes when the date is no longer usable (past, or so close that this send IS
+ * the contact they asked for), and yes when the operator explicitly overrode
+ * it. No when it won. And no when a sooner promise of OURS won instead:
+ * "reach back in November" still holds after we ship the samples we said we
+ * would send in October, so acting on the nearer date must not destroy the
+ * further one.
+ */
+function statedTouchConsumed({ company, sentAt = new Date(), resolvedSource } = {}) {
+  if (!company?.metadata?.stated_next_touch) return false;
+  if (!statedNextTouch(company, sentAt)) return true;
+  return resolvedSource === 'advisor';
 }
 
 /** Whole business days (Mon-Fri) elapsed between two dates. */
@@ -791,6 +892,11 @@ module.exports = {
   firstTouchType,
   nextActionDateAfterSend,
   statedNextTouch,
+  carriesNoTiming,
+  owedCommitmentTouch,
+  statedTouchConsumed,
+  isCalendarDate,
+  DEFAULT_NEXT_ACTION_DAYS,
   withoutStatedNextTouch,
   resolveNextActionDate,
   STATED_TOUCH_MIN_LEAD_DAYS,
