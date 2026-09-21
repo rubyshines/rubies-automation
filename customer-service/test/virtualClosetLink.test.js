@@ -193,11 +193,11 @@ test('the daily digest sends once per centre for a day with activity, advances t
   assert.ok(!dry.includes('[vc email'), 'a dry run sends nothing');
   assert.equal(fake.tables.vc_centres[0].digest_through, undefined, 'a dry run moves no watermark');
   const live = await quiet(async () => { const r = await daily.run({ live: true }); assert.equal(r.digests, 1, JSON.stringify(r)); });
-  assert.ok(live.includes(`[vc email → ${centre.statements_email}] The Attic Youth Center's Virtual Closet activity today`));
-  assert.ok(live.includes('activity today (from care@rubyshines.com)'), 'the digest comes from care@');
+  assert.ok(live.includes(`[vc email → ${centre.statements_email}] $31.40 added to The Attic Youth Center's Virtual Closet today`));
+  assert.ok(live.includes("added to The Attic Youth Center's Virtual Closet today (from care@rubyshines.com)"), 'the digest comes from care@');
   assert.ok(fake.tables.vc_centres[0].digest_through, 'the watermark moved');
   const again = await quiet(async () => { const r = await daily.run({ live: true }); assert.equal(r.digests, 0); });
-  assert.ok(!again.includes('activity today'), 'nothing new, nothing sent');
+  assert.ok(!again.includes('Virtual Closet today'), 'nothing new, nothing sent');
 });
 
 test('redeem debits the balance, refuses over-balance and zero, and is idempotent on the order number', async () => {
@@ -231,14 +231,14 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   assert.ok(out.includes('attachments: closet-qr.png, closet-sign.pdf'), 'the welcome carries the QR and the printable sign');
   assert.ok(out.includes('Attached is a table sign you can print'));
   assert.ok(out.includes('/attic/qr-sign'), 'the welcome says where to reprint the sign');
-  assert.ok(out.includes("The Attic's Virtual Closet activity today (from care@rubyshines.com)"));
+  assert.ok(out.includes("$49.60 added to The Attic's Virtual Closet today (from care@rubyshines.com)"));
   assert.ok(out.includes("Thank you from The Attic's Virtual Closet (from care@rubyshines.com)"));
   assert.ok(out.includes('3 orders through your link put $24.60 in.'));
   assert.ok(out.includes('Your balance is $112.40.'));
   assert.ok(out.includes('Raised so far: $188 of your $1,000 goal'), 'the digest names the goal');
   assert.ok(out.includes('50% off any order where the retail value before the discount is $600 or more'));
   assert.ok(!/printable|fact sheet/i.test(out), 'no printable promise');
-  assert.ok(!/\bmatch/i.test(out.split('activity today')[1].split('Thank you from')[0]), 'the digest does not use the word match');
+  assert.ok(!/\bmatch/i.test(out.split("added to The Attic's Virtual Closet today")[1].split('Thank you from')[0]), 'the digest does not use the word match');
   assert.ok(!out.includes('—'), 'no em dashes');
 });
 
