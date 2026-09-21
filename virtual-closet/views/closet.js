@@ -111,13 +111,15 @@ function totalLine(ctx) {
   return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised of ${dollars(goal)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
 }
 
+// The About RUBIES copy on the link page, as Jamie wrote it (2026-09-21).
+const LINK_ABOUT = 'RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear. No tucking or tight compression.';
+
 function linkOnly(ctx) {
   return `
 <section class="hero">
   <div class="hero-copy">
     <h1>Shop with 20% off.</h1>
     <p class="lede">A quarter of your order goes to ${esc(ctx.name)}'s Virtual Closet, and RUBIES matches it.</p>
-    <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear.</p>
     ${shopBtn(ctx)}
   </div>
   ${heroArt(ctx, 'aj')}
@@ -128,8 +130,8 @@ ${totalLine(ctx)}
   <div class="gifts gifts-4">${tiles(ctx)}</div>
   <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
-<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>
-${aboutSection()}`;
+${aboutSection(LINK_ABOUT)}
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>`;
 }
 
 function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true } = {}) {
@@ -145,7 +147,8 @@ function productGrid(ctx, { prices = true, discounted = false, details = false, 
 }
 
 /** Who RUBIES is, for the visitor who arrived from a centre's post and has never heard of us. */
-function aboutSection() {
+function aboutSection(copy) {
+  if (copy) return `<section class="about"><div><h2>About RUBIES</h2><p>${copy}</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.about}">About us</a></p></div>${illustration('beach', 'about-art')}</section>`;
   return `<section class="about"><div><h2>About RUBIES</h2><p>RUBIES is a small brand making gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear. Every pair is tested with our community and comes with a money-back guarantee at the store. Every girl deserves to shine.</p><p><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.about}">About us</a></p></div>${illustration('beach', 'about-art')}</section>`;
 }
 

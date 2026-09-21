@@ -65,11 +65,11 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 ### `virtual-closet/views/closet.js`
 - New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
   1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo as enrolled). Sample centre in the design: The Attic Youth Center. (Jamie, 2026-09-21.)
-  2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link under it (Jamie, 2026-09-21).
+  2. Headline and one sentence: "Shop with 20% off." then "A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link, no brand paragraph under it (Jamie, 2026-09-21).
   3. The fundraiser band (Jamie, 2026-09-21, after the first ship): "$88 raised of $1,000 goal", the magenta bar, then "RUBIES matches it: $176 of underwear and swimwear for the closet." and "From 9 orders and 3 sponsors." Every centre has a goal, $1,000 by default (`vc_centres.goal_cents`, reused); the centre tells Jamie theirs and Jamie sets it with `vc_set_goal`; no centre-facing setting. Lifetime raised against the goal, never reset; past it the bar stays full and the line says "Goal reached". The digest says "Raised so far: $X of your $Y goal."
   4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
-  5. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it.
-  6. `aboutSection()` and the footer as today. (The "How it works" section was removed on Jamie's phone review, 2026-09-21.)
+  5. About RUBIES, below the tiles, with the beach illustration and Jamie's copy: "RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear. No tucking or tight compression." plus the How RUBIES works, Size guide and About us links.
+  6. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it, then the footer. (The "How it works" section was removed on Jamie's phone review, 2026-09-21.)
 - `render` takes `balance` in ctx for link mode; `progress`, `wordsSection`, request buttons are not called.
 
 ### `virtual-closet/server.js`
