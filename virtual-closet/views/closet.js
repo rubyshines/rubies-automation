@@ -119,7 +119,7 @@ function linkOnly(ctx) {
 <section class="hero hero-link">
   <div class="hero-copy">
     <h1>Shop 20% off gender-affirming gear.</h1>
-    <p class="lede">Shop RUBIES and support the ${esc(ctx.name)} Virtual Closet. RUBIES will donate a quarter of the value of your order to the closet.</p>
+    <p class="lede">Shop RUBIES and support ${esc(ctx.name)} Virtual Closet. RUBIES will donate a quarter of the value of your order to the closet.</p>
     ${shopBtn(ctx)}
   </div>
 </section>
