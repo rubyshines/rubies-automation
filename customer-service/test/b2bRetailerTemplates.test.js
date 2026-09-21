@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const {
   whenPhrase, fillRetailerReApproach, isRetailerSamplesReApproach,
 } = require('../../b2b-outreach/lib/messageTemplates');
-const { FIXED_SUBJECTS, variantsFor, fixedSubjectFor, pickVariant } = require('../../b2b-outreach/lib/fixedSubjects');
+const { FIXED_SUBJECTS, variantsFor, fixedSubjectFor, pickVariant, isRetired } = require('../../b2b-outreach/lib/fixedSubjects');
 const { subjectFor, isReferred, introSubjectFor, renderMetadataFacts } = require('../../b2b-outreach/lib/outreachAdvisor');
 const { INITIATING_TYPES } = require('../../b2b-outreach/lib/cadence');
 const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
@@ -61,16 +61,14 @@ test('only a retailer re_approach with a kit on record takes the template', () =
 
 test('fixed subjects: one table, both channels, one variable per pair', () => {
   assert.deepEqual(variantsFor('intro_outreach'), ['subject_a', 'subject_b']);
-  assert.deepEqual(variantsFor('intro_pitch'), ['pitch_a', 'pitch_b']);
+  assert.deepEqual(variantsFor('intro_pitch'), ['pitch_wearer', 'pitch_customers'], 'round 2 only');
   assert.deepEqual(variantsFor('re_approach'), ['samples_a', 'samples_b']);
   assert.deepEqual(variantsFor('community_checkin'), []);
-  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_a', 'Babeland'),
-    'Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES');
-  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_b', 'Babeland'), 'Gender-affirming underwear and swimwear for your trans customers');
+  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_wearer', 'Babeland'),
+    'Gender-affirming underwear and swimwear for trans women and girls');
+  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_customers', 'Babeland'), 'Gender-affirming underwear and swimwear for your trans customers');
   assert.equal(fixedSubjectFor('re_approach', 'samples_b', 'Journelle', { when: 'last fall' }),
     'The gender-affirming underwear samples we sent Journelle last fall');
-  assert.equal(fixedSubjectFor('re_approach', 'samples_a', 'Journelle'),
-    fixedSubjectFor('intro_pitch', 'pitch_a', 'Journelle'), 'both A arms are the proven category line');
   assert.equal(fixedSubjectFor('intro_pitch', 'subject_a', 'Babeland'), null, 'variants do not cross types');
   // The org alias still answers the way it did.
   assert.equal(introSubjectFor('subject_a', 'Youth OUTright'), FIXED_SUBJECTS.intro_outreach.subject_a('Youth OUTright'));
@@ -80,11 +78,33 @@ test('fixed subjects: one table, both channels, one variable per pair', () => {
 });
 
 test('pickVariant takes the least-used arm, first in order on a tie', () => {
-  assert.equal(pickVariant('intro_pitch', {}), 'pitch_a');
-  assert.equal(pickVariant('intro_pitch', { pitch_a: 1 }), 'pitch_b');
-  assert.equal(pickVariant('intro_pitch', { pitch_a: 3, pitch_b: 3 }), 'pitch_a');
-  assert.equal(pickVariant('intro_pitch', { pitch_a: 4, pitch_b: 3 }), 'pitch_b');
+  assert.equal(pickVariant('intro_pitch', {}), 'pitch_wearer');
+  assert.equal(pickVariant('intro_pitch', { pitch_wearer: 1 }), 'pitch_customers');
+  assert.equal(pickVariant('intro_pitch', { pitch_wearer: 3, pitch_customers: 3 }), 'pitch_wearer');
+  assert.equal(pickVariant('intro_pitch', { pitch_wearer: 4, pitch_customers: 3 }), 'pitch_customers');
   assert.equal(pickVariant('community_checkin', {}), null);
+});
+
+test('a retired variant leaves rotation but still renders for the report', () => {
+  // Round 1 went out under pitch_a/pitch_b. The report has to be able to say
+  // what those said, or a finished round becomes unreadable.
+  assert.ok(isRetired('intro_pitch', 'pitch_a'));
+  assert.ok(isRetired('intro_pitch', 'pitch_b'));
+  assert.ok(!isRetired('intro_pitch', 'pitch_wearer'));
+  assert.ok(!isRetired('intro_outreach', 'subject_a'));
+  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_a', 'Babeland'),
+    'Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES');
+  for (const v of variantsFor('intro_pitch')) assert.ok(!isRetired('intro_pitch', v));
+  // A retired arm is never handed out again, however lopsided the counts.
+  assert.equal(pickVariant('intro_pitch', { pitch_a: 0, pitch_wearer: 9, pitch_customers: 9 }), 'pitch_wearer');
+});
+
+test('neither round-2 arm says wholesale, and they differ in exactly one clause', () => {
+  const [a, b] = variantsFor('intro_pitch').map(v => fixedSubjectFor('intro_pitch', v, 'X'));
+  for (const s of [a, b]) assert.ok(!/wholesale/i.test(s), `"${s}" must not say wholesale`);
+  const prefix = 'Gender-affirming underwear and swimwear for ';
+  assert.ok(a.startsWith(prefix) && b.startsWith(prefix), 'same opening, one variable');
+  assert.notEqual(a, b);
 });
 
 test('a referred company carries no fixed subject: the referral is the subject', () => {
