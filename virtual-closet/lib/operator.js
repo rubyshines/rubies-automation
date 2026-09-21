@@ -11,6 +11,7 @@ const auth = require('./auth');
 const emails = require('./emails');
 const money = require('./money');
 const { MENU, styleByKey } = require('./catalog');
+const { allowLiveWrite } = require('../../shared/liveWrites');
 
 const opActor = email => `operator:${email || 'operator'}`;
 
@@ -149,7 +150,15 @@ async function approveCentre(id, operatorEmail) {
   if (!admin?.email_verified_at) throw new Error("The admin's email is not verified yet.");
   let donationPartnerId = centre.donation_partner_id;
   if (centre.programmes?.pass_it_on && !donationPartnerId) {
-    donationPartnerId = await createDonationPartner(centre);
+    // This cascades a long way: a donation_partners row that CS routing reads
+    // at runtime to send a real customer's return, then a publish that merges
+    // to the theme repo and deploys rubyshines.com. A centre signed up against
+    // a dev server is test data by construction, so it must not travel. The
+    // operator's own MCP tools stay unguarded — a person running
+    // donation_partner_create by hand is doing their job, not leaking a fixture.
+    if (allowLiveWrite(`list ${centre.name} on the public donation map`)) {
+      donationPartnerId = await createDonationPartner(centre);
+    }
   }
   await centres.setStatus(centre.id, 'active', opActor(operatorEmail), { approved_at: new Date().toISOString(), approved_by: operatorEmail || 'operator', donation_partner_id: donationPartnerId });
   await boxes.getOpenBox(centre.id, { create: true, goalCents: centre.goal_cents });

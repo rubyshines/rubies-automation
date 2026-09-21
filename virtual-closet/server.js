@@ -17,6 +17,7 @@ const centres = require('./lib/centres');
 const boxes = require('./lib/boxes');
 const catalog = require('./lib/catalog');
 const { db, must } = require('./lib/db');
+const { liveWriteMode } = require('../shared/liveWrites');
 const closetView = require('./views/closet');
 const { page, esc } = require('./views/layout');
 
@@ -30,7 +31,7 @@ app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: true, limit: '200kb' }));
 app.use(express.json({ limit: '200kb' }));
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: false }));
-app.get('/health', (req, res) => res.json({ ok: true, service: 'virtual-closet', started: STARTED }));
+app.get('/health', (req, res) => res.json({ ok: true, service: 'virtual-closet', started: STARTED, ...liveWriteMode() }));
 app.use(auth.attach());
 
 // Named routes first: programme site, accounts, centre view, requests, terms.
@@ -142,7 +143,15 @@ function safeRequire(mod) {
 }
 
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`[vc] Virtual Closet listening on ${BASE_URL}`));
+  app.listen(PORT, () => {
+    const mode = liveWriteMode();
+    // Say it out loud on every boot: a guard stuck off is otherwise
+    // indistinguishable from there being nothing to write.
+    console.log(`[vc] Virtual Closet listening on ${BASE_URL}`);
+    console.log(mode.live
+      ? `[vc] live deployment: writes to Shopify and the donation map are ON`
+      : `[vc] not the live deployment (no ${mode.signal}): discount codes and donation-map listings are skipped`);
+  });
 }
 
 module.exports = { app, BASE_URL, loadCentre, closetContext };
