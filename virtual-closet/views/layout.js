@@ -46,7 +46,9 @@ function page({ title, body, centre, mode = 'public', nav = '', user = null, ban
   if (mode === 'public' && link) {
     // Link mode (Jamie, 2026-09-21): the centre's name as the title on the
     // left, "RUBIES × [centre logo]" on the right.
-    const clogo = centre.logo_url ? `<span class="hd-x-mark">×</span><img class="hd-clogo" src="${esc(centre.logo_url)}" alt="${esc(centre.name)}">` : '';
+    // The centre's logo links to its website when it has one (Jamie, 2026-09-21).
+    const logoImg = centre.logo_url ? `<img class="hd-clogo" src="${esc(centre.logo_url)}" alt="${esc(centre.name)}">` : '';
+    const clogo = logoImg ? `<span class="hd-x-mark">×</span>${centre.website ? `<a class="hd-clogo-link" href="${esc(centre.website)}" target="_blank" rel="noopener" aria-label="${esc(centre.name)}">${logoImg}</a>` : logoImg}` : '';
     header = `<header class="hd hd-link"><div><span class="hd-title">${esc(centre.name)} Virtual Closet</span></div><div class="hd-x">${brand}${clogo}</div></header>`;
   } else if (mode === 'public' && centre) {
     header = `<header class="hd"><div>${brand}<span class="hd-sub">${esc(centre.name)}'s closet</span></div><nav>${nav}</nav></header>`;
