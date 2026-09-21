@@ -8,7 +8,7 @@ done_when: On the Railway service, a centre enrolled by `vc_enrol_centre` (seede
 
 # Virtual Closet, the minimal cut
 
-**Status 2026-09-21:** shipped in PR #222; The Attic enrolled (#9) with the welcome to Jamie's own inbox; the simulation (sale, sponsorship, digest, redemption) ran on a test centre and every email arrived. PR #223 carries the goal bar and Jamie's phone-review copy. Left on the done_when: a real order and a real $10 sponsorship through the live page, then the next daily digest.
+**Status 2026-09-21, end of day:** shipped and iterated through PR #229; The Attic enrolled (#9) with its welcome in Jamie's own inbox; simulation proved every email. `VC_BASE_URL` is `https://closet.rubyshines.com` on Railway; the domain is waiting on domain.com DNS (see `reference_deployment.md`). Left: re-send The Attic's welcome once the domain answers, then a real order and a real $10 sponsorship through the live page and the next daily digest.
 
 Build spec. The full app (accounts, requests, boxes, operator pages) was built and merged 2026-09-18 to 21 (PRs #212 to #219) and runs at the Railway domain. On 2026-09-21 Jamie cut the pilot back to an affiliate-shaped programme because the risk is execution, for the centre and for RUBIES, not build cost. The programme record with every decision is `.claude/plans/org-closet-programme.md`, section "The minimal cut". This file says how the code changes.
 

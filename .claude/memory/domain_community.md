@@ -27,7 +27,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partners exist in US/CA/CH/AU/DE.
-- **Virtual Closet:** live in link mode at the Railway domain (no subdomain yet). The Attic Youth Center (Philadelphia) is enrolled as the first centre; a RUBIES Test Closet centre exists for email simulation. The goal bar and the phone-review copy are on `wt/closet-goal` (PR #223) pending ship. Not yet done: a real order and a real sponsorship through a live page.
+- **Virtual Closet:** live in link mode. Public address is closet.rubyshines.com (links already point there; the domain's certificate is pending a DNS fix at domain.com, and the Railway domain keeps serving meanwhile). The Attic Youth Center (Philadelphia) is enrolled as the first centre with a $1,000 goal; the test centre is retired. Not yet done: re-send The Attic's welcome on the new address; a real order and a real sponsorship through the live page.
 - **Free swimwear:** live in Supabase + the dashboard tab. Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines. Repeat/duplicate handling runs at intake; the queue surfaces returning / possible-2nd-child / repeat badges and filters. Sheet write-back bridge still on.
 
 ## Key Files
