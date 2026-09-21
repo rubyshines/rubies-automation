@@ -42,19 +42,25 @@ function page({ title, body, centre, mode = 'public', nav = '', user = null, ban
   const home = mode === 'centre' ? '/home' : mode === 'public' ? STORE : '/';
   const brand = `<a class="brand" href="${home}" aria-label="RUBIES">${logo()}</a>`;
   let header = '';
-  if (mode === 'public' && centre) {
+  const link = centre && centre.mode === 'link';
+  if (mode === 'public' && link) {
+    // Link mode (Jamie, 2026-09-21): the centre's name as the title on the
+    // left, "RUBIES × [centre logo]" on the right.
+    const clogo = centre.logo_url ? `<span class="hd-x-mark">×</span><img class="hd-clogo" src="${esc(centre.logo_url)}" alt="${esc(centre.name)}">` : '';
+    header = `<header class="hd hd-link"><div><span class="hd-title">${esc(centre.name)} Virtual Closet</span></div><div class="hd-x">${brand}${clogo}</div></header>`;
+  } else if (mode === 'public' && centre) {
     header = `<header class="hd"><div>${brand}<span class="hd-sub">${esc(centre.name)}'s closet</span></div><nav>${nav}</nav></header>`;
   } else if (mode === 'centre') {
     header = `<header class="hd"><div>${brand}<nav class="hd-nav"><a href="/home">Home</a><a href="/history">History</a><a href="/settings">Settings</a></nav></div><div class="hd-user">${esc(centre?.name || '')}${user ? ` · ${esc(user.name || user.email)}` : ''} <a href="/signout">Sign out</a></div></header>`;
   } else if (mode === 'programme') {
-    header = `<header class="hd"><div>${brand}</div><nav><a href="/#how">How it works</a><a href="${LINKS.about}">About RUBIES</a><a class="btn btn-line" href="/#signup">Sign up</a><a class="btn btn-line" href="/signin">Sign in</a></nav></header>`;
+    header = `<header class="hd"><div>${brand}</div><nav><a href="/#how">How it works</a><a href="${LINKS.about}">About RUBIES</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet">Talk to Jamie</a></nav></header>`;
   } else {
     header = `<header class="hd"><div>${brand}</div><nav>${nav}</nav></header>`;
   }
   const ftBrand = `<div class="ft-brand"><a class="brand" href="${STORE}" aria-label="RUBIES">${logo(96)}</a><span>Never stop shining.</span></div>`;
   const footer = mode === 'centre' || mode === 'plain'
     ? `<footer class="ft">${ftBrand}<span>Questions? <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a></span></footer>`
-    : `<footer class="ft">${ftBrand}<div class="ft-links"><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a> · <a href="${LINKS.sizeGuide}">Size guide</a> · <a href="${LINKS.offer}">Offer details</a> · <a href="${LINKS.terms}">Free pair terms</a>${mode === 'programme' ? ` · <a href="${LINKS.map}">Donation map</a>` : ''}</div>${centre ? `<div class="soft">${esc(centre.name)}${addressLine(centre) ? `, ${esc(addressLine(centre))}` : ''}${centre.website ? ` · <a href="${esc(centre.website)}">${esc(centre.website.replace(/^https?:\/\//, ''))}</a>` : ''}</div>` : ''}</footer>`;
+    : `<footer class="ft">${ftBrand}<div class="ft-links"><a href="${LINKS.how}">How RUBIES works</a> · <a href="${LINKS.styles}">Our styles</a> · <a href="${LINKS.sizeGuide}">Size guide</a>${link || mode === 'programme' ? '' : ` · <a href="${LINKS.offer}">Offer details</a> · <a href="${LINKS.terms}">Free pair terms</a>`}${mode === 'programme' ? ` · <a href="${LINKS.map}">Donation map</a>` : ''}</div>${centre ? `<div class="soft">${esc(centre.name)}${addressLine(centre) ? `, ${esc(addressLine(centre))}` : ''}${centre.website ? ` · <a href="${esc(centre.website)}">${esc(centre.website.replace(/^https?:\/\//, ''))}</a>` : ''}</div>` : ''}</footer>`;
   return `<!doctype html>
 <html lang="en">
 <head>

@@ -60,6 +60,13 @@ b, strong { font-weight: 600; }
 .hd nav a, .hd-nav a { text-decoration: none; text-transform: uppercase; letter-spacing: .06em; font-size: 14px; font-weight: 500; }
 .hd nav a.btn { text-transform: none; letter-spacing: .02em; min-height: 40px; padding: 0 20px; }
 .hd-user { color: var(--soft); font-size: 14px; }
+/* link mode: the centre's name as the title, "RUBIES × logo" on the right */
+.hd-title { font-size: 22px; font-weight: 500; letter-spacing: .01em; line-height: 1.2; }
+.hd-x { display: flex; align-items: center; gap: 14px; }
+.hd-x .brand img { width: 130px; }
+.hd-x-mark { font-size: 22px; color: var(--soft); line-height: 1; }
+.hd-clogo { max-height: 48px; max-width: 160px; display: block; }
+.fund-link { grid-template-columns: 1fr; }
 .hd-user a { margin-left: 8px; }
 .ft { border-top: 1px solid var(--rule); margin-top: 56px; padding-top: 24px; display: grid; gap: 8px; color: var(--soft); font-size: 14px; }
 .ft-brand { display: flex; align-items: center; gap: 14px; }
@@ -138,6 +145,7 @@ section + section { border-top: 1px solid var(--rule); }
 .gift:hover { background: var(--blue-tint); color: var(--ink); }
 .gift b { font-size: 24px; font-weight: 600; }
 .gift small { color: var(--soft); font-size: 13px; }
+.gifts-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; }
 
 /* products: the store's card, square photo on the light grey ground */
 .products { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
@@ -251,6 +259,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
   .fund-cta { justify-items: start; text-align: left; }
 }
 @media (max-width: 749px) {
+  .gifts-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hd-link { flex-direction: column; align-items: flex-start; }
   .three, .two, .sponsor-block, .row, .steps, .steps-4 { grid-template-columns: 1fr; }
   .item { grid-template-columns: 72px 1fr; gap: 10px; }
   .doors-3 { gap: 20px; }

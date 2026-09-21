@@ -13,6 +13,13 @@ const centres = require('./centres');
 const discounts = require('./discounts');
 const sponsorship = require('./sponsorship');
 
+// Link mode (the minimal cut, 2026-09-21): no boxes. A centre's money is one
+// running balance: what came in (orders, sponsors) less what it has spent on
+// partner orders (redemptions). The public page shows lifetime raised, which
+// only ever goes up; the centre's email shows the balance it can spend.
+const RAISED_KINDS = new Set(['order_credit', 'sponsor', 'centre_add', 'adjustment']);
+const SPENT_KINDS = new Set(['redemption', 'adjustment']);
+
 /** Insert a ledger row unless its source is already there. Returns the row or null when it existed. */
 async function credit({ centre, box, kind, amountCents, sourceType, sourceId, detail = {} }) {
   const { data, error } = await db().from('vc_ledger')
@@ -26,7 +33,84 @@ async function credit({ centre, box, kind, amountCents, sourceType, sourceId, de
 }
 
 async function openBoxFor(centre) {
+  if (centres.isLink(centre)) return null;
   return boxes.getOpenBox(centre.id, { create: true, goalCents: centre.goal_cents });
+}
+
+/** Pure: the balance from a centre's ledger rows. */
+function balanceFromRows(rows) {
+  const out = { raisedCents: 0, redeemedCents: 0, balanceCents: 0, orders: 0, sponsors: 0, lastActivityAt: null };
+  for (const r of rows || []) {
+    const a = r.amount_cents || 0;
+    if (a > 0 && RAISED_KINDS.has(r.kind)) out.raisedCents += a;
+    else if (a < 0 && SPENT_KINDS.has(r.kind)) out.redeemedCents += -a;
+    if (r.kind === 'order_credit') out.orders += 1;
+    if (r.kind === 'sponsor') out.sponsors += 1;
+    if ((r.kind === 'order_credit' || r.kind === 'sponsor') && r.created_at && (!out.lastActivityAt || r.created_at > out.lastActivityAt)) out.lastActivityAt = r.created_at;
+  }
+  out.balanceCents = out.raisedCents - out.redeemedCents;
+  return out;
+}
+
+async function balance(centre) {
+  const rows = must(await db().from('vc_ledger').select('kind, amount_cents, created_at').eq('centre_id', centre.id), 'ledger balance');
+  return balanceFromRows(rows);
+}
+
+/** All of a centre's ledger lines, newest first, for the operator. */
+async function lines(centre, { limit = 200 } = {}) {
+  return must(await db().from('vc_ledger').select('*').eq('centre_id', centre.id).order('created_at', { ascending: false }).limit(limit), 'ledger lines');
+}
+
+/**
+ * The centre spent part of its balance on a partner order (kind
+ * 'redemption', negative, idempotent on the order number), or the operator
+ * corrected the ledger by hand (kind 'adjustment', either sign, note
+ * required, no balance check). Returns the balance after, and `duplicate`
+ * when the order number was already recorded.
+ */
+async function redeem({ centre, amountCents, orderNumber, note, actor = 'operator', kind = 'redemption' }) {
+  amountCents = Math.round(Number(amountCents) || 0);
+  if (kind === 'redemption') {
+    if (!(amountCents > 0)) throw new Error('A redemption must be more than zero.');
+    if (!orderNumber) throw new Error('A redemption needs the partner order number.');
+    // The same order number recorded twice is a no-op, checked before the
+    // balance so a repeated call after a real debit does not read as over-balance.
+    const existing = must(await db().from('vc_ledger').select('id').eq('centre_id', centre.id).eq('kind', 'redemption').eq('source_type', 'wholesale_order').eq('source_id', String(orderNumber)).maybeSingle(), 'redemption lookup');
+    if (existing) return { ...(await balance(centre)), duplicate: true };
+    const before = await balance(centre);
+    if (amountCents > before.balanceCents) throw new Error(`That is more than the balance: ${money.dollars(before.balanceCents)} available.`);
+    const row = await credit({ centre, box: null, kind: 'redemption', amountCents: -amountCents, sourceType: 'wholesale_order', sourceId: String(orderNumber), detail: { note: note || null, actor } });
+    if (!row) return { ...before, duplicate: true };
+    await logEvent(centre.id, actor, 'ledger.redemption', { order_number: String(orderNumber), cents: amountCents });
+    return { ...(await balance(centre)), duplicate: false };
+  }
+  if (kind !== 'adjustment') throw new Error(`Unknown kind: ${kind}`);
+  if (!amountCents) throw new Error('An adjustment must not be zero.');
+  if (!note) throw new Error('An adjustment needs a note saying why.');
+  await credit({ centre, box: null, kind: 'adjustment', amountCents, sourceType: 'operator', sourceId: null, detail: { note, actor, order_number: orderNumber ? String(orderNumber) : null } });
+  await logEvent(centre.id, actor, 'ledger.adjustment', { cents: amountCents, note });
+  return { ...(await balance(centre)), duplicate: false };
+}
+
+/** Pure: what the digest says about a run of order-credit and sponsor rows. */
+function digestFromRows(rows) {
+  const out = { any: false, orders: 0, orderCents: 0, sponsors: 0, sponsorCents: 0, maxCreatedAt: null };
+  for (const r of rows || []) {
+    if (r.kind === 'order_credit') { out.orders += 1; out.orderCents += r.amount_cents || 0; }
+    else if (r.kind === 'sponsor') { out.sponsors += 1; out.sponsorCents += r.amount_cents || 0; }
+    else continue;
+    out.any = true;
+    if (!out.maxCreatedAt || r.created_at > out.maxCreatedAt) out.maxCreatedAt = r.created_at;
+  }
+  return out;
+}
+
+/** Activity since the centre's digest watermark (all of it when there is none). */
+async function digestActivity(centre, { since } = {}) {
+  let q = db().from('vc_ledger').select('kind, amount_cents, created_at').eq('centre_id', centre.id).in('kind', ['order_credit', 'sponsor']).order('created_at');
+  if (since) q = q.gt('created_at', since);
+  return digestFromRows(must(await q, 'digest rows'));
 }
 
 /**
@@ -89,6 +173,15 @@ async function notify(credited, order) {
     byCentre.get(row.centre.id).rows.push(row);
   }
   for (const { centre, box, rows } of byCentre.values()) {
+    if (centres.isLink(centre)) {
+      // Link mode: the sponsor hears back at once; the centre hears in its
+      // daily digest, and order credits email nobody live.
+      const bal = await balance(centre);
+      for (const row of rows) {
+        if (row.kind === 'sponsor' && buyerEmail) await emails.sponsorThanks({ centre, to: buyerEmail, amountCents: row.amount_cents, raised: bal.raisedCents });
+      }
+      continue;
+    }
     const sum = await boxes.summary(centre, box);
     const to = centre.statements_email || (await adminEmail(centre.id));
     for (const row of rows) {
@@ -139,4 +232,4 @@ async function reconcile({ days = 45 } = {}) {
   return { checked, credited };
 }
 
-module.exports = { recordOrder, reconcile, credit };
+module.exports = { recordOrder, reconcile, credit, balance, balanceFromRows, lines, redeem, digestActivity, digestFromRows };

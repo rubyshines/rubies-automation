@@ -425,3 +425,27 @@ Refined: encourage a centre email over a personal one without blocking (a nudge 
 **Operator side lives in the CS dashboard (Jamie, 2026-09-16, later):** the queue, centres list, centre detail and programme dashboard are a new section of the existing ops dashboard, not part of the new app, so there is no operator login to design and stage 2 styles them to the dashboard's look. Operator emails link into the dashboard. Open question about the operator login closed.
 
 **Add to the box is paid on the spot; order now is out of scope (Jamie, 2026-09-16, later):** a centre adds any amount to its box by card, matched. Centres buying product directly at 50% off continues as it works today, by email, outside the app. The 50%-off language exception is therefore gone from the brief; everything centre- and sponsor-facing is matching language. Open question about payment closed.
+
+---
+
+## The minimal cut: link, balance, email (Jamie, 2026-09-21)
+
+Jamie, with the full app built and on main: execution risk is the worry, for the centre and for RUBIES operating it. Start with something simple and well known, an affiliate-shaped programme, and grow only if the pilot asks for it. The full app stays in the codebase behind a per-centre mode; nothing is deleted.
+
+**Locked:**
+- **One door on the page: shop.** No free-pair requests at all. Sponsor tiles stay, in even dollar amounts ($10, $25, $50, $100), because they are zero admin (a cart link to the hidden product's $1 unit variant) and the highest-margin dollar.
+- **Terms:** the shopper gets 20% off (hidden single-use code minted per click, once per customer, as built); the centre earns 25% of the sale as credit toward purchases.
+- **The centre gets a link and a QR code**, never a printed code. The QR needs a real encoder (the share tools ship a placeholder SVG today).
+- **Jamie enrols centres** by MCP tool for now. No sign-up, no accounts, no team, no settings a centre maintains. The programme page's sign-up form becomes a "talk to Jamie" contact.
+- **Email only when there is activity.** Nothing scheduled, nothing empty.
+
+- **Redemption is a partner order (Jamie, 2026-09-21):** the closet balance is credit against the existing partner terms, 50% off with a $300 minimum after discount, per shipment. The centre emails RUBIES; the operator places the wholesale order and a tool debits the ledger. Five styles only (AJ, Charlie, Sassy, Brooke bra, Ruby bikini bottom). Nothing built beyond the debit tool.
+- **Daily digest**, at most one email a day and only on a day with activity. No monthly statement.
+- **Uniting Pride gets this cut** for the October pilot, subject to seeing it flow.
+- **Enrol tool** seeds from the donation partner row when there is one, and takes name, logo, city and contact email directly otherwise, since some centres will do only this programme.
+
+**Open (2026-09-21):** what to say about the match (see the wording note below); whether the centre may add its own money to reach the $300 minimum; 
+
+**Wording, locked (Jamie, 2026-09-21):** the 25% is on what the buyer paid, after their 20% off, so "every two pairs buys one" is gone (it would be five for two). One mechanism word for everyone, "match", and one buyer number, "a quarter". Buyer line: "A quarter of your order goes to [Centre]'s closet, and RUBIES matches it." Total line: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." Sponsor tiles are plain dollars with no line of their own. The digit "25%" appears only in the centre's terms: 25% of what buyers pay plus every sponsor dollar, spent at partner pricing, $300 minimum per shipment. The credit base stays the post-discount subtotal, as the code does today.
+
+**Page and emails, refined (Jamie, 2026-09-21):** the page title is "[Centre] Virtual Closet" with "RUBIES × [centre logo]" on the right; no "20% comes off at checkout" fine print and no size guide link under the button. The welcome email (subject "Your RUBIES Virtual Closet is ready.") comes from Jamie's own address, opens with congratulations, makes sharing the link on socials the call to action, attaches the QR (a printable poster and fact sheet come later and are not mentioned), states the 25% plus sponsor dollars, and says plainly: email me your order, I apply what the closet has earned, and 50% off continues on any order whose retail value before the discount is $600 or more (the same $300-after-discount floor, said in retail). The activity email subject is "[Centre]'s Virtual Closet activity today", it comes from care@ (only the welcome is from Jamie), and it repeats the welcome's sharing instructions every time. The sponsor thank-you is "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." The word "match" now appears only on the page's total line. Sample centre for the design is The Attic Youth Center (Philadelphia), the first centre likely to sign up; it is not in the partner registry.

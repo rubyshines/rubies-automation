@@ -13,33 +13,33 @@ function sizeChips(selected, { kids = false, name = 'sizes' } = {}) {
   return `<div class="chips">${SIZES.map(s => `<label class="chip"><input type="checkbox" name="${name}" value="${s}" ${sel.has(s) ? 'checked' : ''}> ${s}</label>`).join('')}<label class="chip"><input type="checkbox" name="kids_sizes" value="1" ${kids ? 'checked' : ''}> Kids sizes</label></div>`;
 }
 
-function programme({ values = {}, errors = [] } = {}) {
-  const v = values;
+function programme({ values = {}, errors = [] } = {}) { // eslint-disable-line no-unused-vars
+  // The minimal cut (2026-09-21): the programme is a link, a balance and an
+  // email. Jamie enrols centres; there is no sign-up form on this page.
+  const talk = `<a class="btn btn-fill" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet">Talk to Jamie</a>`;
   const body = `
 <section class="hero">
   <div class="hero-copy">
     <h1>A closet for your community, stocked by your community.</h1>
-    <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops, requests and sponsors; RUBIES matches every dollar. You receive a box and hand it out. It costs your centre nothing.</p>
-    <div class="doors"><a class="btn btn-fill" href="#signup">Sign up your centre</a><a class="btn btn-line" href="mailto:jamie@rubyshines.com?subject=Virtual%20Closet%20call">Book a call, if you'd like one</a></div>
+    <p class="lede">RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Your community shops through your link and sponsors your closet; RUBIES matches every dollar. It costs your centre nothing.</p>
+    <div class="doors">${talk}</div>
   </div>
   ${illustration('mirror')}
 </section>
 <section>
-  <h2>Three ways your community can help</h2>
-  <div class="three doors-3">
-    <div class="card"><h3>Shop</h3><p>20% off one order, applied from your link. For every two items bought, the closet gets one.</p></div>
-    <div class="card"><h3>Request</h3><p>Anyone in your community requests a pair on your page. Approved within the limits you set. They pick it up at the centre or have it shipped home.</p></div>
-    <div class="card"><h3>Sponsor</h3><p>Pick an amount, from $16 for a pair to $300 for a full shipment. It goes into the box, and RUBIES matches it.</p></div>
+  <h2>Two ways your community can help</h2>
+  <div class="two">
+    <div class="card"><h3>Shop</h3><p>Anyone who opens your link gets 20% off one RUBIES order. A quarter of what they pay goes to your closet, and RUBIES matches it.</p></div>
+    <div class="card"><h3>Sponsor</h3><p>Pick an amount, $10 to $100, and pay at the RUBIES store. It goes straight to your closet, and RUBIES matches it.</p></div>
   </div>
-  <p class="soft">Everything lands in one box. When the box reaches its goal, it ships to you with everyone's request inside.</p>
 </section>
 <section id="how">
   <h2>How it works</h2>
   <ol class="steps steps-4">
-    <li><b>Sign up.</b> Five minutes. Tick the programmes you want. Set your sizes.</li>
-    <li><b>We approve you.</b> A person at RUBIES reviews every new centre, usually within a few days.</li>
-    <li><b>Share your link.</b> On your site, your socials, your noticeboard. That is all the upkeep there is.</li>
-    <li><b>Receive the box.</b> Requested items first, the rest filled by you or by us. Hand it out.</li>
+    <li><b>Talk to Jamie.</b> A short call or an email. Jamie sets your closet up; there is nothing to fill in.</li>
+    <li><b>Share your link.</b> On your site, your socials, your noticeboard. A QR code comes with it. That is all the upkeep there is.</li>
+    <li><b>Hear how it's going.</b> On any day something comes in, you get one email with what was added and your balance.</li>
+    <li><b>Order when you're ready.</b> Email Jamie your order and your balance comes off it. RUBIES ships gender-affirming underwear and swimwear to your closet.</li>
   </ol>
 </section>
 <section class="about">
@@ -47,31 +47,16 @@ function programme({ values = {}, errors = [] } = {}) {
   ${illustration('beach', 'about-art')}
 </section>
 <section>
-  <h2>Two programmes. Tick one or both.</h2>
+  <h2>Also for centres: Pass It On</h2>
   <div class="two">
-    <div class="card"><h3>Pass It On</h3><p>Customers' exchanged and returned RUBIES items are routed to your closet. Your centre appears on the public donation map, and its pin links to your closet page.</p><p class="fine">Running today with partners on three continents.</p></div>
-    <div class="card"><h3>Virtual Closet</h3><p>A page in your centre's name where people can shop, request a pair or sponsor. Everything goes into a box that RUBIES matches dollar for dollar.</p><p class="fine">You can also add from your own budget any time, paid by card, matched like every other dollar.</p></div>
-  </div>
-  <div class="three" style="margin-top:24px">
-    <div><h3>What we ask of you</h3><p>Receive the box and hand things out. Keep one contact reachable. Tell us your sizes once.</p></div>
-    <div><h3>What it costs</h3><p>Nothing. Leave any time; anything raised still ships.</p></div>
-    <div><h3>Questions?</h3><p>Write to Jamie at <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a>.</p></div>
+    <div class="card"><h3>Pass It On</h3><p>Customers' exchanged and returned RUBIES items are routed to your closet, and your centre appears on the public donation map.</p><p class="fine">Running today with partners on three continents. Ask Jamie to add it.</p></div>
+    <div class="card"><h3>What it costs</h3><p>Nothing. Stop any time.</p><p class="fine">Questions? Write to Jamie at <a href="mailto:jamie@rubyshines.com">jamie@rubyshines.com</a>.</p></div>
   </div>
 </section>
 <section id="signup">
-  <h2>Sign up your centre</h2>
-  ${errorBox(errors)}
-  <form class="form" method="post" action="/signup">
-    <label>Centre name <input type="text" name="name" value="${esc(v.name || '')}" placeholder="e.g. Uniting Pride" required></label>
-    <label>Website <input type="url" name="website" value="${esc(v.website || '')}" placeholder="https://"></label>
-    <fieldset><legend>Programmes</legend>
-      <label class="check"><input type="checkbox" name="closet" value="1" ${v.closet !== false ? 'checked' : ''}> <span><b>Virtual Closet</b></span></label>
-      <label class="check"><input type="checkbox" name="pass_it_on" value="1" ${v.pass_it_on ? 'checked' : ''}> <span><b>Pass It On</b></span></label>
-    </fieldset>
-    <fieldset><legend>Sizes your closet takes and offers</legend>${sizeChips(v.sizes, { kids: !!v.kids_sizes })}<p class="fine">One sizes question serves both programmes.</p></fieldset>
-    <button class="btn btn-fill" type="submit">Continue to create your account</button>
-    <p class="fine">Next: your name, email and password. Then we review and email you when your page is live.</p>
-  </form>
+  <h2>Ready to start?</h2>
+  <p>Email Jamie with your centre's name, website and the address you'd like closet updates sent to. Your page is usually live the same day.</p>
+  <div class="doors">${talk}</div>
 </section>`;
   return page({ title: 'Virtual Closet', mode: 'programme', body });
 }

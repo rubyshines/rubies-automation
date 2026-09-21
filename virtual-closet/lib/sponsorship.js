@@ -26,18 +26,19 @@ function numericId(gid) { return String(gid).split('/').pop(); }
 async function checkoutUrl({ centre, box, tile, centreAdd = false }) {
   const s = await settings();
   if (!s?.variants) return null;
-  let variant, qty;
-  if (centreAdd) { variant = s.variants.unit; qty = Math.max(1, Math.round(tile.cents / 100)); }
-  else { variant = s.variants[tile.key]; qty = 1; }
+  // Every amount is the $1 unit variant times the dollars (tiles are even
+  // dollars since 2026-09-21; the per-item variants on the product stay
+  // unused). A tile with its own variant still works if one is ever added.
+  let variant = s.variants[tile.key], qty = 1;
+  if (!variant || centreAdd) { variant = s.variants.unit; qty = Math.max(1, Math.round(tile.cents / 100)); }
   if (!variant) return null;
   // The documented cart permalink: creates a cart with the line and goes to
   // checkout. Attribution rides as cart attributes, which land on the order
   // as note attributes; the ledger reads those (see readOrderAttributes).
-  const params = new URLSearchParams({
-    [`attributes[${PROP_CENTRE}]`]: centre.slug,
-    [`attributes[${PROP_BOX}]`]: String(box?.number || 1),
-    [`attributes[${PROP_KIND}]`]: centreAdd ? 'centre' : 'sponsor',
-  });
+  const params = new URLSearchParams({ [`attributes[${PROP_CENTRE}]`]: centre.slug });
+  // A link-mode centre has no boxes, so the Box attribute is left off.
+  if (box || centre.mode !== 'link') params.set(`attributes[${PROP_BOX}]`, String(box?.number || 1));
+  params.set(`attributes[${PROP_KIND}]`, centreAdd ? 'centre' : 'sponsor');
   return `${STORE}/cart/${numericId(variant.id)}:${qty}?${params.toString()}`;
 }
 

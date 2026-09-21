@@ -76,6 +76,39 @@ async function list({ status } = {}) {
 
 function isPublic(centre) { return !!centre && PUBLIC_STATUSES.has(centre.status); }
 
+/** The minimal cut: one page, a balance, a digest. No accounts, requests or boxes. */
+function isLink(centre) { return !!centre && centre.mode === 'link'; }
+
+/**
+ * Enrol a link-mode centre (the operator does this by tool; there is no
+ * sign-up). Active at once, no approval step, no box. Sends nothing: the
+ * tool sends the welcome so it can preview first.
+ */
+async function enrol({ name, slug, notify_email, website, logo_url, city, region, country, donation_partner_id, actor }) {
+  if (!name || !String(name).trim()) throw new Error('A centre needs a name.');
+  if (!notify_email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(notify_email))) throw new Error('A centre needs a notification email.');
+  const clean = slug ? slugify(slug) : null;
+  if (clean && (await getBySlug(clean))) throw new Error(`The slug "${clean}" is taken.`);
+  const row = {
+    slug: clean || (await uniqueSlug(name)),
+    name: String(name).trim(),
+    mode: 'link',
+    website: website ? String(website).trim() : null,
+    logo_url: logo_url || null,
+    address: { city: city || null, region: region || null, country: country || 'US' },
+    programmes: { closet: true, pass_it_on: !!donation_partner_id },
+    donation_partner_id: donation_partner_id || null,
+    statements_email: String(notify_email).trim().toLowerCase(),
+    status: 'active',
+    approved_at: new Date().toISOString(),
+    approved_by: actor || 'operator',
+    map_listed: !!donation_partner_id,
+  };
+  const centre = must(await db().from('vc_centres').insert(row).select('*').single(), 'enrol centre');
+  await logEvent(centre.id, actor || 'operator', 'centre.enrolled', { mode: 'link', donation_partner_id: row.donation_partner_id });
+  return centre;
+}
+
 function displaySizes(centre) {
   const s = (centre.sizes || []).slice();
   if (!s.length) return '';
@@ -83,4 +116,4 @@ function displaySizes(centre) {
   return centre.kids_sizes ? `${range}, kids` : range;
 }
 
-module.exports = { slugify, uniqueSlug, getBySlug, getById, createFromSignup, update, setStatus, list, isPublic, displaySizes };
+module.exports = { slugify, uniqueSlug, getBySlug, getById, createFromSignup, enrol, update, setStatus, list, isPublic, isLink, displaySizes };

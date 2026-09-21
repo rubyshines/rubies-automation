@@ -1,116 +1,134 @@
 ---
-name: Virtual Closet build
-description: Build the Virtual Closet app end to end at low fidelity from the approved wireframes, so it can be tested with a real centre
+name: Virtual Closet, the minimal cut
+description: Turn the built Virtual Closet into a link-only programme for the pilot: a page with one shop button and four sponsor tiles, a balance that accrues from orders, and an email to the centre on days with activity. No accounts, no requests, no boxes.
 type: project
 domain: community
-done_when: On a preview URL, a centre signs up and verifies its email, the operator approves it from the CS dashboard, its closet page is live at /[slug]; a requester submits and verifies a request and it appears on the centre's Home; a sponsor tile goes to Shopify checkout with the centre attached and the paid test order lands in the ledger and moves the bar; the centre sends a funded box and the send/ready emails fire; the service and the dashboard section are deployed on Railway.
+done_when: On the Railway service, a centre enrolled by `vc_enrol_centre` (seeded from a donation partner row) has a live page at /[slug] showing only the shop button, the four sponsor tiles, the styles and the running total; its welcome email arrives with a QR that scans to the page; one real order placed through its Shop button and one real $10 sponsor order both land on its ledger; the next daily run sends the centre a single digest naming both; `vc_redeem` debits the balance and `vc_centre` shows the new balance; the full suite is green and the change is on main.
 ---
 
-# Virtual Closet build
+# Virtual Closet, the minimal cut
 
-Build spec. The programme design lives in `.claude/plans/org-closet-programme.md` (read "Where things stand" first); the brief given to Claude Design and the wireframes it produced are in `.claude/plans/virtual-closet-handover/` (`virtual-closet-design-brief.md`, `wireframes/Virtual Closet Wireframes.dc.html`; the Claude Design project is `https://claude.ai/design/p/8882a56d-9618-4d91-babf-198e06d30173`). The wireframes are the screen-level spec; this file is the system-level spec. Where they disagree, this file wins and says why.
+Build spec. The full app (accounts, requests, boxes, operator pages) was built and merged 2026-09-18 to 21 (PRs #212 to #219) and runs at the Railway domain. On 2026-09-21 Jamie cut the pilot back to an affiliate-shaped programme because the risk is execution, for the centre and for RUBIES, not build cost. The programme record with every decision is `.claude/plans/org-closet-programme.md`, section "The minimal cut". This file says how the code changes.
 
-## Scope
+**The principle:** the full app stays in the codebase behind a per-centre mode. Nothing is deleted. Every centre enrolled from now on is in `link` mode; no centre is in `closet` mode and nothing links to closet-mode surfaces, but the code and tests for them stay green.
 
-"The entire site, low fidelity": every screen and email in the wireframes, working end to end on real data, with wireframe-grade styling (plain HTML, one small stylesheet). The hi-fi pass followed on 2026-09-19 and touched only templates, CSS and the email shell.
+## What the centre experiences
 
-In scope:
-- Public: programme page with sign-up, sign-up confirmation, closet page with the four `?lead=` arrangements and all progress states, request form as its own step with email verification, sent states, sponsor handoff and thank-you, terms and reference pages, requests-paused states, donation-map pin link.
-- Centre: create account (step 2 of sign-up), verify email, sign in, forgot and reset password, change email and password, Team (invite, roles, hand over admin, remove), accept invitation, Home (current box, add to the box, requests, words publish, share tools, this-month counts, Pass It On summary), Settings (closet, Pass It On, centre, team, account, leave), Send the box, History, by-hand approval on Home.
-- Operator, inside the CS dashboard: Needs attention, Centres list and detail (with "open their Home as them", override settings, pause), Boxes and packing list, All requests with the operator-only detail.
-- Emails: all of the wireframes' 1z, 1aa, 1ab, 1ac, 1ad.
-- Money: Shopify checkout for sponsorship and add-to-the-box; the 20% discount by hidden single-use code; ledger fed from orders.
-- Jobs: ledger reconcile, reminders, monthly statement, needs-attention digest.
+1. Jamie enrols them. They get one email: their link, a QR code, a ready-made post, four lines of terms, Jamie's contact.
+2. They share the link or the QR. That is their whole job.
+3. A shopper who opens the link sees one page: shop with 20% off (a hidden single-use code, minted per click), four sponsor tiles, the five styles, the running total.
+4. On any day with activity the centre gets one email: what came in, and the balance.
+5. When they want product they email Jamie an order (partner terms: 50% off any order whose retail value before the discount is $600 or more, five styles). Jamie places it and deducts the balance by tool. No top-up mechanism, no box, no goal.
 
-Out of scope for this project (parked or later):
-- Google and Microsoft sign-in buttons doing anything (rendered, disabled, "coming soon").
-- The 30-day browser attribution window on the store (needs a theme script; the discount code carries attribution for now).
-- "Create store orders" from the packing list (zero-priced store orders per requester). The packing list is built; the button is a stub that says what it will do.
-- Automated pre-read of community words.
-- Klaviyo profile tagging.
+## Terms and wording (locked 2026-09-21)
 
-## Architecture
+- Shopper: 20% off one order per customer, existing customers included, applied automatically. No code shown.
+- Centre credit: 25% of what the buyer paid (post-discount subtotal, as `money.orderCreditCents` does today) plus every sponsor dollar at face value.
+- The match: credit is spent at partner pricing (half retail), which is the match. No separate mechanism.
+- Buyer line: "A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it."
+- Total line: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." Lifetime raised, never net of redemptions; the public number only goes up.
+- Sponsor tiles: $10, $25, $50, $100, plain, no line of their own.
+- The digit "25%" appears only in the centre's terms (the welcome email). "Match" appears exactly once, on the page's total line; the emails do not use it (Jamie, 2026-09-21).
+- The product name is "Virtual Closet", capitalised, in titles and subjects: "[Centre] Virtual Closet" on the page, "[Centre]'s Virtual Closet" in sentences.
+- Never: discount, wholesale, doubled, box, shipment, goal, on any public surface. "50% off" and "$600 retail" are said plainly in the centre's welcome email, and nowhere public. Never em dashes. Plus sizes 1X to 4X.
 
-- **Where it lives:** `virtual-closet/` in this repo. Its own Railway service (`railway/virtual-closet.toml`, start `node virtual-closet/server.js`) on a subdomain, working name `closet.rubyshines.com` (CNAME to Railway; the wireframes write `rubyshines.com/closet/[slug]`, which Shopify cannot host, so the public URL is `closet.rubyshines.com/[slug]`). Locally `PORT=3850`.
-- **Server:** Express (already a dependency), server-rendered HTML from small template functions in `virtual-closet/views/`, one stylesheet `virtual-closet/public/closet.css`, a few lines of progressive JS (chips, add-item, copy buttons). No build step, no framework.
-- **Business logic** in `virtual-closet/lib/*.js`, pure functions over Supabase, so the dashboard, the MCP tools and the jobs call the same code. MCP tools in `customer-service/lib/tools/virtualCloset.js`, spread into `allTools`.
-- **Accounts:** own tables and own code, not Supabase Auth, for this cut. Email and password (scrypt via node `crypto`, no new dependency), verification and reset by single-use tokens, sessions as rows in `vc_sessions` referenced by a signed cookie (same HMAC pattern as the dashboard, `SESSION_SECRET`), so removing a member revokes their sessions everywhere. Reason: zero external configuration to test today, same copy control over the emails the wireframes specify, and Google/Microsoft can be added on top later (the dashboard's Google OAuth client already exists).
-- **Operator side:** a new page in the CS dashboard, `customer-service/dashboard/public/closets.html` + `closets.js`, served at `/closets` behind the dashboard's existing Google sign-in, with `GET/POST /api/closets/*` routes in `customer-service/dashboard/server.js` that call `virtual-closet/lib/operator.js`. Linked from the dashboard nav. Not a tab inside `app.js`.
-- **Money:** never touches the service. A hidden Shopify product "Sponsor a closet" (requires no shipping, not in any collection) with variants for $16, $21, $24, $50, $100, $300 and a "$1 unit" variant used with a quantity for the centre's own add-to-the-box. Cart permalinks `rubyshines.com/cart/<variant>:<qty>?attributes[closet]=<slug>&attributes[box]=<n>` carry the attribution as order note attributes. The order webhook and the daily reconcile write ledger rows from them.
-- **20% off:** one Shopify discount "Virtual Closet 20%" (20% off order, one use per code, once per customer, created once by a setup script). "Shop with 20% off" issues a fresh code `VC-<CENTRE>-<random>` through `addCodeToPriceRule`, records it in `vc_discount_codes`, and redirects to `rubyshines.com/discount/<code>?redirect=/collections/all`. Orders carrying a `VC-` code credit 25% of the order subtotal to that centre's open box.
-- **Emails:** SendGrid `sendEmail` from care@rubyshines.com, HTML composed in `virtual-closet/lib/emails.js`. Every centre email links into the private view; every requester or sponsor email links to the closet page.
-- **Jobs:** `virtual-closet/jobs/daily.js` run as a `daily-sync-all` sub-pipeline: reconcile ledger from `orders` (idempotent on order id), by-hand reminders (7 days) and escalation (14 days), pickup reminders (14 days after delivery), monthly statements (1st of the month, only when something happened), needs-attention digest to the operator.
+## Schema (`virtual-closet/schema-link-mode.sql`, Jamie applies in the SQL editor)
 
-## Data model (`virtual-closet/schema.sql`, all tables prefixed `vc_`)
+```sql
+alter table vc_centres add column if not exists mode text not null default 'closet' check (mode in ('link','closet'));
+alter table vc_centres add column if not exists digest_through timestamptz;   -- activity emailed up to here
+alter table vc_ledger drop constraint if exists vc_ledger_kind_check;
+alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order_credit','sponsor','centre_add','carry_in','adjustment','match','door_shipping','carry_out','redemption'));
+```
 
-- `vc_centres`: id, slug (unique), name, website, logo_url, address jsonb {street, city, region, postal, country}, programmes jsonb {closet, pass_it_on}, sizes text[] (XS..4X), kids_sizes bool, items_per_request int (2), requests_per_year int (2), goal_cents int (30000), approval_mode (automatic|by_hand), ship_to_door bool, requests_paused_at, map_listed bool, map_pin_to_closet bool, pass_it_on_paused_at, statements_email, pickup_note, delivery_note, status (pending|active|paused|left), approved_at, approved_by, paused_reason, left_at, donation_partner_id (fk donation_partners, set when Pass It On is approved), created_at, updated_at.
-- `vc_users`: id, email (unique, lower-cased), name, role_title, password_hash, email_verified_at, created_at, last_active_at.
-- `vc_memberships`: centre_id, user_id, role (admin|member), created_at; unique (centre_id, user_id).
-- `vc_invitations`: id, centre_id, email, role, token_hash, invited_by, expires_at, accepted_at, revoked_at.
-- `vc_tokens`: id, user_id, email, purpose (verify_email|reset_password|change_email|request_verify|approve_request|decline_request), token_hash, payload jsonb, expires_at, used_at.
-- `vc_sessions`: id (random), user_id, created_at, expires_at, revoked_at.
-- `vc_boxes`: id, centre_id, number, status (open|sent|shipped|delivered), goal_cents, opened_at, sent_at, shipped_at, delivered_at, carrier, tracking_number, fill_mode (auto|chosen), fill_plan jsonb, pickup_note, delivery_note, items_count; unique (centre_id, number).
-- `vc_ledger`: id, centre_id, box_id, kind (order_credit|sponsor|centre_add|carry_in|door_shipping|match|carry_out|adjustment), amount_cents (signed), source_type, source_id, detail jsonb, created_at; unique (kind, source_type, source_id) where source_id is not null.
-- `vc_requests`: id, centre_id, box_id (null until assigned), email, name, items jsonb [{style, colour, size}], delivery (pickup|ship), address jsonb (ship only), words, words_shareable bool, words_published_at, published_by, status (unverified|needs_answer|approved|declined|waiting|in_box|shipped|ready|collected|ended|cancelled), decided_by, decided_at, decline_counts bool, verified_at, swap jsonb, created_at, updated_at.
-- `vc_requester_emails`: email (pk), verified_at.
-- `vc_discount_codes`: id, centre_id, code (unique), issued_at, order_id, used_at.
-- `vc_visits`: id, centre_id, lead, source (link|map), visited_at.
-- `vc_events`: id, centre_id, actor, kind, detail jsonb, created_at. Every operator action and every centre action worth a log line.
-- `vc_word_reports`: id, request_id, reported_at, resolved (unpublish|keep), resolved_at.
-- `vc_statements`: id, centre_id, month, sent_at, payload jsonb.
+`redemption` rows are negative, `source_type = 'wholesale_order'`, `source_id` = the order number, so the unique source index makes a repeated tool call a no-op. `box_id` is null for every link-mode row. Existing closet-mode rows are untouched.
 
-Box goal shown = max(centre goal, sum of approved requests at half retail plus $15 per shipped request). Raised = sum of ledger for the box excluding match and carry_out. Funded when raised >= goal. The match is written as a ledger line when the box is sent, never before.
+## Code changes, by file
 
-## Flows
+### `virtual-closet/lib/centres.js`
+- `isLink(centre)` helper (`centre.mode === 'link'`).
+- `enrol({ name, slug, notify_email, website, logo_url, city, region, country, donation_partner_id, actor })`: creates the row with `mode: 'link'`, `status: 'active'`, `approved_at: now`, `approved_by: actor`, `statements_email: notify_email`, `programmes: { closet: true, pass_it_on: !!donation_partner_id }`, `donation_partner_id`, address `{city, region, country}`. Slug via `uniqueSlug(name)` unless given. Logs `centre.enrolled`. Does not send email (the tool does, so the tool can preview first).
 
-**Sign-up.** Programme page form (name, website, programmes, sizes, kids) → step 2 create account (name, role, email with the personal-domain nudge, password) → verify email gate → confirmation page and Home with the "waiting for approval" banner; share tools hidden; settings and team usable. The operator email "a centre signed up" goes only once the email is verified. Approve creates the donation partner row when Pass It On is ticked (geocode via the existing partner creation path, listing on the map), sets status active, sends the welcome email, opens box #1.
+### `virtual-closet/lib/ledger.js`
+- `balance(centre)`: one query over `vc_ledger` for the centre; returns `{ raisedCents, redeemedCents, balanceCents, orders, sponsors, lastActivityAt }`. `raised` = sum of positive rows of kind `order_credit`, `sponsor`, `centre_add`, `adjustment`; `redeemed` = sum of negative `redemption` and `adjustment` rows, as a positive number; `balance = raised - redeemed`. Counts are rows of `order_credit` and `sponsor`.
+- `recordOrder`: when the centre is link mode, `box = null` (no `openBoxFor`). `notify`: for link-mode centres send only `sponsorThanks` (link copy); skip `sponsored` and `boxFunded`. Order-credit rows email nobody live; the digest covers them.
+- `redeem({ centre, amountCents, orderNumber, note, actor, kind = 'redemption' })`: refuses when `amountCents > balance` or `amountCents <= 0`; inserts `redemption` with `-amountCents`; logs `ledger.redemption`. Returns the new balance. `kind: 'adjustment'` is a hand correction (a refunded order, say), positive or negative, with a required note and no balance check.
+- `reconcile` unchanged.
+- `digestActivity(centre, { since })`: the `order_credit` and `sponsor` rows after `since` (or all, when `since` is null), grouped for the email, plus `maxCreatedAt`.
 
-**Closet page.** `/:slug` with `?lead=shop|request|sponsor`, default all three equal. Progress module states from wireframe 1f. Products from the five-style menu with store prices; sizes from the centre. Words section only when published words exist. Requests paused: the request card stays, button disabled, one line why; the form URL shows the paused page. Visits counted.
+### `virtual-closet/lib/catalog.js`
+- `SPONSOR_TILES` becomes `[{key:'ten',cents:1000,label:'$10'},{key:'twentyfive',cents:2500,label:'$25'},{key:'fifty',cents:5000,label:'$50'},{key:'hundred',cents:10000,label:'$100'}]`, no `sub`. Closet-mode templates that read `sub` render without it (check `sponsorFirst` and `allEqual`).
 
-**Request.** `/:slug/request` its own step. Items limited to the centre's sizes and item cap; per-email yearly limit enforced inline. Ship reveals the address. Submit: if the email is not in `vc_requester_emails`, the request is `unverified` and a confirm link is emailed; tapping it verifies and lands on the confirmed page. Verified: automatic mode approves within limits and assigns the open box (or `waiting` if the open box is already funded); by-hand mode sets `needs_answer` and emails the centre with approve and decline links (single-use tokens, no sign-in) and a 7-day reminder. Confirmed and "on the list" emails per 1ac.
+### `virtual-closet/lib/sponsorship.js`
+- `checkoutUrl`: every tile uses the `unit` variant with `qty = cents / 100`. The per-item variants on the hidden Shopify product stay unused; no store change. In link mode the `Box` attribute is omitted. `readLineItem` and `readOrderAttributes` unchanged (the unit variant is already known, kind stays `sponsor`).
 
-**Sponsor.** Tiles are cart permalinks to the sponsorship product with `attributes[closet]` and `attributes[box]`. The order webhook (`webhooks/handlers/shopifyOrders.js`) calls `ledger.recordOrder(payload)` after the upsert; the daily reconcile does the same over `orders`. Thank-you page at `/:slug/thanks` linked from the sponsor thank-you email, showing the bar. "Someone sponsored your closet" email to the centre.
+### `virtual-closet/views/closet.js`
+- New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
+  1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo as enrolled). Sample centre in the design: The Attic Youth Center. (Jamie, 2026-09-21.)
+  2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link under it (Jamie, 2026-09-21).
+  3. Total: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." with "from 9 orders and 3 sponsors". At zero: "Nothing raised yet. Be the first." No bar, no number sign, no goal.
+  4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
+  5. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it.
+  6. How it works, three lines: "Shop, and 20% comes off at checkout." "A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it." "RUBIES sends [Centre] underwear and swimwear from what is raised."
+  7. `aboutSection()` and the footer as today.
+- `render` takes `balance` in ctx for link mode; `progress`, `wordsSection`, request buttons are not called.
 
-**Shop.** `/:slug/shop` issues a code and redirects to the store discount URL. `order_credit` ledger rows at 25% of subtotal for orders whose discount code is in `vc_discount_codes`.
+### `virtual-closet/server.js`
+- `closetContext(centre)`: for link mode, compute `ledger.balance` and skip boxes, words, paused.
+- `/:slug/sponsor/:tile`: no `getOpenBox` in link mode.
+- `/:slug/thanks`: link copy: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." then the total line, "Back to [Centre]'s Virtual Closet". No "Share the closet" link.
+- New public `GET /:slug/qr.png` and `/:slug/qr.svg`: the page URL encoded with the `qrcode` package (pure JS, add to `dependencies`, pin exact). Active link-mode centres only; 404 otherwise.
+- `routes/requests.js`: every handler 404s for a link-mode centre (one guard at the top of the router).
+- `routes/centre.js` (the signed-in view): a link-mode centre has no users, so nothing changes; the existing `/share/qr.svg` placeholder now calls the same encoder.
 
-**Centre Home.** Box summary with sources, Send the box (enabled when funded), add to the box (permalink to the $1 variant with quantity), requests table (published/unpublished words, statuses, approve/decline in by-hand mode), pause requests, share tools (four links, QR as an SVG generated server-side, a ready-made post), this-month counts, Pass It On summary.
+### `virtual-closet/views/programme.js`
+- The sign-up section and its two CTAs are replaced with "Talk to Jamie" (mailto with subject "Virtual Closet") and one line: "Jamie sets your closet up on a call or by email. Nothing to fill in." The `/signup` routes stay mounted but nothing links to them. The "how it starts" list drops "Sign up. Five minutes."
 
-**Send the box.** Requested items fixed; fill the rest by choosing a size grid or "let it fill itself" (even spread across the centre's sizes and the five styles within the remaining product value); totals (raised, match, door shipping, items, carry-over); pickup and delivery notes prefilled and saved to the centre; Send closes the box (`sent`), writes `match`, `door_shipping`, `carry_out` rows, opens the next box with `carry_in`, moves waiting requests into it, emails the centre and the requesters per 1af. Operator marks shipped with tracking (emails per 1af) and delivered (pickup-ready emails, sponsor "it arrived").
+### `virtual-closet/lib/emails.js` and `shared/sendgridClient.js`
+- `welcome` link variant (branch on `centre.mode`), **sent from jamie@rubyshines.com** so replies and orders come to Jamie (Jamie, 2026-09-21). Subject "Your RUBIES Virtual Closet is ready." Body, editorialised from Jamie's brief: "Congratulations, [Centre]'s Virtual Closet is ready." The link, then the CTA: share it on your socials, website and newsletter; anyone who opens it gets 20% off a RUBIES order, and every order and every sponsor dollar adds to your closet; a ready-made post (the existing `share.post` text). The QR attached as `closet-qr.png` and linked at `/[slug]/qr.png`. (A printable QR poster and fact sheet come later; the email does not mention them.) "Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar." Ordering: "When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more." Sign-off from Jamie. No match line (Jamie's brief has none; the 50% says it), no private view link, no settings line.
+- New `activity({ centre, to, orders, sponsors, orderCents, sponsorCents, balanceCents, raisedCents })`, from care@rubyshines.com (Jamie, 2026-09-21: only the welcome comes from him): subject "[Centre]'s Virtual Closet activity today". Lines: "[3] orders through your link put $[24.60] in." "[1] sponsor put $[25] in." "Your balance is $[112.40]." Then "Raised so far: $[188]", then the same sharing instructions as the welcome (the link, share it on your socials, website and newsletter, the one-line offer, the ready-made post), then "To order, email Jamie." No buttons, no match line.
+- `sponsorThanks` link variant, from care@: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." plus the total line and the closet link. No match line, no shipment number.
+- `deliver` gains optional `attachments`; `sendEmail` in `shared/sendgridClient.js` does not pass attachments today, so add an `attachments` pass-through (`[{content (base64), filename, type, disposition}]`) there. Console mode prints the filename.
 
-**Operator.** Needs attention (new centres, boxes to pack, waiting on a centre, reported words, this-week counts, unusual); Centres list; Centre detail with tabs (overview, boxes, requests, team, settings with override, words, log) and "Open their Home as them" (impersonation session flagged in the cookie, banner on every page, every action logged as operator); Boxes with the packing list (print view); All requests with the operator-only detail (email and address together), swap item, cancel.
+### `virtual-closet/jobs/daily.js`
+- New step, first after reconcile: for each active link-mode centre, `ledger.digestActivity(centre, { since: centre.digest_through })`; if any rows, send `activity` to `statements_email`, then set `digest_through = maxCreatedAt`. The timestamp advances only after a successful send, so a failed send retries tomorrow and a re-run sends nothing twice. Dry run (`live: false`) computes and reports without sending or advancing.
+- Statements, by-hand reminders, pickup reminders: filter to closet-mode centres (they already find nothing for link mode, but be explicit).
+- `operator.attentionEmailItems`: link-mode centres are never "new centres to review".
 
-## Decisions taken from the wireframes (refinements on the brief)
+### `virtual-closet/lib/operator.js` and the dashboard
+- `listCentres` and `centreDetail` include `mode` and, for link mode, `balance` (from `ledger.balance`) in place of `box`. The dashboard page (`closets.html`/`closets.js`) must render a link-mode centre without erroring: show "link" and the balance where the box column is. No other dashboard work.
 
-- The legacy programme is called **Pass It On** on every surface (Claude Design's choice; the brief left it open). Internally the donation partner registry is unchanged.
-- Requesters verify their email once by link before a request counts; later requests from a verified email go straight in.
-- The closet page is one page with four arrangements picked by `?lead=`; the centre's share tools hand out all four.
-- Words from the community are unpublished by default and published by a centre admin; the operator can unpublish anything; a visitor can report.
-- Declined requests do not use up a turn by default (a checkbox on decline).
-- By-hand approvals unanswered for 7 days get a reminder; at 14 days the operator sees it.
-- Pickup emails send themselves when the carrier reports delivery, so the pickup note is written at Send the box.
-- Team rules: at least one admin at all times; hand over admin is one step; removing someone signs them out everywhere.
-- Box terms on screens use "match" as a line item, never "double" or "50%".
-- The pickup note and delivery note are per box, prefilled from the last box.
+### `customer-service/lib/tools/virtualCloset.js`
+- New `vc_enrol_centre`: inputs `name`, `notify_email` (required), `slug`, `website`, `logo_url`, `city`, `region`, `country` (default US), `donation_partner_id`, `confirmed` (default false). With `donation_partner_id`, seed name, website, logo, city, region, country from the partner row; explicit inputs override. Any `logo_url` not already on the Shopify CDN is re-hosted through the Shopify Files API on confirm, the same helper the partner create and update tools use, so `vc_centres.logo_url` never points at a third-party host (Jamie, 2026-09-21: the logo lives in the database, as it does for partners). Preview mode prints the row it would create and the welcome email's recipient; `confirmed: true` creates the centre and sends the welcome email. Same two-step as `donation_partner_create_from_survey`.
+- New `vc_redeem`: inputs `centre_id`, `amount_cents`, `order_number`, `note`, `kind` (`redemption` default, or `adjustment`). Prints the balance before and after. Refuses over-redemption with the balance in the message.
+- `vc_centres` and `vc_centre`: print mode; for link mode print balance, raised, redeemed, orders, sponsors, codes issued and used, visits (90d), last activity, and the ledger lines with dates instead of boxes.
+- Already spread into `allTools`; only new entries.
 
-## Answers from Jamie (2026-09-18)
+## Tests (`customer-service/test/virtualCloset.test.js`, plus a new `virtualClosetLink.test.js` if it grows)
+- `balance` math: raised, redeemed and balance from a mixed ledger; a `redemption` never changes raised.
+- `redeem` refuses over-balance and zero; a repeated call with the same order number inserts nothing (stub the client to raise the duplicate error).
+- Tiles map to the unit variant with the right quantity; the cart URL carries `Closet` and `Kind=sponsor` and no `Box` in link mode.
+- `linkOnly` renders at zero and with money, without `undefined`, without any banned word (extend the brand test's word list with "box", "shipment", "goal", "request" for the link arrangement).
+- `digestActivity` groups only rows after `since`; the daily step advances `digest_through` only when `live` and sends once per centre per run.
+- `enrol` from a partner row copies the fields and links `donation_partner_id`; explicit inputs override.
+- `welcome`, `activity` and `sponsorThanks` compose in link mode without `undefined`, with the locked sentences, and from the right sender (Jamie for the centre's two, care@ for the sponsor's).
+- `/:slug/qr.png` returns a PNG (signature and non-trivial size); the SVG contains the page URL's modules (the package's own `toString` is deterministic, so compare against a freshly encoded string).
+- The dashboard handler scan and lazy-require tests stay green.
 
-1. "Pass It On" stays as the name.
-2. Sizes are the store's: XS, S, M, L, 1X, 2X, 3X, 4X (no XL) plus kids.
-3. The 20% is once per customer, new or returning (Shopify `appliesOncePerCustomer`).
-4. OK to create the hidden "Sponsor a closet" product and the "Virtual Closet 20%" discount in the live store (`virtual-closet/scripts/setupShopify.js --create`).
-5. Jamie applies `virtual-closet/schema.sql` in the Supabase SQL editor (no `SUPABASE_DATABASE_URL` locally).
-6. Requesters become store customers on confirmation (name they go by, tagged `virtual-closet` and `closet:<slug>`); the newsletter is an opt-in checkbox on the request form and subscribes through Klaviyo only when ticked.
+## Smoke (`virtual-closet/scripts/smoke.js`)
+- Add a link-mode pass: enrol a centre in console email mode, fetch the page, follow `/shop` (expects the store discount URL when live, the store when not), call `recordOrder` with a fake paid order carrying a `VC-` code and one with a sponsor line, run the daily job dry, then live, expect one activity email, `redeem` $20, assert the balance.
 
-## Build order
+## Rollout
+1. Jamie applies the SQL. Push to main; Railway redeploys the closet service and the webhook server; `npm install` picks up `qrcode`.
+2. Enrol a test centre with Jamie's own email (preview, then confirmed). Open the page on a phone from the QR in the welcome email.
+3. Place a real $10 sponsor order and a real order through the Shop button (refund both after). Confirm both ledger rows via `vc_centre`.
+4. Next day: one digest arrives naming both. `vc_redeem` $5 against the test centre; `vc_centre` shows the balance.
+5. Enrol the first centre from their partner row where one exists: The Attic Youth Center (Philadelphia) is the first likely to sign up and is not in the registry, so its fields go in directly; Uniting Pride is in the registry. Retire the test centre with status `left` (existing `setStatus`).
 
-1. Schema, service skeleton, centres and slugs, closet page in all arrangements with a seeded demo centre. Checkpoint: the page renders at `/:slug` locally.
-2. Accounts: sign-up steps, verify, sign in, reset, sessions, team, invitations. Checkpoint: two users on one centre, one invited.
-3. Requests: form, verification, automatic and by-hand approval, emails. Checkpoint: a request appears on Home.
-4. Money: sponsorship product and discount setup script, permalinks, webhook hook, reconcile, ledger, progress states, thank-you. Checkpoint: a test order moves the bar.
-5. Send the box, boxes lifecycle, shipped and delivered, emails. Checkpoint: a box goes out and the next opens.
-6. Operator pages in the dashboard, MCP tools, jobs. Checkpoint: approve a centre from the dashboard.
-7. Tests for every lib function (goal math, ledger idempotency, limits, token flows, box send), Railway toml, deploy, DNS.
-
-## Testing plan
-
-Local: `PORT=3850 node virtual-closet/server.js` from the worktree; dashboard on a non-default port for the operator side. Shareable: ngrok on the reserved pool. Money: a sponsorship test order paid with a one-off 100% discount on the sponsorship product, then a real $16 order refunded. Emails to Jamie's own addresses. A seed script creates a demo centre so the page can be looked at before any sign-up.
+## Out of scope, parked or later
+- The 30-day browser attribution window on the store (parked already).
+- The store-side closet bar and cart line (`.claude/plans/virtual-closet-theme.md`), not started.
+- Any self-serve sign-up. Jamie enrols.
+- Any centre-facing view. The email is the view.
+- Refund reversal on the ledger: by hand through `vc_redeem` with `kind: 'adjustment'`.
+- A subdomain for the service (parked).

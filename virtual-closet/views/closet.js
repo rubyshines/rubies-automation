@@ -10,7 +10,12 @@ const { displaySizes } = require('../lib/centres');
 
 const LEADS = new Set(['shop', 'request', 'sponsor']);
 
-function render({ centre, sum, lastSent, products, lead, words, paused }) {
+function render({ centre, sum, lastSent, products, lead, words, paused, balance }) {
+  if (centre.mode === 'link') {
+    // The minimal cut (2026-09-21): one arrangement, whatever ?lead says.
+    const ctx = { centre, products, balance: balance || { raisedCents: 0, orders: 0, sponsors: 0 }, slug: centre.slug, name: centre.name };
+    return page({ title: `${centre.name} Virtual Closet`, body: linkOnly(ctx), centre, mode: 'public', nav: '' });
+  }
   lead = LEADS.has(lead) ? lead : 'default';
   const ctx = { centre, sum, lastSent, products, words, paused, slug: centre.slug, name: centre.name, sizes: displaySizes(centre) };
   const body = lead === 'shop' ? shopFirst(ctx) : lead === 'request' ? requestFirst(ctx) : lead === 'sponsor' ? sponsorFirst(ctx) : allEqual(ctx);
@@ -76,9 +81,51 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)} goal</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
+function tiles(ctx) {
+  return SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${t.label}</b>${t.sub ? `<small>${esc(t.sub)}</small>` : ''}</a>`).join('');
+}
+
 function amounts(ctx) {
-  const tiles = SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${t.label}</b><small>${esc(t.sub)}</small></a>`).join('');
-  return `<div class="amounts" id="sponsor"><p><b>RUBIES matches every dollar</b>, so $16 becomes a $32 pair. Pick an amount; you pay at the RUBIES store.</p><div class="gifts">${tiles}</div></div>`;
+  return `<div class="amounts" id="sponsor"><p><b>RUBIES matches every dollar.</b> Pick an amount; you pay at the RUBIES store.</p><div class="gifts">${tiles(ctx)}</div></div>`;
+}
+
+// ---- link mode: the whole page ---------------------------------------------
+
+/** "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." */
+function totalLine(ctx) {
+  const b = ctx.balance;
+  if (!b.raisedCents) {
+    return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">Nothing raised yet.</div><p>Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.</p></div></section>`;
+  }
+  const n = (c, one, many) => `${c} ${c === 1 ? one : many}`;
+  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised so far</small></div><p>RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.</p><p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.</p></div></section>`;
+}
+
+function linkOnly(ctx) {
+  const steps = [
+    'Shop, and 20% comes off at checkout.',
+    'A quarter of every order and every sponsor dollar goes to the closet, and RUBIES matches it.',
+    `RUBIES sends ${esc(ctx.name)} underwear and swimwear from what is raised.`,
+  ];
+  return `
+<section class="hero">
+  <div class="hero-copy">
+    <h1>Shop with 20% off.</h1>
+    <p class="lede">A quarter of your order goes to ${esc(ctx.name)}'s Virtual Closet, and RUBIES matches it.</p>
+    <p>RUBIES makes gender-affirming underwear and swimwear for trans girls and women. No tucking, no compression, just a smooth line in something that feels like regular underwear.</p>
+    ${shopBtn(ctx)}
+  </div>
+  ${heroArt(ctx, 'aj')}
+</section>
+${totalLine(ctx)}
+<section id="sponsor">
+  <h2>Not shopping? Put money in the closet.</h2>
+  <div class="gifts gifts-4">${tiles(ctx)}</div>
+  <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
+</section>
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>
+<section class="how" id="how"><h2>How it works</h2><ol class="steps">${steps.map(s => `<li>${s}</li>`).join('')}</ol></section>
+${aboutSection()}`;
 }
 
 function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true } = {}) {
@@ -222,4 +269,4 @@ function renderPaused({ centre }) {
   return page({ title: `Requests are paused`, body, centre, mode: 'public' });
 }
 
-module.exports = { render, renderPaused, LEADS, fmtDate };
+module.exports = { render, renderPaused, LEADS, fmtDate, linkOnly };

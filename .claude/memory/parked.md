@@ -22,6 +22,8 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: follow-ups
 - Notes: (1) The hi-fi visual pass: `.claude/plans/virtual-closet-handover/rubyshines-design-system.md` is the reference; templates in `virtual-closet/views/` and `public/closet.css` are the surface. (2) Google and Microsoft sign-in: buttons are rendered disabled; the dashboard's Google OAuth client exists. (3) The 30-day browser attribution window needs a theme script writing a cart attribute; the discount code carries attribution today. (4) "Create store orders" from the packing list (zero-priced store orders per requester so stock and tracking come from store tooling): button is a stub. (5) The hidden "Sponsor a closet" product is auto-published to Shopify's AI shopping channels (Copilot, Meta, Gemini) and the API could not remove it; check in Admin. (6) A real QR encoder for the share tools (placeholder SVG now). (7) An automated pre-read of community words before an admin publishes. (8) A subdomain (closet.rubyshines.com) for the service instead of the Railway domain, then update `VC_BASE_URL`.
 - Resume when: Jamie has clicked through the low-fidelity build and the pilot centre is lined up.
+- Last touched: 2026-09-21
+- Update 2026-09-21: (6) is done, a real QR encoder (`qrcode`) serves `/[slug]/qr.png` and the welcome attachment. The pilot now runs in link mode (see `initiative_virtual_closet.md`), so (2), (4) and (7) only matter if a centre ever asks for the full closet.
 
 ## create_exchange_order silently guesses its anchor order
 - Parked: 2026-09-14

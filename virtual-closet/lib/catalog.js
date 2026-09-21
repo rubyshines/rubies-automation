@@ -42,14 +42,14 @@ const MENU = [
     image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-01.jpg?v=1777394698', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-char.png', colours: ['Black', 'Pink'] },
 ];
 
-// Sponsor tiles, half retail per item; the larger amounts are "toward the shipment".
+// Sponsor tiles: plain even dollars (Jamie, 2026-09-21). Every tile is the
+// hidden sponsorship product's $1 unit variant times the amount, so nothing
+// on the store changes when these do.
 const SPONSOR_TILES = [
-  { key: 'pair',   cents: 1600,  label: '$16',  sub: 'a pair of underwear' },
-  { key: 'bra',    cents: 2100,  label: '$21',  sub: 'a bra' },
-  { key: 'bottom', cents: 2400,  label: '$24',  sub: 'a bikini bottom' },
-  { key: 'fifty',  cents: 5000,  label: '$50',  sub: 'toward the shipment' },
-  { key: 'hundred', cents: 10000, label: '$100', sub: 'toward the shipment' },
-  { key: 'full',   cents: 30000, label: '$300', sub: 'a full shipment' },
+  { key: 'ten',        cents: 1000,  label: '$10' },
+  { key: 'twentyfive', cents: 2500,  label: '$25' },
+  { key: 'fifty',      cents: 5000,  label: '$50' },
+  { key: 'hundred',    cents: 10000, label: '$100' },
 ];
 
 let _cacheTried = false;
