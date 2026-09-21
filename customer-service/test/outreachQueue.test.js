@@ -201,3 +201,36 @@ test('a pause still suppresses whoever put the claim there', () => {
   const c = retailer({ on_me_at: CLAIM, on_me_source: 'engine', outreach_paused_at: '2026-06-10T09:30:00Z' });
   assert.equal(computeQueueEntry(c, REPLY_BEFORE, NOW), null);
 });
+
+test('a cadence continuation replies inside the newest open thread; a first touch or fixed-subject type stays a fresh email', () => {
+  const { computeQueueEntry } = require('../../b2b-outreach/lib/queue');
+  const now = new Date('2026-09-21T12:00:00Z');
+  // The post-samples check-in: samples went out 12 days ago on the intro
+  // thread, which is still open. Typed into the composer, this must land there.
+  const sampled = retailer({ relationship_state: 'in_contact', samples_shipped_at: '2026-09-09T00:00:00Z' });
+  const checkin = computeQueueEntry(sampled, { sentTypes: new Set(), newestOpenThreadId: 'th-intro' }, now);
+  assert.equal(checkin.message_type, 'post_samples_checkin');
+  assert.equal(checkin.thread_id, 'th-intro');
+  // No open thread: nothing to inherit, and the operator writes the subject.
+  const cold = computeQueueEntry(sampled, { sentTypes: new Set() }, now);
+  assert.equal(cold.message_type, 'post_samples_checkin');
+  assert.equal(cold.thread_id, undefined);
+  // The reorder nudge is an initiating type with its own subject: a fresh
+  // email even with a thread open.
+  const nudge = computeQueueEntry(retailer(), { sentTypes: new Set(), lastOrderAt: '2026-02-01T00:00:00Z', orderCount: 3, newestOpenThreadId: 'th-old' }, now);
+  assert.equal(nudge.message_type, 'reorder_nudge');
+  assert.equal(nudge.thread_id, undefined, 'initiating types open a new conversation');
+});
+
+test('a follow-up rung keeps the thread of the message it chases over the newest open one', () => {
+  const { computeQueueEntry } = require('../../b2b-outreach/lib/queue');
+  const now = new Date('2026-09-21T12:00:00Z');
+  const e = computeQueueEntry(retailer({ relationship_state: 'in_contact' }), {
+    sentTypes: new Set(['intro_pitch']),
+    lastOutboundAt: '2026-09-08T00:00:00Z', lastOutboundMessageAt: '2026-09-08T00:00:00Z',
+    lastOutboundType: 'intro_pitch', lastOutboundSource: 'send_tool', lastOutboundThreadId: 'th-chased',
+    newestOpenThreadId: 'th-other',
+  }, now);
+  assert.equal(e.message_type, 'followup_1');
+  assert.equal(e.thread_id, 'th-chased', '"just following up on my note below" needs the note below it');
+});

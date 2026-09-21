@@ -13,7 +13,16 @@
  *  5  overdue follow-up (next_action_date past, nothing else triggered)
  *  6  cold revival / long-silent
  */
-const { evaluateDue, companyEligible } = require('./cadence');
+const { evaluateDue, companyEligible, INITIATING_TYPES } = require('./cadence');
+
+// Cadence work that goes out as a brand-new email even when the company has a
+// thread open. First touches (nobody has written yet), the fixed-subject
+// re-approaches and the check-ins that open a fresh conversation on purpose
+// (INITIATING_TYPES, the affiliate intro), and picking a relationship back up
+// after six months of silence: a "Re:" on a thread nobody remembers is worse
+// than a clean subject line there. Everything else the cadence raises is a
+// continuation and replies inside the newest open thread (see computeQueueEntry).
+const FRESH_THREAD_TYPES = new Set([...INITIATING_TYPES, 'affiliate_intro', 'reactivation']);
 
 /** "5h" under two days, then "3d" — queue rows read in days, not raw hours. */
 function humanAge(date, now = new Date()) {
@@ -228,13 +237,22 @@ function computeQueueEntry(company, ctx, now = new Date()) {
   // Tiers 2/3/4/6 — cadence engine
   const due = evaluateDue(company, ctx, now);
   if (due) {
+    // Follow-ups carry the thread of the message they chase. Dropping it here
+    // is how a chase becomes a brand-new email that refers to one. Any other
+    // continuation (the post-samples check-in, a first-order check-in, the
+    // feedback ask) replies inside the newest open thread, the same rule a
+    // reminder row follows (2026-09-09): the conversation they remember, with
+    // its subject inherited as "Re:". Until it did, the composer opened on
+    // "starts a new email" with an empty Subject box, and a check-in typed
+    // there went out as a second thread under a hand-copied subject.
+    const threadId = due.thread_id
+      || (FRESH_THREAD_TYPES.has(due.message_type) ? null : ctx.newestOpenThreadId)
+      || null;
     return {
       tier: TIER_BY_TYPE[due.message_type] ?? 3,
       message_type: due.message_type,
       reason: due.reason,
-      // Follow-ups carry the thread of the message they chase. Dropping it here
-      // is how a chase becomes a brand-new email that refers to one.
-      ...(due.thread_id ? { thread_id: due.thread_id } : {}),
+      ...(threadId ? { thread_id: threadId } : {}),
       // A ladder rung says how long the ladder has had it; the operator view
       // hides the rung while that is still the ladder's turn (queueService).
       ...(due.business_days_past_due != null ? { business_days_past_due: due.business_days_past_due } : {}),
