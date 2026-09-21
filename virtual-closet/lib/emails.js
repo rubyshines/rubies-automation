@@ -31,15 +31,20 @@ const STORE = 'https://rubyshines.com';
 // colours, the square near-black button and the magenta rule are the site's.
 const font = `font-family:${FONT_STACK};`;
 
-function layout(title, inner, footerLinks = '') {
+function layout(title, inner, footerLinks = '', { centre } = {}) {
   // Anchors written plainly in the copy get the site's link colour; buttons
   // and anything already styled are left alone.
   const styled = inner.replace(/<a href="([^"]+)">/g, `<a href="$1" style="color:${COLOURS.blue}">`);
+  // Link-mode emails carry "RUBIES × [centre logo]" like the page (Jamie, 2026-09-21).
+  const rubies = `<a href="${STORE}" style="text-decoration:none"><img src="${LOGO_PNG}" width="150" alt="RUBIES" style="display:block;border:0;width:150px;height:auto"></a>`;
+  const head = centre?.logo_url
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="vertical-align:middle">${rubies}</td><td style="vertical-align:middle;padding:0 14px;${font}font-size:22px;color:${COLOURS.soft}">×</td><td style="vertical-align:middle">${centre.website ? `<a href="${esc(centre.website)}" style="text-decoration:none">` : ''}<img src="${esc(centre.logo_url)}" alt="${esc(centre.name)}" height="44" style="display:block;border:0;height:44px;width:auto;max-width:160px">${centre.website ? '</a>' : ''}</td></tr></table>`
+    : rubies;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${COLOURS.grey};${font}color:${COLOURS.ink}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${COLOURS.grey}"><tr><td align="center" style="padding:32px 16px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
-<tr><td style="padding:0 0 20px"><a href="${STORE}" style="text-decoration:none"><img src="${LOGO_PNG}" width="150" alt="RUBIES" style="display:block;border:0;width:150px;height:auto"></a></td></tr>
+<tr><td style="padding:0 0 20px">${head}</td></tr>
 <tr><td style="background:${COLOURS.white};border-top:4px solid ${COLOURS.magenta};padding:32px 32px 24px;${font}color:${COLOURS.ink};font-size:16px;line-height:1.6">
 <h1 style="margin:0 0 16px;font-size:22px;line-height:1.25;font-weight:600;${font}color:${COLOURS.ink}">${esc(title)}</h1>
 ${styled}
@@ -150,29 +155,39 @@ function shareBlock(centre) {
     p(`Here's a post you can use as is:<br><span style="color:${COLOURS.soft}">${esc(linkPost(centre))}</span>`);
 }
 
-/** The QR for the welcome email, as a SendGrid attachment. */
-async function qrAttachment(centre) {
+/** The welcome's attachments: the QR on its own, and the printable sign. Each is skipped, never fatal, if it cannot be built. */
+async function welcomeAttachments(centre) {
+  const url = `${BASE}/${centre.slug}`;
+  const out = [];
   try {
-    const buf = await require('qrcode').toBuffer(`${BASE}/${centre.slug}`, { type: 'png', width: 720, margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } });
-    return [{ content: buf.toString('base64'), filename: 'closet-qr.png', type: 'image/png' }];
-  } catch (err) { console.warn(`[vc email] QR attachment skipped: ${err.message}`); return []; }
+    const buf = await require('qrcode').toBuffer(url, { type: 'png', width: 720, margin: 2, color: { dark: '#310C48', light: '#FFFFFF' } });
+    out.push({ content: buf.toString('base64'), filename: 'closet-qr.png', type: 'image/png' });
+  } catch (err) { console.warn(`[vc email] QR attachment skipped: ${err.message}`); }
+  try {
+    const pdf = await require('./sign').signPdf(centre, { url, logos: process.env.VC_EMAIL_MODE !== 'console' });
+    out.push({ content: pdf.toString('base64'), filename: 'closet-sign.pdf', type: 'application/pdf' });
+  } catch (err) { console.warn(`[vc email] sign attachment skipped: ${err.message}`); }
+  return out;
 }
 
 /** Link mode: from Jamie, congratulations, the link, the QR, the terms in plain words. */
 async function welcomeLink({ centre, to }) {
   const url = `${BASE}/${centre.slug}`;
-  const attachments = await qrAttachment(centre);
+  const attachments = await welcomeAttachments(centre);
+  const hasSign = attachments.some(a => a.filename === 'closet-sign.pdf');
   return deliver({ to, subject: 'Your RUBIES Virtual Closet is ready.', tag: 'welcome', from: FROM_JAMIE, attachments,
-    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter. Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
+    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ' Attached is a sign you can print and put up, with a QR code that opens your Virtual Closet; the QR code is attached on its own too.' : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
     html: layout('Your RUBIES Virtual Closet is ready.',
       p(`Hi ${esc(centre.name)} team,`) +
       p(`Congratulations, ${esc(centre.name)}'s Virtual Closet is ready.`) +
       shareBlock(centre) +
-      p(`Your QR code is attached${attachments.length ? '' : ` (or fetch it any time at <a href="${url}/qr.png">${esc(url.replace(/^https?:\/\//, ''))}/qr.png</a>)`}.`) +
+      p(hasSign
+        ? `<b>Attached is a sign you can print</b> and put up wherever your community will see it: at the front desk, on a noticeboard, at events. Its QR code opens your Virtual Closet, so anyone can scan it to shop or sponsor. The QR code is attached on its own too, for your website, socials and newsletter.`
+        : `Your QR code is attached${attachments.length ? '' : ` (or fetch it any time at <a href="${url}/qr.png">${esc(url.replace(/^https?:\/\//, ''))}/qr.png</a>)`}.`) +
       p(`<b>How it adds up.</b> Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar.`) +
       p(`<b>When you're ready to order,</b> email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more.`) +
       p(`Questions any time.<br>Jamie<br><a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`),
-      `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`) });
+      `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`, { centre }) });
 }
 
 /** Link mode: at most one a day, only on a day with activity. From care@, so a reply lands in CS; the welcome is the one from Jamie (Jamie, 2026-09-21). */
@@ -188,7 +203,7 @@ async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, 
       lines.map(p).join('') +
       p(`Your balance is <b>${dollars(balanceCents)}</b>. Raised so far: ${dollars(raisedCents)} of your ${dollars(goalCents)} goal.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
-      p(`To order, email Jamie at <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>.`)) });
+      p(`To order, email Jamie at <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>.`), '', { centre }) });
 }
 
 async function welcome({ centre, to }) {
@@ -320,7 +335,7 @@ async function sponsorThanks({ centre, to, amountCents, box, raised, goal, city 
     const total = raised ? p(`<b>${dollars(raised)}</b> raised so far. RUBIES matches it: ${dollars(raised * 2)} of underwear and swimwear for the closet.`) : '';
     return deliver({ to, subject: `Thank you from ${centre.name}'s Virtual Closet`, tag: 'sponsor-thanks',
       text: `Your ${dollars(amountCents)} went to ${centre.name}'s Virtual Closet. Thanks for your support.`,
-      html: layout(`Thank you from ${esc(centre.name)}'s Virtual Closet`, p(`Your <b>${dollars(amountCents)}</b> went to ${esc(centre.name)}'s Virtual Closet. Thanks for your support.`) + total + btn(`${BASE}/${centre.slug}`, `${centre.name}'s Virtual Closet`)) });
+      html: layout(`Thank you from ${esc(centre.name)}'s Virtual Closet`, p(`Your <b>${dollars(amountCents)}</b> went to ${esc(centre.name)}'s Virtual Closet. Thanks for your support.`) + total + btn(`${BASE}/${centre.slug}`, `${centre.name}'s Virtual Closet`), '', { centre }) });
   }
   const pairs = Math.max(1, Math.round((amountCents * 2) / 3200));
   return deliver({ to, subject: `Thank you from ${centre.name}'s closet`, tag: 'sponsor-thanks',
