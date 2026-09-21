@@ -35,6 +35,7 @@
 ## Active Projects
 - [Advisor Accuracy Rebuild](project_advisor_accuracy_rebuild.md) — eval-first attack on draft quality: measurement repair, founder rule audits, prompt-variant A/B, fair Opus 5 test
 - [B2B commitments](project_b2b_commitments.md) — one list of what Jamie owes and is waiting on; On Me derived from it; Wispr notes fetched by the server
+- [B2B deliverables](project_b2b_deliverables.md) — one piece of internal work above many promises; the fold To do rows sit under; shipping completes nothing
 - [Mailing Address Change](project_mailing_address_change.md) — tracked checklist for moving the business mailing address to The Fashion Zone
 - [Virtual Closet build](project_virtual_closet.md) — the whole app at low fidelity from the approved wireframes: public pages, centre accounts, requests, money, boxes, operator section, emails
 

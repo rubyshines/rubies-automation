@@ -5533,6 +5533,8 @@ let outreachQueue = [];
 let outreachInbound = [];        // "New inbound" candidates from /api/b2b/inbound
 let outreachOnMe = [];           // company rows from /api/b2b/on-me
 let outreachTodo = { open: [], done: [] }; // commitments from /api/b2b/commitments
+let outreachDeliverables = { open: [], shipped: [] }; // the folds above them, from /api/b2b/deliverables
+const todoFoldState = new Map();            // deliverable id → open?, so a re-render keeps what you opened
 let outreachTodoCompanies = null;          // [{id,name}] for the add box, fetched once
 let outreachTodoHighlight = null;          // commitment id lit in the detail pane
 let outreachComposeFor = null;             // commitment id the next send marks done
@@ -5720,7 +5722,11 @@ async function fetchOnMeRows() {
 async function loadOutreachTodo() {
   try {
     const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
-    outreachTodo = await api(`/api/b2b/commitments${params}`);
+    [outreachTodo, outreachDeliverables] = await Promise.all([
+      api(`/api/b2b/commitments${params}`),
+      // Pre-migration or a blip: the list still renders, without folds.
+      api('/api/b2b/deliverables').catch(() => ({ open: [], shipped: [] })),
+    ]);
   } catch (err) {
     renderOutreachSidebar(`Failed to load the list: ${esc(err.message)}`);
     return;
@@ -5745,10 +5751,17 @@ async function loadTodoCompanyNames() {
   if (dl) dl.innerHTML = outreachTodoCompanies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
 }
 
+// Mine reads in three bands (2026-09-21): batch folds first (work to do today,
+// grouped because it is done in one sitting), then loose rows, then blocking
+// folds — "Waiting on: …", closed, the count visible — for what cannot be done
+// until something ships. A blocked item is folded, never hidden. Theirs keep
+// their own fold whatever they sit under, with a chip saying where.
 function outreachTodoListHtml() {
   const open = outreachTodo.open || [];
-  const mine = open.filter(r => r.owner === 'me' && r.company_id);
-  const general = open.filter(r => r.owner === 'me' && !r.company_id);
+  const delivs = outreachDeliverables.open || [];
+  const filed = r => r.owner === 'me' && r.deliverable_id && delivs.some(d => d.id === r.deliverable_id);
+  const mine = open.filter(r => r.owner === 'me' && r.company_id && !filed(r));
+  const general = open.filter(r => r.owner === 'me' && !r.company_id && !filed(r));
   const theirs = open.filter(r => r.owner === 'them');
   const done = outreachTodo.done || [];
   const addBox = `<div class="todo-add">
@@ -5757,18 +5770,93 @@ function outreachTodoListHtml() {
       <input type="text" id="todo-add-company" class="todo-add-input todo-add-company" list="todo-company-list" placeholder="Company (optional)" autocomplete="off"
         onkeydown="if(event.key==='Enter'){event.preventDefault();addTodoFromList()}">
       <datalist id="todo-company-list">${(outreachTodoCompanies || []).map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
-    </div>`;
-  if (!open.length && !done.length) {
+    </div>
+    <div class="todo-add-deliverable"><button class="btn btn-ghost btn-xs" onclick="addDeliverableFromList()" title="A piece of work several items hang off">+ Deliverable</button></div>`;
+  if (!open.length && !done.length && !delivs.length) {
     return addBox + '<div class="outreach-loading">Nothing owed either way.<br><span class="outreach-list-note">Calls and mail add to this list on their own. Type one above to add it yourself.</span></div>';
   }
   const fold = (title, rows, isOpen) => rows.length
-    ? `<details class="todo-fold"${isOpen ? ' open' : ''}><summary class="todo-fold-title">${title} <span class="todo-fold-count">${rows.length}</span></summary>${rows.map(outreachTodoRowHtml).join('')}</details>`
+    ? `<details class="todo-fold"${isOpen ? ' open' : ''}><summary class="todo-fold-title">${title} <span class="todo-fold-count">${rows.length}</span></summary>${rows.map(r => outreachTodoRowHtml(r)).join('')}</details>`
     : '';
+  const members = d => open.filter(r => r.owner === 'me' && r.deliverable_id === d.id);
   return addBox
-    + (mine.length ? mine.map(outreachTodoRowHtml).join('') : '<div class="outreach-list-note todo-empty-mine">Nothing on you.</div>')
+    + delivs.filter(d => !d.blocks).map(d => deliverableFoldHtml(d, members(d))).join('')
+    + (mine.length ? mine.map(r => outreachTodoRowHtml(r)).join('') : '<div class="outreach-list-note todo-empty-mine">Nothing on you.</div>')
+    + delivs.filter(d => d.blocks).map(d => deliverableFoldHtml(d, members(d))).join('')
     + fold('Waiting on them', theirs, true)
     + fold('General', general, true)
     + fold('Done', done, false);
+}
+
+// One deliverable's fold. Batch: open, its target date beside the name.
+// Blocking: closed, "Waiting on:", and the Shipped button — the moment the
+// list was built for. An empty fold still shows, so a deliverable you just
+// made is there to file into.
+function deliverableFoldHtml(d, rows) {
+  const blocking = !!d.blocks;
+  const isOpen = todoFoldState.has(d.id) ? todoFoldState.get(d.id) : !blocking;
+  const target = d.target_on ? `<span class="todo-due${d.overdue ? ' todo-due-over' : ''}">${d.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(d.target_on))}</span>` : '';
+  const ship = blocking
+    ? `<button class="btn btn-ghost btn-xs todo-fold-ship" onclick="event.preventDefault(); event.stopPropagation(); shipDeliverable(${d.id})" title="It shipped: its items become yours to do (nothing is marked done)">Shipped</button>`
+    : '';
+  const body = rows.length
+    ? rows.map(r => outreachTodoRowHtml(r, true)).join('')
+    : '<div class="outreach-list-note todo-fold-empty">Nothing filed here yet — edit an item to file it.</div>';
+  return `<details class="todo-fold todo-fold-deliverable ${blocking ? 'todo-fold-blocking' : 'todo-fold-batch'}"${isOpen ? ' open' : ''}
+      ontoggle="todoFoldState.set(${d.id}, this.open)">
+    <summary class="todo-fold-title"><span class="todo-fold-name">${blocking ? 'Waiting on: ' : ''}${esc(d.name)}</span><span class="todo-fold-count">${rows.length}</span>${target}${ship}</summary>
+    ${d.detail ? `<div class="todo-fold-detail">${esc(d.detail)}</div>` : ''}${body}</details>`;
+}
+
+// The chip a row wears when it sits under a deliverable and is not already
+// inside that fold — theirs, the company panel, a released member.
+function todoDeliverableChip(r) {
+  if (!r.deliverable_name) return '';
+  const shipped = r.deliverable_status === 'shipped';
+  return `<span class="todo-deliverable${r.blocked ? ' todo-deliverable-blocked' : ''}${shipped ? ' todo-deliverable-shipped' : ''}" title="${shipped ? 'Shipped — this is yours to do now' : r.blocked ? 'Cannot be done until this ships' : 'Filed under'}">${r.blocked ? 'waiting on ' : shipped ? 'unblocked: ' : ''}${esc(r.deliverable_name)}</span>`;
+}
+
+// Shipped: the fold's items surface as actionable rows, none marked done.
+// Undo reopens it, and they fold back.
+async function shipDeliverable(id) {
+  let res;
+  try {
+    res = await api(`/api/b2b/deliverables/${id}`, { method: 'POST', body: { action: 'ship' } });
+  } catch (err) {
+    showToast(`Could not mark it shipped: ${err.message}`, 'error');
+    return;
+  }
+  const n = (res.released || []).length;
+  showToast(n ? `Shipped — ${n} item${n === 1 ? '' : 's'} now on you` : 'Shipped', 'success', {
+    action: { label: 'Undo', onClick: () => deliverableAction(id, { action: 'reopen' }, 'Reopened') },
+  });
+  refreshTodoSurfaces();
+}
+
+async function deliverableAction(id, body, okMessage) {
+  try {
+    await api(`/api/b2b/deliverables/${id}`, { method: 'POST', body });
+  } catch (err) {
+    showToast(`Could not do that: ${err.message}`, 'error');
+    return;
+  }
+  showToast(okMessage, 'success');
+  refreshTodoSurfaces();
+}
+
+// A new deliverable, from the list. Two questions, then a fold to file into.
+async function addDeliverableFromList() {
+  const name = (prompt('Name the deliverable (e.g. "Affiliate programme for orgs", "October org shipments")') || '').trim();
+  if (!name) return;
+  const blocks = confirm(`Do its items wait on "${name}" until it ships?\n\nOK — yes, they are blocked until then (it folds under "Waiting on").\nCancel — no, it is a batch of things done together.`);
+  try {
+    await api('/api/b2b/deliverables', { method: 'POST', body: { name, blocks } });
+  } catch (err) {
+    showToast(`Could not add it: ${err.message}`, 'error');
+    return;
+  }
+  showToast('Added — edit an item to file it here', 'success');
+  refreshTodoSurfaces();
 }
 
 function fmtDueOn(d) {
@@ -5789,7 +5877,7 @@ function todoSourceLabel(r) {
 let todoExpanded = null;             // commitment id whose editor is open
 const todoBusy = new Set();          // ids with a request in flight
 
-function outreachTodoRowHtml(r) {
+function outreachTodoRowHtml(r, inFold = false) {
   const isDone = r.status === 'done';
   const company = r.company_name
     ? `<span class="todo-company outreach-channel-chip outreach-channel-${esc(r.channel || '')}">${esc(r.company_name)}</span>` : '';
@@ -5805,7 +5893,7 @@ function outreachTodoRowHtml(r) {
       ${todoCheckHtml(r)}
       <div class="todo-main">
         <div class="todo-text">${esc(r.text)}</div>
-        <div class="todo-meta">${company}${when}${source ? `<span class="todo-source">${source}</span>` : ''}${r.blocked_by ? '<span class="badge badge-muted">blocked</span>' : ''}</div>
+        <div class="todo-meta">${company}${when}${source ? `<span class="todo-source">${source}</span>` : ''}${inFold ? '' : todoDeliverableChip(r)}${r.blocked_by ? '<span class="badge badge-muted">blocked</span>' : ''}</div>
       </div>
       ${todoExpandHtml(r)}
     </div>
@@ -5827,6 +5915,18 @@ function todoExpandHtml(r) {
       title="${expanded ? 'Close' : 'Edit'}" aria-label="${expanded ? 'Close editor' : 'Edit'}" aria-expanded="${expanded}"></button>`;
 }
 
+// Which deliverable a row sits under. The open ones, plus the row's own if it
+// has shipped (so saving an unrelated edit does not silently detach it).
+function todoDeliverablePickerHtml(r, dis) {
+  const delivs = outreachDeliverables.open || [];
+  const own = r.deliverable_id && !delivs.some(d => d.id === r.deliverable_id)
+    ? `<option value="${r.deliverable_id}" selected>${esc(r.deliverable_name || 'its deliverable')} (shipped)</option>` : '';
+  if (!delivs.length && !own) return '';
+  return `<select class="todo-add-input todo-editor-deliverable" id="todo-edit-deliverable-${r.id}" aria-label="Deliverable" title="File under a deliverable"${dis}>
+      <option value="">No deliverable</option>${own}${delivs.map(d => `<option value="${d.id}"${r.deliverable_id === d.id ? ' selected' : ''}>${esc(d.name)}</option>`).join('')}
+    </select>`;
+}
+
 // The editor, beneath the row it belongs to. Enter saves, Escape closes.
 function todoEditorHtml(r, { withCompany = false } = {}) {
   const dis = todoBusy.has(r.id) ? ' disabled' : '';
@@ -5839,6 +5939,7 @@ function todoEditorHtml(r, { withCompany = false } = {}) {
       </div>
       <input type="hidden" id="todo-edit-owner-${r.id}" value="${esc(r.owner)}">
       <input type="date" class="todo-add-input todo-editor-date" id="todo-edit-due-${r.id}" value="${esc(r.due_on || '')}" aria-label="Due date" title="Due date"${dis}>
+      ${todoDeliverablePickerHtml(r, dis)}
       ${withCompany ? `<input type="text" class="todo-add-input todo-editor-company" id="todo-edit-company-${r.id}" list="todo-company-list" placeholder="Company" value="${esc(r.company_name || '')}" autocomplete="off" aria-label="Company"${dis}>` : ''}
     </div>
     <div class="todo-editor-actions">
@@ -5887,6 +5988,8 @@ async function saveTodoEditor(id) {
   const owner = document.getElementById(`todo-edit-owner-${id}`)?.value || r.owner;
   const due_on = document.getElementById(`todo-edit-due-${id}`)?.value || '';
   const body = { action: 'edit', text, owner, due_on };
+  const delivEl = document.getElementById(`todo-edit-deliverable-${id}`);
+  if (delivEl && delivEl.value !== String(r.deliverable_id || '')) body.deliverable_id = delivEl.value ? Number(delivEl.value) : 0;
   const companyEl = document.getElementById(`todo-edit-company-${id}`);
   if (companyEl) {
     const typed = companyEl.value.trim();
@@ -6044,6 +6147,7 @@ function outreachCommitmentsHtml(rows) {
         ${todoCheckHtml(r)}
         <span class="todo-inline-text">${esc(r.text)}</span>
         ${r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>` : ''}
+        ${todoDeliverableChip(r)}
         ${r.owner === 'me' ? `<button class="btn btn-ghost btn-xs" onclick="writeToThemFor(${r.id})" title="Opens the composer; sending marks this done">Done, write to them</button>` : ''}
         ${todoExpandHtml(r)}
       </div>

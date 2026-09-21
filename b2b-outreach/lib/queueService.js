@@ -1217,7 +1217,7 @@ function startCompanyGmailSync(sb, companyId, emails) {
  */
 async function fetchCompanyThreads(sb, companyId) {
   // Round 1 — independent lookups in parallel.
-  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes, meetingsRes, commitmentsRes] = await Promise.all([
+  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes, meetingsRes, commitmentsRes, deliverablesRes] = await Promise.all([
     getCompanyEmails(sb, companyId).catch(err => {
       console.error(`[queueService] emails lookup failed: ${err.message}`);
       return [];
@@ -1252,6 +1252,9 @@ async function fetchCompanyThreads(sb, companyId) {
       .limit(12),
     // What is owed either way (2026-09-10) — the block under "Where this stands".
     sb.from('b2b_commitments').select('*').eq('company_id', companyId).order('created_at', { ascending: true }),
+    // The deliverables those rows may sit under (2026-09-21): a handful of rows,
+    // fetched whole rather than by id so it rides in round 1. Fail-soft.
+    sb.from('b2b_deliverables').select('*'),
   ]);
   if (threadsRes.error) throw new Error(threadsRes.error.message);
   const threads = threadsRes.data || [];
@@ -1375,7 +1378,8 @@ async function fetchCompanyThreads(sb, companyId) {
     commitments: (() => {
       if (!commitmentsRes || commitmentsRes.error) return [];
       const C = require('./commitments');
-      const rows = (commitmentsRes.data || []).map(r => C.decorate(r, company));
+      const deliverables = new Map(((deliverablesRes && !deliverablesRes.error && deliverablesRes.data) || []).map(d => [d.id, d]));
+      const rows = (commitmentsRes.data || []).map(r => C.decorate(r, company, undefined, deliverables.get(r.deliverable_id)));
       return [...C.orderCommitments(rows.filter(r => r.status === 'open')), ...rows.filter(r => r.status === 'done').slice(-10).reverse()];
     })(),
     logo_url: logoUrl,
