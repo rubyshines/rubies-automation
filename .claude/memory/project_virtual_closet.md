@@ -64,7 +64,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 
 ### `virtual-closet/views/closet.js`
 - New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
-  1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo from the registry). (Jamie, 2026-09-21.)
+  1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo as enrolled). Sample centre in the design: The Attic Youth Center. (Jamie, 2026-09-21.)
   2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link under it (Jamie, 2026-09-21).
   3. Total: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." with "from 9 orders and 3 sponsors". At zero: "Nothing raised yet. Be the first." No bar, no number sign, no goal.
   4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
@@ -123,7 +123,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 2. Enrol a test centre with Jamie's own email (preview, then confirmed). Open the page on a phone from the QR in the welcome email.
 3. Place a real $10 sponsor order and a real order through the Shop button (refund both after). Confirm both ledger rows via `vc_centre`.
 4. Next day: one digest arrives naming both. `vc_redeem` $5 against the test centre; `vc_centre` shows the balance.
-5. Enrol Uniting Pride from their partner row. Retire the test centre with status `left` (existing `setStatus`).
+5. Enrol the first centre from their partner row where one exists: The Attic Youth Center (Philadelphia) is the first likely to sign up and is not in the registry, so its fields go in directly; Uniting Pride is in the registry. Retire the test centre with status `left` (existing `setStatus`).
 
 ## Out of scope, parked or later
 - The 30-day browser attribution window on the store (parked already).
