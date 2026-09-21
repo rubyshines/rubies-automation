@@ -220,7 +220,7 @@ test('redeem debits the balance, refuses over-balance and zero, and is idempoten
 });
 
 test('the link-mode emails compose from the right sender with the locked sentences, and the welcome carries the QR', async () => {
-  const centre = { id: 9, slug: 'attic', name: 'The Attic', mode: 'link', statements_email: 'closet@attic.org' };
+  const centre = { id: 9, slug: 'attic', name: 'The Attic', mode: 'link', statements_email: 'closet@attic.org', logo_url: 'https://cdn.shopify.com/x/attic.png', website: 'https://attic.example.org' };
   const out = await quiet(async () => {
     await emails.welcome({ centre, to: 'closet@attic.org' });
     await emails.activity({ centre, to: 'closet@attic.org', orders: 3, orderCents: 2460, sponsors: 1, sponsorCents: 2500, balanceCents: 11240, raisedCents: 18800 });
@@ -228,7 +228,8 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   });
   assert.ok(!/undefined|NaN/.test(out), out);
   assert.ok(out.includes('Your RUBIES Virtual Closet is ready. (from jamie@rubyshines.com)'));
-  assert.ok(out.includes('attachments: closet-qr.png'));
+  assert.ok(out.includes('attachments: closet-qr.png, closet-sign.pdf'), 'the welcome carries the QR and the printable sign');
+  assert.ok(out.includes('Attached is a sign you can print'));
   assert.ok(out.includes("The Attic's Virtual Closet activity today (from care@rubyshines.com)"));
   assert.ok(out.includes("Thank you from The Attic's Virtual Closet (from care@rubyshines.com)"));
   assert.ok(out.includes('3 orders through your link put $24.60 in.'));
@@ -247,4 +248,20 @@ test('the QR encodes the centre page URL', async () => {
   const png = await QRCode.toBuffer('http://localhost:3850/attic', { type: 'png', width: 720 });
   assert.equal(png.slice(1, 4).toString(), 'PNG');
   assert.ok(png.length > 1000);
+});
+
+test('the printable sign is a one-page PDF carrying the closet address', async () => {
+  const { signPdf } = require('../../virtual-closet/lib/sign');
+  const pdf = await signPdf({ name: 'The Attic', logo_url: null }, { url: 'https://closet.rubyshines.com/the-attic', logos: false });
+  assert.equal(pdf.slice(0, 5).toString(), '%PDF-');
+  assert.ok(pdf.length > 5000, 'has a QR image in it');
+  assert.equal((pdf.toString('latin1').match(/\/Type \/Page[^s]/g) || []).length, 1, 'one page');
+});
+
+test('link-mode emails carry RUBIES × the centre logo', async () => {
+  const emails = require('../../virtual-closet/lib/emails');
+  const html = emails.layout('t', '<p>x</p>', '', { centre: { name: 'The Attic', logo_url: 'https://cdn.shopify.com/x/attic.png', website: 'https://attic.example.org' } });
+  assert.ok(html.includes('rubies-logo-email-480.png') && html.includes('https://cdn.shopify.com/x/attic.png') && html.includes('>×<'));
+  assert.ok(html.includes('href="https://attic.example.org"'), 'the centre logo links to its website');
+  assert.ok(!emails.layout('t', '<p>x</p>').includes('>×<'), 'closet-mode emails keep the plain wordmark');
 });
