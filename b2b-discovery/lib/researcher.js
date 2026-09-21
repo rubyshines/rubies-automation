@@ -2,6 +2,8 @@ const { scrapeProspect } = require('./scraper');
 const { findContacts } = require('./contactFinder');
 const { analyzeProspect } = require('./analyzer');
 const { scoreProspect, routeStatus } = require('./scorer');
+const { readCatalog } = require('./catalog');
+const { fitVerdict } = require('./fitVerdict');
 const { placeDetails } = require('./maps');
 const { normalizeDomain } = require('./dedup');
 const { getProspectByDomain, mergeProspect } = require('./db');
@@ -231,6 +233,32 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey, skipIfNo
     }
   } else {
     result.status = 'found'; // Leave as found if analysis failed — can retry
+  }
+
+  // ── Step 7: Catalog read + fit verdict ────────────────────────────────────
+  // The score ranks; this decides. See fitVerdict.js for why reweighting the
+  // score cannot do this job. Both steps fail soft: a prospect with no verdict
+  // lands in the operator's hand-vet pile, which is always a safe outcome.
+  if (analysis.analysisStatus !== 'failed' && result.status !== 'community-partner') {
+    if (verbose) process.stdout.write('[CATALOG] Reading product feed... ');
+    _step = Date.now();
+    result.catalog = await readCatalog(result.website);
+    _t.catalogMs = Date.now() - _step;
+    if (verbose) {
+      console.log(result.catalog.readable
+        ? `${result.catalog.products_read} products, femme ${result.catalog.femme_gear_count}, masc ${result.catalog.masc_gear_count}${result.catalog.complete ? '' : ' (capped)'}`
+        : `unreadable (${result.catalog.reason})`);
+    }
+
+    if (verbose) process.stdout.write('[FIT] ');
+    _step = Date.now();
+    const fit = await fitVerdict({ prospect: result, catalog: result.catalog });
+    _t.fitMs = Date.now() - _step;
+    result.fit_verdict = fit.verdict;
+    result.fit_rule = fit.rule;
+    result.fit_why = fit.why;
+    result.fit_at = new Date().toISOString();
+    if (verbose) console.log(`${fit.verdict.toUpperCase()}${fit.rule ? ` (rule ${fit.rule})` : ''} — ${fit.why}`);
   }
 
   result.researched_date = new Date().toISOString();

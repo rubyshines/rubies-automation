@@ -136,6 +136,9 @@ function planProspect(p, index, { now = new Date() } = {}) {
     discovery_angle: p.outreach_angle || null,
     discovery_subcategory: p.subcategory || null,
     discovery_score: p.score ?? null,
+    fit_verdict: p.fit_verdict ?? null,
+    fit_rule: p.fit_rule ?? null,
+    fit_why: p.fit_why ?? null,
     discovery_researched_at: p.researched_date || null,
     ...(p.mentions_trans != null ? { mentions_trans: !!p.mentions_trans } : {}),
     ...(p.mentions_lgbtq != null ? { mentions_lgbtq: !!p.mentions_lgbtq } : {}),
@@ -214,12 +217,32 @@ async function loadIndex(sb) {
   return index;
 }
 
-/** Qualified discovery rows, best score first. */
+// A prospect the fit pass decided against never enters the book. The 1-10
+// score stays as the ORDER (best first), because that is what it is good for;
+// it is no longer the gate. `hand` rows DO come in, unvetted like everything
+// else, because the Vet panel is where a human looks at them and it now leads
+// with the evidence; leaving them in the discovery table would put the same
+// work behind a second surface nobody opens.
+const ADMITTED_VERDICTS = new Set(['keep', 'hand']);
+
+/** Whether a researched prospect may enter the book. Pure. */
+function isAdmissible(prospect, { minScore = 0 } = {}) {
+  if (prospect.status !== 'qualified') return false;
+  if ((prospect.score ?? 0) < minScore) return false;
+  // Rows researched before the fit pass existed carry no verdict. They keep
+  // the old behaviour rather than being silently excluded by a column that
+  // was not there when they were written.
+  if (prospect.fit_verdict == null) return true;
+  return ADMITTED_VERDICTS.has(prospect.fit_verdict);
+}
+
+/** Discovery rows that may enter the book, best score first. */
 async function fetchQualifiedProspects(sb, { minScore = 0, limit = null } = {}) {
   const rows = await pageThrough(() => sb.from('retailer_prospects').select('*')
     .eq('status', 'qualified').gte('score', minScore)
     .order('score', { ascending: false }).order('company_name', { ascending: true }));
-  return limit ? rows.slice(0, limit) : rows;
+  const admissible = rows.filter(p => isAdmissible(p, { minScore }));
+  return limit ? admissible.slice(0, limit) : admissible;
 }
 
 /**
@@ -287,5 +310,5 @@ function summarize(results) {
 
 module.exports = {
   classifyEmail, cleanStoreName, parseCountry, parseRegion, planProspect, planImport, summarize,
-  loadIndex, fetchQualifiedProspects, findCompanyByDomain, applyImport, importProspects,
+  loadIndex, fetchQualifiedProspects, isAdmissible, ADMITTED_VERDICTS, findCompanyByDomain, applyImport, importProspects,
 };

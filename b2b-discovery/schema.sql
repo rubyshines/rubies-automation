@@ -78,3 +78,15 @@ CREATE TABLE IF NOT EXISTS discovery_progress (
   result_count integer DEFAULT 0,
   completed_at timestamptz
 );
+
+-- Catalog read + fit verdict (2026-09-21). The 1-10 score ranks a prospect;
+-- it cannot decide admission, because every reason a prospect gets dropped by
+-- hand (audience is men, wrong country, cheap underwear, consignment, no gear
+-- in the actual catalog) is a fact the score has no field for. See
+-- b2b-discovery/lib/fitVerdict.js.
+ALTER TABLE retailer_prospects ADD COLUMN IF NOT EXISTS catalog jsonb;
+ALTER TABLE retailer_prospects ADD COLUMN IF NOT EXISTS fit_verdict text;   -- keep | drop | hand
+ALTER TABLE retailer_prospects ADD COLUMN IF NOT EXISTS fit_rule integer;   -- which rule decided it
+ALTER TABLE retailer_prospects ADD COLUMN IF NOT EXISTS fit_why text;
+ALTER TABLE retailer_prospects ADD COLUMN IF NOT EXISTS fit_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_retailer_prospects_fit ON retailer_prospects (fit_verdict) WHERE fit_verdict IS NOT NULL;
