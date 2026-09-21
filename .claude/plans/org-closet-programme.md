@@ -425,3 +425,18 @@ Refined: encourage a centre email over a personal one without blocking (a nudge 
 **Operator side lives in the CS dashboard (Jamie, 2026-09-16, later):** the queue, centres list, centre detail and programme dashboard are a new section of the existing ops dashboard, not part of the new app, so there is no operator login to design and stage 2 styles them to the dashboard's look. Operator emails link into the dashboard. Open question about the operator login closed.
 
 **Add to the box is paid on the spot; order now is out of scope (Jamie, 2026-09-16, later):** a centre adds any amount to its box by card, matched. Centres buying product directly at 50% off continues as it works today, by email, outside the app. The 50%-off language exception is therefore gone from the brief; everything centre- and sponsor-facing is matching language. Open question about payment closed.
+
+---
+
+## The minimal cut: link, balance, email (Jamie, 2026-09-21)
+
+Jamie, with the full app built and on main: execution risk is the worry, for the centre and for RUBIES operating it. Start with something simple and well known, an affiliate-shaped programme, and grow only if the pilot asks for it. The full app stays in the codebase behind a per-centre mode; nothing is deleted.
+
+**Locked:**
+- **One door on the page: shop.** No free-pair requests at all. Sponsor tiles stay, in even dollar amounts ($10, $25, $50, $100), because they are zero admin (a cart link to the hidden product's $1 unit variant) and the highest-margin dollar.
+- **Terms:** the shopper gets 20% off (hidden single-use code minted per click, once per customer, as built); the centre earns 25% of the sale as credit toward purchases.
+- **The centre gets a link and a QR code**, never a printed code. The QR needs a real encoder (the share tools ship a placeholder SVG today).
+- **Jamie enrols centres** by MCP tool for now. No sign-up, no accounts, no team, no settings a centre maintains. The programme page's sign-up form becomes a "talk to Jamie" contact.
+- **Email only when there is activity.** Nothing scheduled, nothing empty.
+
+**Still open (asked 2026-09-21):** whether the match stays and how the centre hears about it; a minimum before a centre can redeem, and how redemption happens (email Jamie, ship double via the wholesale order tool, debit by tool); whether the page shows a running total with no goal; per-order email versus a daily digest on active days; whether Uniting Pride gets this cut for the October pilot.
