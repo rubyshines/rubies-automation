@@ -18,18 +18,19 @@ Build spec. The full app (accounts, requests, boxes, operator pages) was built a
 2. They share the link or the QR. That is their whole job.
 3. A shopper who opens the link sees one page: shop with 20% off (a hidden single-use code, minted per click), four sponsor tiles, the five styles, the running total.
 4. On any day with activity the centre gets one email: what came in, and the balance.
-5. When they want product they email Jamie an order (partner terms: 50% off, $300 minimum after discount, five styles). Jamie places it and deducts the balance by tool. No top-up mechanism, no box, no goal.
+5. When they want product they email Jamie an order (partner terms: 50% off any order whose retail value before the discount is $600 or more, five styles). Jamie places it and deducts the balance by tool. No top-up mechanism, no box, no goal.
 
 ## Terms and wording (locked 2026-09-21)
 
 - Shopper: 20% off one order per customer, existing customers included, applied automatically. No code shown.
 - Centre credit: 25% of what the buyer paid (post-discount subtotal, as `money.orderCreditCents` does today) plus every sponsor dollar at face value.
 - The match: credit is spent at partner pricing (half retail), which is the match. No separate mechanism.
-- Buyer line: "A quarter of your order goes to [Centre]'s closet, and RUBIES matches it."
+- Buyer line: "A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it."
 - Total line: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." Lifetime raised, never net of redemptions; the public number only goes up.
 - Sponsor tiles: $10, $25, $50, $100, plain, no line of their own.
-- The digit "25%" appears only in the centre's terms (the welcome email). "Match" appears once on the page, on the total, and once in the sponsor thank-you.
-- Never: discount, wholesale, 50% off, doubled, box, shipment, goal, on any public or centre surface. Never em dashes. Plus sizes 1X to 4X.
+- The digit "25%" appears only in the centre's terms (the welcome email). "Match" appears exactly once, on the page's total line; the emails do not use it (Jamie, 2026-09-21).
+- The product name is "Virtual Closet", capitalised, in titles and subjects: "[Centre] Virtual Closet" on the page, "[Centre]'s Virtual Closet" in sentences.
+- Never: discount, wholesale, doubled, box, shipment, goal, on any public surface. "50% off" and "$600 retail" are said plainly in the centre's welcome email, and nowhere public. Never em dashes. Plus sizes 1X to 4X.
 
 ## Schema (`virtual-closet/schema-link-mode.sql`, Jamie applies in the SQL editor)
 
@@ -63,8 +64,8 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 
 ### `virtual-closet/views/closet.js`
 - New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
-  1. Hero: centre logo and name, "[Centre]'s closet", RUBIES wordmark (as today).
-  2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. Fine print under it: "20% comes off at checkout. One order per customer." plus the size guide link.
+  1. Hero: title "[Centre] Virtual Closet" on the left; on the right "RUBIES × [centre logo]" (the RUBIES wordmark, a multiplication sign, the centre's logo from the registry). (Jamie, 2026-09-21.)
+  2. One sentence and the button: "Shop RUBIES with 20% off. A quarter of your order goes to [Centre]'s Virtual Closet, and RUBIES matches it." Button "Shop with 20% off" → `/[slug]/shop`. No fine print, no size guide link under it (Jamie, 2026-09-21).
   3. Total: "$88 raised so far. RUBIES matches it: $176 of underwear and swimwear for the closet." with "from 9 orders and 3 sponsors". At zero: "Nothing raised yet. Be the first." No bar, no number sign, no goal.
   4. Sponsor row: heading "Not shopping? Put money in the closet.", four tiles → `/[slug]/sponsor/[key]`. Nothing under them.
   5. The styles: `productGrid(ctx, { discounted: true })` as the shop-first arrangement draws it.
@@ -75,7 +76,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 ### `virtual-closet/server.js`
 - `closetContext(centre)`: for link mode, compute `ledger.balance` and skip boxes, words, paused.
 - `/:slug/sponsor/:tile`: no `getOpenBox` in link mode.
-- `/:slug/thanks`: link copy: "Your $25 went to [Centre]'s closet, and RUBIES matches it." then the total line, "Back to [Centre]'s closet". No "Share the closet" link.
+- `/:slug/thanks`: link copy: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." then the total line, "Back to [Centre]'s Virtual Closet". No "Share the closet" link.
 - New public `GET /:slug/qr.png` and `/:slug/qr.svg`: the page URL encoded with the `qrcode` package (pure JS, add to `dependencies`, pin exact). Active link-mode centres only; 404 otherwise.
 - `routes/requests.js`: every handler 404s for a link-mode centre (one guard at the top of the router).
 - `routes/centre.js` (the signed-in view): a link-mode centre has no users, so nothing changes; the existing `/share/qr.svg` placeholder now calls the same encoder.
@@ -84,9 +85,9 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 - The sign-up section and its two CTAs are replaced with "Talk to Jamie" (mailto with subject "Virtual Closet") and one line: "Jamie sets your closet up on a call or by email. Nothing to fill in." The `/signup` routes stay mounted but nothing links to them. The "how it starts" list drops "Sign up. Five minutes."
 
 ### `virtual-closet/lib/emails.js` and `shared/sendgridClient.js`
-- `welcome` link variant (branch on `centre.mode`): subject "Your closet is open, [Centre]". Body: the link, the QR attached as `closet-qr.png` and also linked at `/[slug]/qr.png`, "Everyone who opens it gets 20% off one order, and a quarter of what they spend goes to your closet. Anyone can also sponsor the closet from the same page." A ready-made post (the existing `share.post` text). Terms, four lines: "Your closet earns 25% of what shoppers pay through your link, plus every sponsor dollar." "RUBIES matches every dollar: your balance buys twice its value in underwear and swimwear." "When you want gear, email Jamie your order. Five styles, $300 minimum per shipment, and your balance comes off it." "It costs you nothing, and you can stop any time." Then Jamie's contact. No private view link, no settings line.
-- New `activity({ centre, to, orders, sponsors, orderCents, sponsorCents, balanceCents, raisedCents })`: subject "[Centre]'s closet today". Lines: "[3] orders through your link put $[24.60] in." "[1] sponsor put $[25] in." "Your balance is $[112.40]. RUBIES matches it: $[224.80] of underwear and swimwear when you order." Then "Raised so far: $[188]" and "To order, email Jamie." No buttons.
-- `sponsorThanks` link variant: "Your $25 went to [Centre]'s closet, and RUBIES matches it." plus the total line and the closet link. No shipment number.
+- `welcome` link variant (branch on `centre.mode`), **sent from jamie@rubyshines.com** so replies and orders come to Jamie (Jamie, 2026-09-21). Subject "Your RUBIES Virtual Closet is ready." Body, editorialised from Jamie's brief: "Congratulations, [Centre]'s Virtual Closet is ready." The link, then the CTA: share it on your socials, website and newsletter; anyone who opens it gets 20% off a RUBIES order, and every order and every sponsor dollar adds to your closet; a ready-made post (the existing `share.post` text). The QR attached as `closet-qr.png` and linked at `/[slug]/qr.png`; one line that a printable QR poster and fact sheet are coming separately (placeholder, built later). "Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar." Ordering: "When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more." Sign-off from Jamie. No match line (Jamie's brief has none; the 50% says it), no private view link, no settings line.
+- New `activity({ centre, to, orders, sponsors, orderCents, sponsorCents, balanceCents, raisedCents })`, from jamie@rubyshines.com: subject "[Centre]'s Virtual Closet activity today". Lines: "[3] orders through your link put $[24.60] in." "[1] sponsor put $[25] in." "Your balance is $[112.40]." Then "Raised so far: $[188]" and "To order, email me." No buttons, no match line.
+- `sponsorThanks` link variant, from care@: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." plus the total line and the closet link. No match line, no shipment number.
 - `deliver` gains optional `attachments`; `sendEmail` in `shared/sendgridClient.js` does not pass attachments today, so add an `attachments` pass-through (`[{content (base64), filename, type, disposition}]`) there. Console mode prints the filename.
 
 ### `virtual-closet/jobs/daily.js`
@@ -110,7 +111,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 - `linkOnly` renders at zero and with money, without `undefined`, without any banned word (extend the brand test's word list with "box", "shipment", "goal", "request" for the link arrangement).
 - `digestActivity` groups only rows after `since`; the daily step advances `digest_through` only when `live` and sends once per centre per run.
 - `enrol` from a partner row copies the fields and links `donation_partner_id`; explicit inputs override.
-- `welcome`, `activity` and `sponsorThanks` compose in link mode without `undefined` and with the locked sentences.
+- `welcome`, `activity` and `sponsorThanks` compose in link mode without `undefined`, with the locked sentences, and from the right sender (Jamie for the centre's two, care@ for the sponsor's).
 - `/:slug/qr.png` returns a PNG (signature and non-trivial size); the SVG contains the page URL's modules (the package's own `toString` is deterministic, so compare against a freshly encoded string).
 - The dashboard handler scan and lazy-require tests stay green.
 
