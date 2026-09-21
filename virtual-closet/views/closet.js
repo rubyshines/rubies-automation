@@ -129,15 +129,15 @@ ${totalLine(ctx)}
 <section id="sponsor">
   <h2>Not shopping? Sponsor the closet. Help someone feel comfortable and confident.</h2>
   <div class="gifts gifts-4">${tiles(ctx)}</div>
-  <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
+  <p class="fine fine-after">You pay at the RUBIES online store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
-<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false })}<p class="fine">Tap a style to shop it with 20% off.</p></section>`;
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off.</p></section>`;
 }
 
-function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true } = {}) {
+function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true, note = true } = {}) {
   const cards = ctx.products.map(p => {
     const price = discounted
-      ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b> <span class="fine">with your 20%</span>`
+      ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b>${note ? ' <span class="fine">with your 20%</span>' : ''}`
       : prices ? dollars(p.retail_cents) : '';
     const href = details ? `/${ctx.slug}/style/${p.key}` : productUrl(p);
     return productCard(p, { href, price, sub: details ? 'Details' : '' });
