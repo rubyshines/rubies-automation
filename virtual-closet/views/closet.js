@@ -118,7 +118,7 @@ function linkOnly(ctx) {
   return `
 <section class="hero">
   <div class="hero-copy">
-    <h1>Shop with 20% off.</h1>
+    <h1>Shop 20% off RUBIES, support ${esc(ctx.name)}.</h1>
     <p class="lede">A quarter of your order goes to ${esc(ctx.name)}'s Virtual Closet, and RUBIES matches it.</p>
     ${shopBtn(ctx)}
   </div>
@@ -126,7 +126,7 @@ function linkOnly(ctx) {
 </section>
 ${totalLine(ctx)}
 <section id="sponsor">
-  <h2>Not shopping? Put money in the closet.</h2>
+  <h2>Not shopping? Sponsor the closet. Help someone feel comfortable and confident.</h2>
   <div class="gifts gifts-4">${tiles(ctx)}</div>
   <p class="fine">You pay at the RUBIES store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
