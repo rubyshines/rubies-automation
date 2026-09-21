@@ -229,7 +229,8 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   assert.ok(!/undefined|NaN/.test(out), out);
   assert.ok(out.includes('Your RUBIES Virtual Closet is ready. (from jamie@rubyshines.com)'));
   assert.ok(out.includes('attachments: closet-qr.png, closet-sign.pdf'), 'the welcome carries the QR and the printable sign');
-  assert.ok(out.includes('Attached is a sign you can print'));
+  assert.ok(out.includes('Attached is a table sign you can print'));
+  assert.ok(out.includes('/attic/qr-sign'), 'the welcome says where to reprint the sign');
   assert.ok(out.includes("The Attic's Virtual Closet activity today (from care@rubyshines.com)"));
   assert.ok(out.includes("Thank you from The Attic's Virtual Closet (from care@rubyshines.com)"));
   assert.ok(out.includes('3 orders through your link put $24.60 in.'));
@@ -250,12 +251,36 @@ test('the QR encodes the centre page URL', async () => {
   assert.ok(png.length > 1000);
 });
 
-test('the printable sign is a one-page PDF carrying the closet address', async () => {
+test('the table sign is one Letter page: both faces, the fold notes, the QR and the reprint address', async () => {
   const { signPdf } = require('../../virtual-closet/lib/sign');
   const pdf = await signPdf({ name: 'The Attic', logo_url: null }, { url: 'https://closet.rubyshines.com/the-attic', logos: false });
   assert.equal(pdf.slice(0, 5).toString(), '%PDF-');
-  assert.ok(pdf.length > 5000, 'has a QR image in it');
-  assert.equal((pdf.toString('latin1').match(/\/Type \/Page[^s]/g) || []).length, 1, 'one page');
+  const raw = pdf.toString('latin1');
+  assert.equal((raw.match(/\/Type \/Page[^s]/g) || []).length, 1, 'one page');
+  assert.ok(raw.includes('/MediaBox [0 0 612 792]'), 'US Letter, no margins to scale');
+
+  const { PDFParse } = require('pdf-parse');
+  const parser = new PDFParse({ data: pdf });
+  const text = (await parser.getText()).text.replace(/\s+/g, ' ');
+  await parser.destroy();
+  // Visitor face
+  assert.ok(text.includes('Scan for 20% off gender-affirming underwear and swimwear.'), 'headline');
+  assert.ok(text.includes("A quarter of every order goes to The Attic's Virtual Closet."), 'the quarter line names the centre');
+  assert.ok(text.includes('made specifically for trans girls and women'), 'the RUBIES sentence');
+  assert.ok(text.includes('Sponsor the closet from $10'), 'the sponsor line');
+  assert.ok(text.includes('closet.rubyshines.com') && text.includes('/the-attic'), 'the address is typed under the QR');
+  assert.ok(text.includes('Never stop shining.'), 'tagline');
+  // Staff face
+  assert.ok(text.includes('THE FACTS') && text.includes('20% off is one order per person'), 'the facts');
+  assert.ok(text.includes('closet.rubyshines.com/the-attic/qr-sign'), 'the reprint address');
+  assert.ok(text.includes('tape the tabs together'), 'the setup note');
+  // Fold notes, one per crease. They are letter-spaced, which the extractor reads as spaces, so compare without any.
+  const compact = text.replace(/\s+/g, '');
+  assert.equal((compact.match(/FOLDTHISTABUNDER/g) || []).length, 2, 'a note on each tab');
+  assert.equal((compact.match(/FOLDHERE/g) || []).length, 1, 'one centre crease');
+  // Rules that do not bend
+  assert.ok(!/undefined|NaN|\[object/.test(text), 'nothing leaked');
+  assert.ok(!/—|discount|wholesale|patent/i.test(text), 'no em dashes, no banned words');
 });
 
 test('link-mode emails carry RUBIES × the centre logo', async () => {
