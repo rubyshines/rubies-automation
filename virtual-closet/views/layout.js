@@ -29,6 +29,11 @@ const logo = (width = 170) => `<img src="/public/rubies-logo.svg" alt="RUBIES" w
 /** One of the store's illustrations in a framed art block. */
 function illustration(name, cls = 'hero-art') {
   const i = ILLUSTRATIONS[name] || ILLUSTRATIONS.beach;
+  if (i.mobile) {
+    // A phone crop when the store has one: <picture> picks it under 750px and
+    // the box takes that crop's proportions (see .has-mobile in closet.css).
+    return `<div class="${cls} has-mobile" style="--desk:${i.ratio};--mob:${i.mobile.ratio};aspect-ratio:var(--desk)"><picture><source media="(max-width: 749px)" srcset="${i.mobile.src}"><img src="${i.src}" alt="${esc(i.alt)}" loading="lazy"></picture></div>`;
+  }
   return `<div class="${cls}" style="aspect-ratio:${i.ratio}"><img src="${i.src}" alt="${esc(i.alt)}" loading="lazy"></div>`;
 }
 

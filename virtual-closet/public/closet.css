@@ -257,10 +257,12 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
 }
 @media (max-width: 989px) {
   .about { grid-template-columns: 1fr; gap: 20px; }
+  .about > .about-art { order: 2; }   /* stacked: the words first, the picture after */
   .fund { grid-template-columns: 1fr; gap: 20px; padding: 24px; }
   .fund-cta { justify-items: start; text-align: left; }
 }
 @media (max-width: 749px) {
+  .has-mobile { aspect-ratio: var(--mob) !important; }
   .gifts-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hd-link { flex-direction: column; align-items: flex-start; }
   .three, .two, .sponsor-block, .row, .steps, .steps-4 { grid-template-columns: 1fr; }
