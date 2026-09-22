@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Theme: cart drawer should ignore a compare-at below price
+- Parked: 2026-09-22
+- Domains: marketing, tech
+- Type: fix
+- Notes: `snippets/cart-drawer.liquid` in rubies-ecom-v4 sums compare-at prices when present for its "You save" line, so a compare-at left below the price (the state cleared store-wide on 2026-09-22) understates every discount. One condition (`compare_at_price > price`) makes the drawer safe against the next stale value. Same trip: the theme repo's `feedback_theme_rules.md` still says a spreadsheet sync owns product data, which is gone; that file is also sitting modified and uncommitted in the theme repo's main checkout.
+- Resume when: next time in the theme repo.
+
 ## Deliverables phase 3: the engine files new items into open deliverables
 - Parked: 2026-09-21
 - Domains: b2b_sales, community, tech
