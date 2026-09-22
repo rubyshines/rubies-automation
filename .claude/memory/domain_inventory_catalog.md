@@ -22,6 +22,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Price History:** Automatic detection and logging of price changes to `price_history`.
 
+**Pricing Tools:** `set_product_prices` sets retail price and compare-at (set or clear) per variant group through a preview-and-confirm flow; `audit_compare_at_prices` (also `scripts/auditCompareAtPrices.js`) lists every live variant whose compare-at differs from its price, with direction (stale below, sale above).
+
 **Collections Sync (daily):** All Shopify collections (manual + smart) synced to Supabase `collections` in the daily product-sync chain.
 
 **SEO Meta Tooling:** `seo_meta_draft` reads the synced collection/product row plus top GSC keywords and drafts title/description in house style; `seo_meta_update` writes back to Shopify (supports handle renames with auto-301) and mirrors to Supabase.
@@ -56,6 +58,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **SEO meta drafts anchor on the page's display title, not the product list.** Products are supporting evidence for in-category specifics, never used to broaden a page's scope. House style for the meta lives in the prompt in `seoMeta.js`.
 - **Live pre-order source of truth is the variant-level `_us` metafields plus `inventory_policy`, not the legacy product-level fields.** `inventory_policy=continue` is the master switch that keeps an out-of-stock variant buyable and flips the PDP to "Pre-Order"; the product-level pre-order metafields are abandoned. Pre-order is US-only today, so the `_us` keys are written directly; add a country param when a second market needs it.
 - **Pre-order enablement is decoupled from the incoming-inventory sheet.** Recording a production order's incoming inventory never puts products on pre-order by itself; turning it on (or pausing it despite upcoming arrivals) is an explicit operator action.
+
+- **Compare-at is read live from Shopify, never mirrored, and exists only on a real markdown.** The Supabase mirror deliberately has no compare-at column; anything that needs the current value fetches it. Store policy: no compare-at unless the product is on sale, so a compare-at below the price is refused by the tool (that state makes the theme's cart drawer understate every discount) and the audit treats any compare-at present as a sale.
 
 ## What's Next
 

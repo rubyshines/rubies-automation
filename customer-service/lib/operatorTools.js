@@ -44,6 +44,7 @@ function loadAllOperatorTools() {
     require('./tools/editOrder'),
     require('./tools/deliveryTimeReport'),
     require('./tools/setPrices'),
+    require('./tools/compareAtAudit'),
     require('./tools/updateCustomer'),
     require('./tools/discountCode'),
     require('./tools/cancelOrder'),
