@@ -73,7 +73,16 @@ function readLineItem(li, s, orderAttrs = null) {
   const props = {};
   for (const p of li.properties || li.custom_attributes || []) props[String(p.name || p.key || '').replace(/^_/, '').toLowerCase()] = p.value;
   const qty = li.quantity || 1;
+  // `price` (webhook) and `unit_price` (mirror) are shop money, USD. What the
+  // shopper actually paid is the presentment money on price_set (webhook) or
+  // the mirror's presentment_unit_price, when its currency is known; the
+  // ledger settles into the centre's currency from these (2026-09-22).
   const unit = Math.round(parseFloat(li.price ?? li.unit_price ?? known.cents / 100) * 100);
+  const shopCurrency = String(li.price_set?.shop_money?.currency_code || li.unit_price_currency || '').toUpperCase() || null;
+  const pm = li.price_set?.presentment_money;
+  const pAmount = pm?.amount ?? li.presentment_unit_price;
+  const pCurrency = String(pm?.currency_code || li.presentment_unit_price_currency || '').toUpperCase() || null;
+  const presentment = pAmount != null && pCurrency ? { cents: Math.round(parseFloat(pAmount) * 100) * qty, currency: pCurrency } : null;
   const fromLine = props[PROP_CENTRE.toLowerCase()];
   const o = orderAttrs || {};
   return {
@@ -81,6 +90,8 @@ function readLineItem(li, s, orderAttrs = null) {
     boxNumber: parseInt(props[PROP_BOX.toLowerCase()], 10) || o.boxNumber || null,
     kind: (fromLine ? props[PROP_KIND.toLowerCase()] === 'centre' : o.kind === 'centre_add') ? 'centre_add' : 'sponsor',
     amountCents: unit * qty,
+    shopCurrency,
+    presentment,
     lineItemId: String(li.id || li.shopify_line_item_id || '').split('/').pop(),
   };
 }

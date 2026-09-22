@@ -9,6 +9,8 @@
  *   approved request, so "everyone who asked gets theirs" stays true.
  * - RUBIES matches every dollar in the box when it ships.
  * - A community order through the centre's link credits 25% of its subtotal.
+ * - Every centre keeps its money in its own currency (2026-09-22); see the
+ *   currency section at the bottom and lib/fx.js for cross-currency orders.
  */
 
 const MIN_GOAL_CENTS = 30000;
@@ -113,13 +115,41 @@ function planValueCents(plan, catalog) {
   }, 0);
 }
 
-function dollars(cents) {
+// ---- currency (Jamie, 2026-09-22) -------------------------------------------
+// Each centre's money is in its own currency, set from its country when it
+// enrols and never edited. Anything shown to a person goes through dollars()
+// with the centre's currency, which shows the currency wherever it is not USD.
+const SHOP_CURRENCY = 'USD';
+const CURRENCIES = {
+  USD: { prefix: '$' },
+  CAD: { prefix: 'CA$' },
+  GBP: { prefix: '£' },
+  EUR: { prefix: '€' },
+  AUD: { prefix: 'A$' },
+};
+const EURO_COUNTRIES = new Set(['AT', 'BE', 'HR', 'CY', 'EE', 'FI', 'FR', 'DE', 'GR', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PT', 'SK', 'SI', 'ES', 'AD', 'MC', 'SM', 'VA', 'XK', 'ME']);
+const COUNTRY_CURRENCY = { US: 'USD', CA: 'CAD', GB: 'GBP', UK: 'GBP', AU: 'AUD' };
+
+/** The currency a centre in this country keeps its money in. Anything unmapped is the shop's USD. */
+function currencyForCountry(country) {
+  const c = String(country || '').trim().toUpperCase();
+  if (COUNTRY_CURRENCY[c]) return COUNTRY_CURRENCY[c];
+  if (EURO_COUNTRIES.has(c)) return 'EUR';
+  return SHOP_CURRENCY;
+}
+
+/** "$1,000", "CA$1,000", "£12.50". Whole amounts drop the cents. */
+function dollars(cents, currency = SHOP_CURRENCY) {
+  const prefix = (CURRENCIES[String(currency || SHOP_CURRENCY).toUpperCase()] || { prefix: `${String(currency).toUpperCase()} ` }).prefix;
   const n = Math.round(cents || 0) / 100;
-  return Number.isInteger(n) ? `$${n.toLocaleString('en-US')}` : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const abs = Math.abs(n);
+  const body = Number.isInteger(abs) ? abs.toLocaleString('en-US') : abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${n < 0 ? '-' : ''}${prefix}${body}`;
 }
 
 module.exports = {
   MIN_GOAL_CENTS, LINK_DEFAULT_GOAL_CENTS, DOOR_SHIPPING_CENTS, ORDER_CREDIT_RATE, RAISE_KINDS,
+  SHOP_CURRENCY, CURRENCIES, currencyForCountry,
   requestCostCents, boxGoalCents, raisedCents, sourcesCents, orderCreditCents,
   sendTotals, autoFill, planValueCents, dollars,
 };

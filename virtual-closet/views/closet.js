@@ -14,7 +14,8 @@ const LEADS = new Set(['shop', 'request', 'sponsor']);
 function render({ centre, sum, lastSent, products, lead, words, paused, balance }) {
   if (centre.mode === 'link') {
     // The minimal cut (2026-09-21): one arrangement, whatever ?lead says.
-    const ctx = { centre, products, balance: balance || { raisedCents: 0, orders: 0, sponsors: 0 }, slug: centre.slug, name: centre.name };
+    // Every figure on the page is in the centre's own currency (Jamie, 2026-09-22).
+    const ctx = { centre, products, balance: balance || { raisedCents: 0, orders: 0, sponsors: 0 }, slug: centre.slug, name: centre.name, currency: centre.currency || money.SHOP_CURRENCY };
     return page({ title: `${centre.name} Virtual Closet`, body: linkOnly(ctx), centre, mode: 'public', nav: '' });
   }
   lead = LEADS.has(lead) ? lead : 'default';
@@ -82,8 +83,9 @@ function progress(ctx, { hero = false, strip = false } = {}) {
   return `<div class="progress${hero ? ' progress-hero' : ''}" id="progress"><div class="progress-head"><b>Shipment #${s.number}</b>${status}</div><div class="amount">${dollars(s.raised)} <small>raised of ${dollars(s.goal)} goal</small></div>${bar}<p class="fine">${line}</p>${arrived}</div>`;
 }
 
+/** The tiles read in the centre's currency: £10, £25... A sponsor pays that round number at the store through Shopify Markets. */
 function tiles(ctx) {
-  return SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${t.label}</b>${t.sub ? `<small>${esc(t.sub)}</small>` : ''}</a>`).join('');
+  return SPONSOR_TILES.map(t => `<a class="gift" href="/${ctx.slug}/sponsor/${t.key}"><b>${ctx.currency ? dollars(t.cents, ctx.currency) : t.label}</b>${t.sub ? `<small>${esc(t.sub)}</small>` : ''}</a>`).join('');
 }
 
 function amounts(ctx) {
@@ -98,6 +100,7 @@ function amounts(ctx) {
  */
 function totalLine(ctx) {
   const b = ctx.balance;
+  const cur = ctx.currency;
   const goal = Math.max(1, ctx.centre.goal_cents || money.LINK_DEFAULT_GOAL_CENTS);
   const pct = Math.min(100, Math.round((b.raisedCents / goal) * 100));
   const bar = `<div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>`;
@@ -105,16 +108,19 @@ function totalLine(ctx) {
   let line, fine;
   if (!b.raisedCents) { line = `Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.`; fine = ''; }
   else {
-    line = `RUBIES matches it: <b>${dollars(b.raisedCents * 2)}</b> of underwear and swimwear for the closet.`;
+    line = `RUBIES matches it: <b>${dollars(b.raisedCents * 2, cur)}</b> of underwear and swimwear for the closet.`;
     fine = `<p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.${b.raisedCents >= goal ? ' Goal reached, and everything from here keeps the closet stocked.' : ''}</p>`;
   }
-  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents)} <small>raised of ${dollars(goal)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
+  return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents, cur)} <small>raised of ${dollars(goal, cur)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
 }
 
 // The About RUBIES copy on the link page, as Jamie wrote it (2026-09-21).
 const LINK_ABOUT = 'RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear. No tucking or tight compression.';
 
 function linkOnly(ctx) {
+  // The menu's retail prices are the store's USD prices; a centre in another
+  // currency shows no prices here and the store shows its market's own.
+  const usd = ctx.currency === money.SHOP_CURRENCY;
   return `
 <section class="hero">
   <div class="hero-copy">
@@ -131,7 +137,7 @@ ${totalLine(ctx)}
   <div class="gifts gifts-4">${tiles(ctx)}</div>
   <p class="fine fine-after">You pay at the RUBIES online store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
-<section><h2>The styles</h2>${productGrid(ctx, { discounted: true, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off. <a href="${LINKS.how}">Learn how RUBIES works</a>.</p></section>`;
+<section><h2>The styles</h2>${productGrid(ctx, { discounted: usd, prices: usd, foot: false, note: false })}<p class="fine fine-after">Tap a style to shop it with 20% off. <a href="${LINKS.how}">Learn how RUBIES works</a>.</p></section>`;
 }
 
 function productGrid(ctx, { prices = true, discounted = false, details = false, foot = true, note = true } = {}) {

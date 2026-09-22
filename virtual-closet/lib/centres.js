@@ -89,17 +89,22 @@ async function enrol({ name, slug, notify_email, website, logo_url, city, region
   if (!notify_email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(notify_email))) throw new Error('A centre needs a notification email.');
   const clean = slug ? slugify(slug) : null;
   if (clean && (await getBySlug(clean))) throw new Error(`The slug "${clean}" is taken.`);
+  const money = require('./money');
+  const countryCode = String(country || 'US').trim().toUpperCase() === 'UK' ? 'GB' : String(country || 'US').trim().toUpperCase();
   const row = {
     slug: clean || (await uniqueSlug(name)),
     name: String(name).trim(),
     mode: 'link',
     website: website ? String(website).trim() : null,
     logo_url: logo_url || null,
-    address: { city: city || null, region: region || null, country: country || 'US' },
+    address: { city: city || null, region: region || null, country: countryCode },
+    // The centre's currency follows its country and is never edited (Jamie, 2026-09-22).
+    currency: money.currencyForCountry(countryCode),
     programmes: { closet: true, pass_it_on: !!donation_partner_id },
     donation_partner_id: donation_partner_id || null,
     statements_email: String(notify_email).trim().toLowerCase(),
-    goal_cents: Math.max(30000, Math.round(goal_cents || 0) || require('./money').LINK_DEFAULT_GOAL_CENTS),
+    // 1,000 in the centre's currency unless the centre says otherwise.
+    goal_cents: Math.max(30000, Math.round(goal_cents || 0) || money.LINK_DEFAULT_GOAL_CENTS),
     status: 'active',
     approved_at: new Date().toISOString(),
     approved_by: actor || 'operator',

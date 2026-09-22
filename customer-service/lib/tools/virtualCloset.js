@@ -6,7 +6,8 @@
 const operator = require('../../../virtual-closet/lib/operator');
 const centresLib = require('../../../virtual-closet/lib/centres');
 const boxes = require('../../../virtual-closet/lib/boxes');
-const { dollars } = require('../../../virtual-closet/lib/money');
+const money = require('../../../virtual-closet/lib/money');
+const { dollars } = money;
 
 const text = t => ({ content: [{ type: 'text', text: t }] });
 const BASE = () => process.env.VC_BASE_URL || 'http://localhost:3850';
@@ -14,19 +15,20 @@ const BASE = () => process.env.VC_BASE_URL || 'http://localhost:3850';
 /** A link-mode centre's line for vc_centres and vc_centre. */
 function linkSummary(c) {
   const b = c.balance || {};
-  return `balance ${dollars(b.balanceCents || 0)} · raised ${dollars(b.raisedCents || 0)} · redeemed ${dollars(b.redeemedCents || 0)} · ${b.orders || 0} orders, ${b.sponsors || 0} sponsors`;
+  const cur = (c.centre || c).currency;
+  return `balance ${dollars(b.balanceCents || 0, cur)} · raised ${dollars(b.raisedCents || 0, cur)} · redeemed ${dollars(b.redeemedCents || 0, cur)} · ${b.orders || 0} orders, ${b.sponsors || 0} sponsors`;
 }
 
 module.exports = [
   {
     name: 'vc_enrol_centre',
-    description: 'Virtual Closet: enrol a centre in link mode (the minimal cut). Active at once: a page at /[slug] with the shop button, sponsor tiles and running total; a balance that accrues; a digest email on days with activity. Seeds name, website, logo, city, region and country from a donation partner row when donation_partner_id is given; explicit inputs override. A logo not on the Shopify CDN is re-hosted there. Preview by default; confirmed=true creates the centre and sends the welcome email (from Jamie, with the QR attached) to notify_email.',
+    description: 'Virtual Closet: enrol a centre in link mode (the minimal cut). Active at once: a page at /[slug] with the shop button, sponsor tiles and running total; a balance that accrues; a digest email on days with activity. Seeds name, website, logo, city, region and country from a donation partner row when donation_partner_id is given; explicit inputs override. The country sets the centre\'s currency for good (US USD, CA CAD, GB GBP, Eurozone EUR, AU AUD; anything else USD): its goal, page, digest and ledger are all in it. A logo not on the Shopify CDN is re-hosted there. Preview by default; confirmed=true creates the centre and sends the welcome email (from Jamie, with the QR attached) to notify_email.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' }, notify_email: { type: 'string', description: 'Where the welcome and the activity digests go' }, slug: { type: 'string' },
-        website: { type: 'string' }, logo_url: { type: 'string' }, city: { type: 'string' }, region: { type: 'string' }, country: { type: 'string', description: 'ISO alpha-2, default US' },
-        donation_partner_id: { type: 'number' }, goal_dollars: { type: 'number', description: 'The goal the running total is drawn against; default $1,000' },
+        website: { type: 'string' }, logo_url: { type: 'string' }, city: { type: 'string' }, region: { type: 'string' }, country: { type: 'string', description: 'ISO alpha-2, default US. Sets the currency; no override.' },
+        donation_partner_id: { type: 'number' }, goal_dollars: { type: 'number', description: "The goal the running total is drawn against, in the centre's currency; default 1,000" },
         confirmed: { type: 'boolean' }, operator_email: { type: 'string' },
       },
       required: ['notify_email'],
@@ -49,6 +51,7 @@ module.exports = [
       };
       if (!row.name) return { content: [{ type: 'text', text: 'A centre needs a name (or a donation_partner_id to take it from).' }], isError: true };
       const slug = row.slug ? centresLib.slugify(row.slug) : await centresLib.uniqueSlug(row.name);
+      const currency = money.currencyForCountry(row.country);
       const { isShopifyCdnUrl } = require('../shopifyFileUpload');
       const rehost = row.logo_url && !isShopifyCdnUrl(row.logo_url);
       const preview = [
@@ -57,7 +60,7 @@ module.exports = [
         `  welcome + digests to: ${row.notify_email} (from ${process.env.VC_OPERATOR_EMAIL || process.env.ALLOWED_EMAIL || 'jamie@rubyshines.com'})`,
         `  website: ${row.website || '(none)'} · logo: ${row.logo_url || '(none)'}${rehost ? ' (will be re-hosted on the Shopify CDN)' : ''}`,
         `  where: ${[row.city, row.region, row.country].filter(Boolean).join(', ')}${row.donation_partner_id ? ` · Pass It On partner #${row.donation_partner_id}` : ''}`,
-        `  goal: ${dollars(row.goal_cents)}`,
+        `  currency: ${currency} (from country ${row.country}) · goal: ${dollars(row.goal_cents, currency)}`,
       ];
       if (!params.confirmed) return { content: [{ type: 'text', text: preview.concat('', 'Call again with confirmed=true to create the centre and send the welcome.').join('\n') }], _structured: { preview: { ...row, slug } } };
       if (rehost) {
@@ -75,18 +78,18 @@ module.exports = [
   },
   {
     name: 'vc_set_goal',
-    description: "Virtual Closet: set a centre's goal, the amount its running total is drawn against on the page and in the digest (default $1,000; the centre tells Jamie, Jamie sets it here). Minimum $300.",
-    inputSchema: { type: 'object', properties: { centre_id: { type: 'number' }, goal_dollars: { type: 'number' }, operator_email: { type: 'string' } }, required: ['centre_id', 'goal_dollars'] },
+    description: "Virtual Closet: set a centre's goal, the amount its running total is drawn against on the page and in the digest (default 1,000 in the centre's currency; the centre tells Jamie, Jamie sets it here). Minimum 300. goal_dollars is in the centre's currency.",
+    inputSchema: { type: 'object', properties: { centre_id: { type: 'number' }, goal_dollars: { type: 'number', description: "In the centre's currency" }, operator_email: { type: 'string' } }, required: ['centre_id', 'goal_dollars'] },
     handler: async ({ centre_id, goal_dollars, operator_email } = {}) => {
       const before = await centresLib.getById(centre_id);
       if (!before) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
       const c = await centresLib.update(centre_id, { goal_cents: Math.round(goal_dollars * 100) }, `operator:${operator_email || process.env.ALLOWED_EMAIL || 'operator'}`);
-      return text(`${c.name}: goal ${dollars(before.goal_cents)} → ${dollars(c.goal_cents)}.`);
+      return text(`${c.name}: goal ${dollars(before.goal_cents, c.currency)} → ${dollars(c.goal_cents, c.currency)}.`);
     },
   },
   {
     name: 'vc_redeem',
-    description: "Virtual Closet: deduct a link-mode centre's balance for a partner order it placed (kind redemption: amount_cents, order_number; idempotent on the order number; refuses more than the balance), or correct the ledger by hand (kind adjustment: signed amount_cents, note required, no balance check; use for a refunded order). Prints the balance before and after.",
+    description: "Virtual Closet: deduct a link-mode centre's balance for a partner order it placed (kind redemption: amount_cents in the centre's currency, order_number; idempotent on the order number; refuses more than the balance), or correct the ledger by hand (kind adjustment: signed amount_cents, note required, no balance check; use for a refunded order). Prints the balance before and after, in the centre's currency.",
     inputSchema: {
       type: 'object',
       properties: { centre_id: { type: 'number' }, amount_cents: { type: 'number' }, order_number: { type: 'string' }, note: { type: 'string' }, kind: { type: 'string', enum: ['redemption', 'adjustment'] }, operator_email: { type: 'string' } },
@@ -97,12 +100,13 @@ module.exports = [
       const centre = await centresLib.getById(centre_id);
       if (!centre) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
       const before = await ledger.balance(centre);
+      const cur = centre.currency;
       let after;
       try {
         after = await ledger.redeem({ centre, amountCents: amount_cents, orderNumber: order_number, note, kind, actor: `operator:${operator_email || process.env.ALLOWED_EMAIL || 'operator'}` });
-      } catch (err) { return { content: [{ type: 'text', text: `${err.message} Balance: ${dollars(before.balanceCents)}.` }], isError: true }; }
-      const what = kind === 'redemption' ? `Redeemed ${dollars(amount_cents)} against order ${order_number}` : `Adjusted by ${dollars(amount_cents)} (${note})`;
-      return { content: [{ type: 'text', text: `${after.duplicate ? `Order ${order_number} was already recorded; nothing changed` : what} for ${centre.name}. Balance ${dollars(before.balanceCents)} → ${dollars(after.balanceCents)} (raised ${dollars(after.raisedCents)}, redeemed ${dollars(after.redeemedCents)}).` }], _structured: { before, after } };
+      } catch (err) { return { content: [{ type: 'text', text: `${err.message} Balance: ${dollars(before.balanceCents, cur)}.` }], isError: true }; }
+      const what = kind === 'redemption' ? `Redeemed ${dollars(amount_cents, cur)} against order ${order_number}` : `Adjusted by ${dollars(amount_cents, cur)} (${note})`;
+      return { content: [{ type: 'text', text: `${after.duplicate ? `Order ${order_number} was already recorded; nothing changed` : what} for ${centre.name}. Balance ${dollars(before.balanceCents, cur)} → ${dollars(after.balanceCents, cur)} (raised ${dollars(after.raisedCents, cur)}, redeemed ${dollars(after.redeemedCents, cur)}).` }], _structured: { before, after } };
     },
   },
   {
@@ -143,10 +147,13 @@ module.exports = [
       if (!d) return { content: [{ type: 'text', text: 'No such centre.' }], isError: true };
       const c = d.centre;
       if (c.mode === 'link') {
-        const lines = [`${c.name} (${c.slug}) · ${c.status} · link mode · goal ${dollars(c.goal_cents)} · page ${BASE()}/${c.slug} · notifications to ${c.statements_email || '(none)'}${c.digest_through ? ` · digest through ${c.digest_through}` : ''}`];
+        const cur = c.currency;
+        const lines = [`${c.name} (${c.slug}) · ${c.status} · link mode · ${cur || 'USD'} · goal ${dollars(c.goal_cents, cur)} · page ${BASE()}/${c.slug} · notifications to ${c.statements_email || '(none)'}${c.digest_through ? ` · digest through ${c.digest_through}` : ''}`];
         lines.push(linkSummary(d) + ` · codes issued ${d.codes.issued}, used ${d.codes.used} · visits (90d) ${d.visits}${d.balance?.lastActivityAt ? ` · last activity ${d.balance.lastActivityAt}` : ''}`);
         lines.push('Ledger:');
-        for (const l of d.ledgerLines || []) lines.push(`  ${l.created_at.slice(0, 10)} · ${l.kind} · ${dollars(l.amount_cents)}${l.source_id ? ` · ${l.source_type} ${l.source_id}` : ''}${l.detail?.note ? ` · ${l.detail.note}` : ''}${l.detail?.order_number ? ` · store order ${l.detail.order_number}` : ''}`);
+        // A converted row also shows what was paid and the rate it was settled at.
+        const paidNote = l => (l.paid_currency && l.paid_currency !== (l.currency || cur || 'USD')) ? ` · paid ${dollars(l.paid_amount_cents, l.paid_currency)}${l.fx_rate ? ` at ${Number(l.fx_rate).toFixed(4)}` : ''}` : '';
+        for (const l of d.ledgerLines || []) lines.push(`  ${l.created_at.slice(0, 10)} · ${l.kind} · ${dollars(l.amount_cents, l.currency || cur)}${paidNote(l)}${l.source_id ? ` · ${l.source_type} ${l.source_id}` : ''}${l.detail?.note ? ` · ${l.detail.note}` : ''}${l.detail?.order_number ? ` · store order ${l.detail.order_number}` : ''}`);
         if (!(d.ledgerLines || []).length) lines.push('  (nothing yet)');
         return { content: [{ type: 'text', text: lines.join('\n') }], _structured: d };
       }

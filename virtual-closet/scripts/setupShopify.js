@@ -10,8 +10,8 @@
  *
  *   node virtual-closet/scripts/setupShopify.js            # preview
  *   node virtual-closet/scripts/setupShopify.js --create   # create what is missing
- *   node virtual-closet/scripts/setupShopify.js --tiles    # preview the tile variants against SPONSOR_TILES
- *   node virtual-closet/scripts/setupShopify.js --tiles --create   # replace stale tile variants with the current tiles
+ *   node virtual-closet/scripts/setupShopify.js --tiles    # preview the tile variants against SPONSOR_TILES, and each market's price for them
+ *   node virtual-closet/scripts/setupShopify.js --tiles --create   # replace stale tile variants with the current tiles, and fix each market's prices to the round number (£25 is £25)
  *   node virtual-closet/scripts/setupShopify.js --discount          # show the live discount's class and combination rules
  *   node virtual-closet/scripts/setupShopify.js --discount --create # align it: product discount on the eligible collection, combines with all
  */
@@ -21,6 +21,13 @@ const config = require('../lib/config');
 const { SPONSOR_TILES } = require('../lib/catalog');
 const { PRODUCT_TITLE } = require('../lib/sponsorship');
 const discounts = require('../lib/discounts');
+const money = require('../lib/money');
+
+// The tiles are round numbers in every currency a centre can be in (Jamie,
+// 2026-09-22): a UK sponsor pays £25, not the store's converted £21. Shopify
+// Markets does that through a fixed price on each market's price list. The
+// country is where contextual pricing is read to check what the market shows.
+const MARKET_PROBE_COUNTRY = { CAD: 'CA', GBP: 'GB', EUR: 'DE', AUD: 'AU' };
 
 const VARIANTS = [
   ...SPONSOR_TILES.map(t => ({ key: t.key, label: t.sub ? `${t.label}: ${t.sub}` : t.label, cents: t.cents })),
@@ -46,7 +53,7 @@ async function syncTiles(create) {
   console.log('Keep:', Object.keys(keep).join(', ') || 'none');
   console.log('Delete:', stale.map(v => `${v.key} (${v.label})`).join(', ') || 'none');
   console.log('Create:', missing.map(t => t.label).join(', ') || 'none');
-  if (!create) { console.log('\nRun with --tiles --create to apply.'); return; }
+  if (!create) { await syncMarketPrices(false, keep); console.log('\nRun with --tiles --create to apply.'); return; }
 
   if (missing.length) {
     const created = await shopify.createProductVariants(existing.productId, missing.map(t => ({
@@ -75,6 +82,53 @@ async function syncTiles(create) {
   }
   await config.set('sponsorship', { ...existing, variants: keep });
   console.log('Stored variants:', Object.keys(keep).join(', '));
+  await syncMarketPrices(create, keep);
+}
+
+/** The market price lists whose currency a centre can be in: [{ id, currency, market, country }]. */
+async function marketPriceLists() {
+  const data = await shopify.shopifyGraphQL(`{ catalogs(first: 50, type: MARKET) { nodes {
+    id title status priceList { id currency }
+    ... on MarketCatalog { markets(first: 5) { nodes { name handle } } } } } }`);
+  return (data.catalogs?.nodes || [])
+    .filter(c => c.status === 'ACTIVE' && c.priceList && MARKET_PROBE_COUNTRY[c.priceList.currency])
+    .map(c => ({ id: c.priceList.id, currency: c.priceList.currency, market: c.markets?.nodes?.[0]?.name || c.title, country: MARKET_PROBE_COUNTRY[c.priceList.currency] }));
+}
+
+/**
+ * Every tile (and the $1 unit) priced at the same round number in each
+ * market's currency: 10 is 10.00, whatever the currency. Prints what each
+ * market shows now against what it should; with `create`, adds the fixed
+ * prices and reads them back.
+ */
+async function syncMarketPrices(create, variants) {
+  const lists = await marketPriceLists();
+  if (!lists.length) { console.log('No market price lists found; nothing to fix.'); return; }
+  const ids = Object.values(variants).map(v => v.id);
+  for (const list of lists) {
+    const shown = await contextualPrices(ids, list.country);
+    const want = Object.values(variants).map(v => ({ variantId: v.id, label: v.label, price: { amount: (v.cents / 100).toFixed(2), currencyCode: list.currency } }));
+    const off = want.filter(w => shown[w.variantId]?.amount !== w.price.amount || shown[w.variantId]?.currencyCode !== list.currency);
+    console.log(`${list.market} (${list.currency}): ${off.length ? off.map(w => `${w.label} shows ${shown[w.variantId]?.amount ?? '?'}, should be ${w.price.amount}`).join('; ') : 'every tile is the round number'}`);
+    if (!create || !off.length) continue;
+    const data = await shopify.shopifyGraphQL(`
+      mutation($priceListId: ID!, $prices: [PriceListPriceInput!]!) {
+        priceListFixedPricesAdd(priceListId: $priceListId, prices: $prices) { prices { variant { id } price { amount currencyCode } } userErrors { field message } }
+      }`, { priceListId: list.id, prices: off.map(w => ({ variantId: w.variantId, price: w.price })) });
+    const errs = data.priceListFixedPricesAdd?.userErrors || [];
+    if (errs.length) throw new Error(`${list.market}: fixed prices failed: ${errs.map(e => e.message).join('; ')}`);
+    const after = await contextualPrices(ids, list.country);
+    const still = want.filter(w => after[w.variantId]?.amount !== w.price.amount);
+    console.log(`  fixed ${off.length} price${off.length === 1 ? '' : 's'}; now ${still.length ? `STILL OFF: ${still.map(w => `${w.label} ${after[w.variantId]?.amount}`).join(', ')}` : 'every tile is the round number'}`);
+  }
+}
+
+/** { variantId: { amount, currencyCode } } as the store shows them to that country. */
+async function contextualPrices(ids, country) {
+  const data = await shopify.shopifyGraphQL(`query($ids: [ID!]!, $country: CountryCode!) { nodes(ids: $ids) { ... on ProductVariant { id contextualPricing(context: { country: $country }) { price { amount currencyCode } } } } }`, { ids, country });
+  const out = {};
+  for (const n of data.nodes || []) if (n?.id) out[n.id] = n.contextualPricing?.price ? { amount: Number(n.contextualPricing.price.amount).toFixed(2), currencyCode: n.contextualPricing.price.currencyCode } : null;
+  return out;
 }
 
 async function showDiscount(label) {

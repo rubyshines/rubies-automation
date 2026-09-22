@@ -12,6 +12,7 @@ const boxes = require('./boxes');
 const centres = require('./centres');
 const discounts = require('./discounts');
 const sponsorship = require('./sponsorship');
+const fx = require('./fx');
 
 // Link mode (the minimal cut, 2026-09-21): no boxes. A centre's money is one
 // running balance: what came in (orders, sponsors) less what it has spent on
@@ -27,16 +28,70 @@ const RAISED_KINDS = new Set(['order_credit', 'sponsor', 'centre_add', 'adjustme
 const LINK_WINDOW_MS = 30 * 86400000;
 const SPENT_KINDS = new Set(['redemption', 'adjustment']);
 
-/** Insert a ledger row unless its source is already there. Returns the row or null when it existed. */
-async function credit({ centre, box, kind, amountCents, sourceType, sourceId, detail = {} }) {
+/**
+ * Insert a ledger row unless its source is already there. Returns the row or
+ * null when it existed. `amountCents` is in the centre's currency; `paid` is
+ * what was actually paid, in the currency it was paid in, plus the rate when
+ * one was used (Jamie, 2026-09-22: every row keeps both, for audit).
+ */
+async function credit({ centre, box, kind, amountCents, sourceType, sourceId, detail = {}, paid = null }) {
+  const currency = centreCurrency(centre);
   const { data, error } = await db().from('vc_ledger')
-    .insert({ centre_id: centre.id, box_id: box?.id || null, kind, amount_cents: amountCents, source_type: sourceType, source_id: sourceId, detail })
+    .insert({
+      centre_id: centre.id, box_id: box?.id || null, kind, amount_cents: amountCents, source_type: sourceType, source_id: sourceId, detail,
+      currency, paid_amount_cents: paid ? paid.cents : amountCents, paid_currency: paid ? paid.currency : currency, fx_rate: paid?.fxRate ?? null,
+    })
     .select('*').single();
   if (error) {
     if (/duplicate key|unique/i.test(error.message)) return null;
     throw new Error(`ledger insert: ${error.message}`);
   }
   return data;
+}
+
+function centreCurrency(centre) { return String(centre?.currency || money.SHOP_CURRENCY).toUpperCase(); }
+
+/**
+ * The product subtotal of an order in the shop's currency and, when the
+ * payload carries it, as the shopper paid (the presentment money). Sponsor
+ * lines are taken out of both: they are credited at face value on their own
+ * and never also earn the quarter. A payload without price sets (older
+ * simulations, the mirror before it carried presentment money) is shop money
+ * with nothing known about how it was paid.
+ */
+function orderMoney(order, sponsorLines = []) {
+  const set = order.subtotal_price_set || order.current_subtotal_price_set || null;
+  const shopCurrency = String(set?.shop_money?.currency_code || order.currency || order.shop_currency || money.SHOP_CURRENCY).toUpperCase();
+  const shopSubtotal = Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? set?.shop_money?.amount ?? 0) * 100);
+  const shopCents = Math.max(0, shopSubtotal - sponsorLines.reduce((sum, li) => sum + li.amountCents, 0));
+  const pm = set?.presentment_money;
+  let presentment = null;
+  if (pm && pm.amount != null && pm.currency_code) {
+    const currency = String(pm.currency_code).toUpperCase();
+    // The sponsor lines come off the presentment subtotal too; when one of them
+    // was not paid in that currency the presentment figure cannot be trusted
+    // and the order settles from shop money instead.
+    const sponsorPaid = sponsorLines.every(li => li.presentment && li.presentment.currency === currency);
+    if (sponsorPaid) presentment = { cents: Math.max(0, Math.round(parseFloat(pm.amount) * 100) - sponsorLines.reduce((sum, li) => sum + li.presentment.cents, 0)), currency };
+  }
+  return { shopCents, shopCurrency, presentment };
+}
+
+/**
+ * Settle an amount into the centre's currency (Jamie, 2026-09-22):
+ *  - paid in the centre's currency: as paid, no rate;
+ *  - the centre in the shop's currency: shop money, as the ledger always did;
+ *  - otherwise: shop money converted at the day's fx-reference rate, recorded
+ *    once and never revisited.
+ * Returns the cents to record and what was paid, for the row's audit columns.
+ */
+async function settle(centre, { shopCents, shopCurrency, presentment }) {
+  const currency = centreCurrency(centre);
+  const paid = presentment || { cents: shopCents, currency: shopCurrency };
+  if (presentment && presentment.currency === currency) return { cents: presentment.cents, paid: { cents: paid.cents, currency: paid.currency, fxRate: null } };
+  if (shopCurrency === currency) return { cents: shopCents, paid: { cents: paid.cents, currency: paid.currency, fxRate: null } };
+  const rate = await fx.rate(centre);
+  return { cents: Math.round(shopCents * rate), paid: { cents: paid.cents, currency: paid.currency, fxRate: rate } };
 }
 
 async function openBoxFor(centre) {
@@ -86,7 +141,7 @@ async function redeem({ centre, amountCents, orderNumber, note, actor = 'operato
     const existing = must(await db().from('vc_ledger').select('id').eq('centre_id', centre.id).eq('kind', 'redemption').eq('source_type', 'wholesale_order').eq('source_id', String(orderNumber)).maybeSingle(), 'redemption lookup');
     if (existing) return { ...(await balance(centre)), duplicate: true };
     const before = await balance(centre);
-    if (amountCents > before.balanceCents) throw new Error(`That is more than the balance: ${money.dollars(before.balanceCents)} available.`);
+    if (amountCents > before.balanceCents) throw new Error(`That is more than the balance: ${money.dollars(before.balanceCents, centreCurrency(centre))} available.`);
     const row = await credit({ centre, box: null, kind: 'redemption', amountCents: -amountCents, sourceType: 'wholesale_order', sourceId: String(orderNumber), detail: { note: note || null, actor } });
     if (!row) return { ...before, duplicate: true };
     await logEvent(centre.id, actor, 'ledger.redemption', { order_number: String(orderNumber), cents: amountCents });
@@ -135,9 +190,14 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
   // never also earn the quarter: the quarter is of what was spent on product.
   const s = await sponsorship.settings();
   const items = lineItems || order.line_items || [];
-  const sponsorLines = items.filter(li => sponsorship.readLineItem(li, s));
-  const sponsorCents = sponsorLines.reduce((sum, li) => sum + sponsorship.readLineItem(li, s).amountCents, 0);
-  const subtotal = Math.max(0, Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100) - sponsorCents);
+  const sponsorLines = items.map(li => sponsorship.readLineItem(li, s)).filter(Boolean);
+  const productMoney = orderMoney(order, sponsorLines);
+  // The quarter, in the centre's currency, of what the shopper paid for product.
+  const quarterFor = async centre => {
+    const settled = await settle(centre, productMoney);
+    const subtotal = Math.max(0, settled.cents);
+    return { subtotal, amountCents: money.orderCreditCents(subtotal), paid: settled.paid };
+  };
 
   // 1. A community order through a centre's link (discount code prefix VC-).
   const codes = (order.discount_codes || []).map(c => (typeof c === 'string' ? c : c.code)).filter(Boolean);
@@ -149,7 +209,8 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
     if (!centre) continue;
     codeCentre = centre;
     const box = await openBoxFor(centre);
-    const row = subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name, email } }) : null;
+    const q = productMoney.shopCents > 0 ? await quarterFor(centre) : null;
+    const row = q && q.subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: q.amountCents, sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: q.subtotal, order_number: order.order_number || order.name, email }, paid: q.paid }) : null;
     await db().from('vc_discount_codes').update({ order_id: orderId, used_at: new Date().toISOString() }).eq('code', known.code).is('order_id', null);
     if (row) {
       credited.push({ ...row, centre, box });
@@ -164,7 +225,7 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
   // Mirror rows carry no note attributes; fetch them from Shopify when a
   // sponsorship line has no properties of its own, or when a code-less order
   // may be a link order (the reconcile asks for that on recent orders).
-  const wantsAttrs = (sponsorLines.length && sponsorLines.some(li => !sponsorship.readLineItem(li, s).slug)) || (lookupAttributes && !codes.length);
+  const wantsAttrs = (sponsorLines.length && sponsorLines.some(r => !r.slug)) || (lookupAttributes && !codes.length);
   if (!orderAttrs.slug && wantsAttrs) {
     try {
       const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
@@ -178,7 +239,9 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
     const centre = await centres.getBySlug(read.slug);
     if (!centre) continue;
     const box = await openBoxFor(centre);
-    const row = await credit({ centre, box, kind: read.kind, amountCents: read.amountCents, sourceType: 'shopify_line_item', sourceId: read.lineItemId || `${orderId}-${read.kind}`, detail: { order: orderId, order_number: order.order_number || order.name, email, intended_box: read.boxNumber } });
+    // A sponsor line settles like an order: as paid in the centre's currency, else converted once.
+    const settled = await settle(centre, { shopCents: read.amountCents, shopCurrency: read.shopCurrency || productMoney.shopCurrency, presentment: read.presentment });
+    const row = await credit({ centre, box, kind: read.kind, amountCents: settled.cents, sourceType: 'shopify_line_item', sourceId: read.lineItemId || `${orderId}-${read.kind}`, detail: { order: orderId, order_number: order.order_number || order.name, email, intended_box: read.boxNumber }, paid: settled.paid });
     if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', `ledger.${read.kind}`, { order: orderId, cents: row.amount_cents }); }
   }
 
@@ -186,12 +249,13 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
   // from the link within the window. One credit per order, and only the
   // buyer's first closet order, so a spent code that Shopify stripped at
   // checkout does not turn into a second credit here.
-  if (!codes.length && subtotal > 0 && orderAttrs.slug && orderAttrs.sinceMs) {
+  if (!codes.length && productMoney.shopCents > 0 && orderAttrs.slug && orderAttrs.sinceMs) {
     const fresh = Date.now() - orderAttrs.sinceMs <= LINK_WINDOW_MS;
     const centre = fresh ? await centres.getBySlug(orderAttrs.slug) : null;
     if (centre && !(await hasClosetOrder(email))) {
       const box = await openBoxFor(centre);
-      const row = await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { attributed: 'link', since: new Date(orderAttrs.sinceMs).toISOString(), subtotal_cents: subtotal, order_number: order.order_number || order.name, email } });
+      const q = await quarterFor(centre);
+      const row = q.subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: q.amountCents, sourceType: 'shopify_order', sourceId: orderId, detail: { attributed: 'link', since: new Date(orderAttrs.sinceMs).toISOString(), subtotal_cents: q.subtotal, order_number: order.order_number || order.name, email }, paid: q.paid }) : null;
       if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents, attributed: 'link' }); }
     }
   }
@@ -273,13 +337,15 @@ async function reconcile({ days = 45 } = {}) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const s = await sponsorship.settings();
   const variantIds = s?.variants ? Object.values(s.variants).map(v => v.id) : [];
-  const orders = must(await db().from('orders').select('shopify_order_id, order_number, customer_email, discount_codes, subtotal_price, financial_status, created_at').gte('created_at', since).order('created_at'), 'orders');
+  // The mirror carries both shop money and what the shopper paid (presentment),
+  // so a non-USD centre's orders settle here exactly as they do off the webhook.
+  const orders = must(await db().from('orders').select('shopify_order_id, order_number, customer_email, discount_codes, subtotal_price, shop_currency, presentment_currency, presentment_subtotal_price, financial_status, created_at').gte('created_at', since).order('created_at'), 'orders');
   let checked = 0, credited = 0;
   for (const o of orders) {
     const codes = (o.discount_codes || []).map(c => (typeof c === 'string' ? c : c.code)).filter(c => /^VC-/i.test(c || ''));
     let lineItems = [];
     if (variantIds.length) {
-      lineItems = must(await db().from('order_line_items').select('shopify_line_item_id, shopify_variant_id, quantity, unit_price, custom_attributes').eq('shopify_order_id', o.shopify_order_id).in('shopify_variant_id', variantIds), 'line items');
+      lineItems = must(await db().from('order_line_items').select('shopify_line_item_id, shopify_variant_id, quantity, unit_price, unit_price_currency, presentment_unit_price, presentment_unit_price_currency, custom_attributes').eq('shopify_order_id', o.shopify_order_id).in('shopify_variant_id', variantIds), 'line items');
     }
     // A code-less order from the last two days may be a link order whose
     // attribution only exists as note attributes, which the mirror lacks;
@@ -287,13 +353,18 @@ async function reconcile({ days = 45 } = {}) {
     const recent = new Date(o.created_at) >= new Date(Date.now() - 2 * 86400000);
     if (!codes.length && !lineItems.length && !recent) continue;
     checked++;
+    const shopCurrency = o.shop_currency || money.SHOP_CURRENCY;
     const { credited: rows } = await recordOrder({
       id: String(o.shopify_order_id).split('/').pop(), order_number: o.order_number, email: o.customer_email,
-      discount_codes: codes, subtotal_price: o.subtotal_price, financial_status: o.financial_status,
+      discount_codes: codes, subtotal_price: o.subtotal_price, financial_status: o.financial_status, currency: shopCurrency,
+      subtotal_price_set: o.presentment_currency ? {
+        shop_money: { amount: String(o.subtotal_price ?? 0), currency_code: shopCurrency },
+        presentment_money: { amount: String(o.presentment_subtotal_price ?? 0), currency_code: o.presentment_currency },
+      } : undefined,
     }, { lineItems, emit: false, lookupAttributes: !codes.length && !lineItems.length });
     credited += rows.length;
   }
   return { checked, credited };
 }
 
-module.exports = { recordOrder, reconcile, credit, balance, balanceFromRows, lines, redeem, digestActivity, digestFromRows, LINK_WINDOW_MS };
+module.exports = { recordOrder, reconcile, credit, balance, balanceFromRows, lines, redeem, digestActivity, digestFromRows, orderMoney, settle, centreCurrency, LINK_WINDOW_MS };

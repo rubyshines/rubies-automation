@@ -12,7 +12,10 @@
  */
 const { sendEmail } = require('../../shared/sendgridClient');
 const { esc } = require('../views/layout');
-const { dollars } = require('./money');
+const money = require('./money');
+const { dollars } = money;
+// A link-mode centre's figures are in its own currency (Jamie, 2026-09-22).
+const cur = centre => centre?.currency || money.SHOP_CURRENCY;
 const { COLOURS, LOGO_PNG, FONT_STACK } = require('./brand');
 
 const BASE = process.env.VC_BASE_URL || `http://localhost:${process.env.PORT || 3850}`;
@@ -195,18 +198,19 @@ async function welcomeLink({ centre, to }) {
 
 /** Link mode: at most one a day, only on a day with activity. From care@, so a reply lands in CS; the welcome is the one from Jamie (Jamie, 2026-09-21). */
 async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, sponsorCents = 0, balanceCents = 0, raisedCents = 0 }) {
-  const goalCents = centre.goal_cents || require('./money').LINK_DEFAULT_GOAL_CENTS;
+  const goalCents = centre.goal_cents || money.LINK_DEFAULT_GOAL_CENTS;
+  const c = cur(centre);
   const lines = [];
-  if (orders) lines.push(`${orders} order${plural(orders, '', 's')} through your link put <b>${dollars(orderCents)}</b> in.`);
-  if (sponsors) lines.push(`${sponsors} sponsor${plural(sponsors, '', 's')} put <b>${dollars(sponsorCents)}</b> in.`);
+  if (orders) lines.push(`${orders} order${plural(orders, '', 's')} through your link put <b>${dollars(orderCents, c)}</b> in.`);
+  if (sponsors) lines.push(`${sponsors} sponsor${plural(sponsors, '', 's')} put <b>${dollars(sponsorCents, c)}</b> in.`);
   const textLines = lines.map(l => l.replace(/<[^>]+>/g, ''));
   // The subject leads with the money that came in (Jamie, 2026-09-21): "$49.60 added to [Centre]'s Virtual Closet today".
-  const subject = `${dollars(orderCents + sponsorCents)} added to ${centre.name}'s Virtual Closet today`;
+  const subject = `${dollars(orderCents + sponsorCents, c)} added to ${centre.name}'s Virtual Closet today`;
   return deliver({ to, subject, tag: 'activity',
-    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents)}. Raised so far: ${dollars(raisedCents)} of your ${dollars(goalCents)} goal. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
+    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents, c)}. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
     html: layout(esc(subject),
       lines.map(p).join('') +
-      p(`Your balance is <b>${dollars(balanceCents)}</b>. Raised so far: ${dollars(raisedCents)} of your ${dollars(goalCents)} goal.`) +
+      p(`Your balance is <b>${dollars(balanceCents, c)}</b>. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
       p(`To order, email Jamie at <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>.`), '', { centre }) });
 }
@@ -337,10 +341,12 @@ async function requestEnded({ centre, request }) {
 async function sponsorThanks({ centre, to, amountCents, box, raised, goal, city }) {
   if (centre.mode === 'link') {
     // Link mode: "Your $25 went to [Centre]'s Virtual Closet. Thanks for your support." (Jamie, 2026-09-21)
-    const total = raised ? p(`<b>${dollars(raised)}</b> raised so far. RUBIES matches it: ${dollars(raised * 2)} of underwear and swimwear for the closet.`) : '';
+    // The amount is what landed in the centre's currency: a UK centre's sponsor reads pounds.
+    const c = cur(centre);
+    const total = raised ? p(`<b>${dollars(raised, c)}</b> raised so far. RUBIES matches it: ${dollars(raised * 2, c)} of underwear and swimwear for the closet.`) : '';
     return deliver({ to, subject: `Thank you from ${centre.name}'s Virtual Closet`, tag: 'sponsor-thanks',
-      text: `Your ${dollars(amountCents)} went to ${centre.name}'s Virtual Closet. Thanks for your support.`,
-      html: layout(`Thank you from ${esc(centre.name)}'s Virtual Closet`, p(`Your <b>${dollars(amountCents)}</b> went to ${esc(centre.name)}'s Virtual Closet. Thanks for your support.`) + total + btn(`${BASE}/${centre.slug}`, `${centre.name}'s Virtual Closet`), '', { centre }) });
+      text: `Your ${dollars(amountCents, c)} went to ${centre.name}'s Virtual Closet. Thanks for your support.`,
+      html: layout(`Thank you from ${esc(centre.name)}'s Virtual Closet`, p(`Your <b>${dollars(amountCents, c)}</b> went to ${esc(centre.name)}'s Virtual Closet. Thanks for your support.`) + total + btn(`${BASE}/${centre.slug}`, `${centre.name}'s Virtual Closet`), '', { centre }) });
   }
   const pairs = Math.max(1, Math.round((amountCents * 2) / 3200));
   return deliver({ to, subject: `Thank you from ${centre.name}'s closet`, tag: 'sponsor-thanks',
