@@ -154,6 +154,13 @@ test('the link-only page has one door, four tiles, the total line and none of th
   assert.ok(empty.includes('$0 <small>raised of $1,000 goal</small>') && empty.includes('width:0%'));
   assert.ok(html.includes('RUBIES matches it: <b>$176</b> of underwear and swimwear for the closet.'));
   assert.ok(html.includes('From 9 orders and 3 sponsors.'));
+  // The count line names only what there is, never a zero.
+  const only = (orders, sponsors) => closetView.render({ centre, products: MENU, lead: '', balance: { raisedCents: 513, orders, sponsors } });
+  assert.ok(only(1, 0).includes('<p class="fine">From 1 order.</p>'), only(1, 0).match(/<p class="fine">From[^<]*/)?.[0]);
+  assert.ok(only(0, 1).includes('<p class="fine">From 1 sponsor.</p>'));
+  assert.ok(only(2, 1).includes('<p class="fine">From 2 orders and 1 sponsor.</p>'));
+  assert.ok(!/\b0 (orders?|sponsors?)/.test(only(1, 0) + only(0, 1)), 'no zero counts');
+  assert.ok(!only(0, 0).includes('From '), 'an adjustment-only balance has no count line');
   assert.ok(html.includes('Shop 20% off gender-affirming gear.') && html.includes('RUBIES will donate a quarter of the value of your order to the closet.'));
   assert.ok(html.includes('under-skinned.svg'), 'the mirror illustration beside the hero, not a product photo');
   assert.equal((html.match(/\/attic\/sponsor\//g) || []).length, 4, 'four sponsor tiles');
