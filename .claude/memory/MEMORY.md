@@ -33,6 +33,7 @@
 - [Tech & Website](domain_tech.md) — webhooks, Railway, sync pipelines, shared clients, Gmail
 
 ## Active Projects
+- [Compare-at prices](project_compare_at_prices.md) — set_product_prices learns compare-at, audit every variant where it differs from price, bring them in line on Jamie's say-so
 - [Advisor Accuracy Rebuild](project_advisor_accuracy_rebuild.md) — eval-first attack on draft quality: measurement repair, founder rule audits, prompt-variant A/B, fair Opus 5 test
 - [B2B commitments](project_b2b_commitments.md) — one list of what Jamie owes and is waiting on; On Me derived from it; Wispr notes fetched by the server
 - [B2B deliverables](project_b2b_deliverables.md) — one piece of internal work above many promises; the fold To do rows sit under; shipping completes nothing

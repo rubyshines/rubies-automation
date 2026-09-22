@@ -378,14 +378,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: refactor (small)
 - Notes: The only open item from the closed CS Advisor Efficiency project. `cs_tone_samples` carries ~50 active samples injected on every advisor call; curating to roughly half saves ~2K tokens per call with no model change. Sweep for contradictions with current voice rulings at the same time (see domain_cs.md: tone samples outrank rules).
 
-## Stale compare-at prices understate "You save" in the cart
-- Parked: 2026-09-22
-- Domains: inventory, marketing, tech
-- Type: bug
-- Priority: medium
-- Notes: Eight products (AJ, Charlie, Sassy, Ruby, Cheeky, Serena, Flo, Naomi gaff; 171 variants) still carry the compare-at price from before their last price rise, e.g. AJ adult $32 with compare-at $28. The theme's cart drawer sums compare-at prices when present and prints the difference as "You save", so every discount on those products reads $4 a pair low, and a discount smaller than the gap hides the line. Confirmed on the live theme 2026-09-22 (two adult AJ at 20% off shows "You save: $4.80" on $51.20). Nothing in rubies-automations writes compare-at: `set_product_prices` sets prices only, and the old sheet sync is gone. Two fixes: (1) extend `set_product_prices` (or a sibling) to clear or set compare-at so the data is right; (2) a one-line guard in `snippets/cart-drawer.liquid` (rubies-ecom-v4) so a compare-at below the price is ignored. The theme repo's `feedback_theme_rules.md` still says product data flows through the spreadsheet; that note is stale too.
-- Resume when: before the next sale or price change, or with the Virtual Closet theme merge.
-
 ## RESOLVED 2026-09-22 — Virtual Closet: the 30-day browser attribution window on the store
 - Parked: 2026-09-18
 - Last touched: 2026-09-18
