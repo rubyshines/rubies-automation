@@ -228,7 +228,7 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   });
   assert.ok(!/undefined|NaN/.test(out), out);
   assert.ok(out.includes('Your RUBIES Virtual Closet is ready. (from jamie@rubyshines.com)'));
-  assert.ok(out.includes('attachments: closet-qr.png, closet-sign.pdf'), 'the welcome carries the QR and the printable sign');
+  assert.ok(out.includes('attachments: closet-qr.png, attic-virtual-closet-sign.pdf'), 'the welcome carries the QR and the printable sign');
   assert.ok(out.includes('Attached is a table sign you can print'));
   assert.ok(out.includes('/attic/qr-sign'), 'the welcome says where to reprint the sign');
   assert.ok(out.includes("$49.60 added to The Attic's Virtual Closet today (from care@rubyshines.com)"));
