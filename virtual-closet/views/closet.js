@@ -109,7 +109,11 @@ function totalLine(ctx) {
   if (!b.raisedCents) { line = `Be the first. Every order and every sponsor dollar counts for ${esc(ctx.name)}'s Virtual Closet.`; fine = ''; }
   else {
     line = `RUBIES matches it: <b>${dollars(b.raisedCents * 2, cur)}</b> of underwear and swimwear for the closet.`;
-    fine = `<p class="fine">From ${n(b.orders, 'order', 'orders')} and ${n(b.sponsors, 'sponsor', 'sponsors')}.${b.raisedCents >= goal ? ' Goal reached, and everything from here keeps the closet stocked.' : ''}</p>`;
+    // Only what there is: "From 1 order.", "From 2 sponsors.", "From 3 orders and 1 sponsor." Never "0 sponsors" (Jamie, 2026-09-22).
+    const parts = [b.orders ? n(b.orders, 'order', 'orders') : null, b.sponsors ? n(b.sponsors, 'sponsor', 'sponsors') : null].filter(Boolean);
+    const from = parts.length ? `From ${parts.join(' and ')}.` : '';
+    const reached = b.raisedCents >= goal ? 'Goal reached, and everything from here keeps the closet stocked.' : '';
+    fine = from || reached ? `<p class="fine">${[from, reached].filter(Boolean).join(' ')}</p>` : '';
   }
   return `<section class="fund fund-link" id="total"><div class="fund-copy"><div class="amount">${dollars(b.raisedCents, cur)} <small>raised of ${dollars(goal, cur)} goal</small></div>${bar}<p>${line}</p>${fine}</div></section>`;
 }

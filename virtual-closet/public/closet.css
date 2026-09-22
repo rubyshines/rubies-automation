@@ -276,7 +276,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
 @media (max-width: 749px) {
   .has-mobile { aspect-ratio: var(--mob) !important; }
   .gifts-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .hd-link { flex-direction: column; align-items: flex-start; }
+  /* On a phone the RUBIES × centre pair sits above the closet's name (Jamie, 2026-09-22). */
+  .hd-link { flex-direction: column-reverse; align-items: flex-start; gap: 14px; }
   .three, .two, .sponsor-block, .row, .steps, .steps-4 { grid-template-columns: 1fr; }
   .item { grid-template-columns: 72px 1fr; gap: 10px; }
   .doors-3 { gap: 20px; }
