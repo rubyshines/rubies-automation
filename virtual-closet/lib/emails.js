@@ -77,7 +77,8 @@ async function deliver({ to, subject, html, text, tag, from = FROM, attachments 
     console.log(`\n[vc email → ${to}] ${subject} (from ${from.fromEmail})\n  ${(text || '').split('\n').filter(Boolean).slice(0, 3).join('\n  ')}\n  links: ${links.join('\n         ')}${att}\n`);
     return { ok: true, console: true };
   }
-  const r = await sendEmail({ to, subject, html, text: text || undefined, ...from, attachments });
+  // Links as written: a centre pastes them into posts and a tracked link is not shareable, and the tracking domain has no certificate anyway (2026-09-22).
+  const r = await sendEmail({ to, subject, html, text: text || undefined, ...from, attachments, trackClicks: false });
   if (!r.ok) console.warn(`[vc email] ${tag || subject} to ${to} failed: ${r.error}`);
   return r;
 }

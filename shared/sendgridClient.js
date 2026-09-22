@@ -70,9 +70,10 @@ async function sendTemplate({ to, templateId, data = {}, fromName = 'RUBIES', fr
  * @param {string} [opts.fromName='RUBIES']
  * @param {string} [opts.fromEmail='care@rubyshines.com']
  * @param {Array<{content:string, filename:string, type?:string, disposition?:string}>} [opts.attachments] base64 content, SendGrid's own shape
+ * @param {boolean} [opts.trackClicks=true] false sends the links as written (no SendGrid click-tracking rewrite)
  * @returns {Promise<{ok:boolean, statusCode:?number, error?:string}>}
  */
-async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEmail = 'care@rubyshines.com', attachments }) {
+async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEmail = 'care@rubyshines.com', attachments, trackClicks = true }) {
   const sgMail = getSendgridClient();
   if (!sgMail) return { ok: false, statusCode: null, error: 'SendGrid not configured (SENDGRID_API_KEY missing)' };
   try {
@@ -80,6 +81,10 @@ async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEma
     if (html) msg.html = html;
     if (text) msg.text = text;
     if (attachments?.length) msg.attachments = attachments.map(a => ({ disposition: 'attachment', ...a }));
+    // Click tracking rewrites every link through url5744.rubyshines.com, which
+    // has no certificate, so a tracked link fails in the browser (2026-09-22).
+    // Senders whose links must simply work pass trackClicks: false.
+    if (!trackClicks) msg.trackingSettings = { clickTracking: { enable: false, enableText: false } };
     const [resp] = await sgMail.send(msg);
     const statusCode = resp?.statusCode ?? null;
     return { ok: statusCode >= 200 && statusCode < 300, statusCode };
