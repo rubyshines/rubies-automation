@@ -290,3 +290,67 @@ test('link-mode emails carry RUBIES × the centre logo', async () => {
   assert.ok(html.includes('href="https://attic.example.org"'), 'the centre logo links to its website');
   assert.ok(!emails.layout('t', '<p>x</p>').includes('>×<'), 'closet-mode emails keep the plain wordmark');
 });
+
+// ---- a tap on Shop or on a style (2026-09-22) -------------------------------
+test('a style tap goes through Shop with the product as its destination, and only store paths are honoured', () => {
+  const discounts = require('../../virtual-closet/lib/discounts');
+  const centre = { id: 1, slug: 'attic', name: 'The Attic', mode: 'link', logo_url: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/attic.png', address: { city: 'Philadelphia' } };
+  const html = closetView.render({ centre, products: MENU, lead: '', balance: { raisedCents: 0, orders: 0, sponsors: 0 } });
+  for (const p of MENU) assert.ok(html.includes(`href="/attic/shop?to=${encodeURIComponent(`/products/${p.handle}`)}"`), `${p.name} taps through Shop`);
+  assert.ok(!html.includes('href="https://rubyshines.com/products/'), 'no style links straight to the store');
+  assert.equal(discounts.storePath('/products/the-aj-shaping-underwear'), '/products/the-aj-shaping-underwear');
+  assert.equal(discounts.storePath('/collections/swimwear'), '/collections/swimwear');
+  for (const bad of ['https://evil.example/products/x', '//evil.example', '/admin', '/products/../x', '', null, '/products/x?y=1'])
+    assert.equal(discounts.storePath(bad), '/collections/all', `${bad} falls back`);
+});
+
+test('a second tap on the same device reuses its unused code; a used code or another centre\'s code mints a fresh one', async () => {
+  const discounts = require('../../virtual-closet/lib/discounts');
+  const shopifyPath = require.resolve('../../customer-service/lib/shopify');
+  const hadShopify = require.cache[shopifyPath];
+  const minted = [];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addCodeToPriceRule: async (id, code) => { minted.push(code); } } };
+  const hadLive = process.env.RAILWAY_DEPLOYMENT_ID;
+  process.env.RAILWAY_DEPLOYMENT_ID = 'test';
+  fake.tables.vc_config.push({ key: 'discount', value: { id: 'gid://shopify/DiscountCodeNode/9', numericId: '9', title: 'Virtual Closet 20%' } });
+  require('../../virtual-closet/lib/config').clear();
+  try {
+    const attic = { id: 1, slug: 'attic' }, other = { id: 2, slug: 'other' };
+    const rowsBefore = fake.tables.vc_discount_codes.length;
+    const got = {};
+    await quiet(async () => { got.v1 = await discounts.shopVisit(attic, { redirect: '/products/the-aj-shaping-underwear' }); });
+    const v1 = got.v1;
+    assert.ok(/^VC-ATTIC-[0-9A-F]{6}$/.test(v1.code), v1.code);
+    assert.equal(v1.url, `https://rubyshines.com/discount/${v1.code}?redirect=%2Fproducts%2Fthe-aj-shaping-underwear`);
+    assert.equal(v1.reused, false);
+    assert.equal(minted.length, 1);
+
+    const v2 = await discounts.shopVisit(attic, { redirect: '/collections/all', previousCode: v1.code });
+    assert.equal(v2.code, v1.code, 'same device, unused code: reused');
+    assert.equal(v2.reused, true);
+    assert.equal(v2.url, `https://rubyshines.com/discount/${v1.code}?redirect=%2Fcollections%2Fall`, 'the destination still follows the tap');
+    assert.equal(minted.length, 1, 'nothing minted');
+    assert.equal(fake.tables.vc_discount_codes.length - rowsBefore, 1, 'one row for the device');
+
+    const v3 = await discounts.shopVisit(other, { previousCode: v1.code });
+    assert.notEqual(v3.code, v1.code, 'another centre never inherits the code');
+    assert.ok(v3.code.startsWith('VC-OTHER-'));
+    assert.equal(minted.length, 2);
+
+    fake.tables.vc_discount_codes.find(r => r.code === v1.code).order_id = '5001';
+    const v4 = await discounts.shopVisit(attic, { previousCode: v1.code });
+    assert.notEqual(v4.code, v1.code, 'a used code is not reused');
+    assert.equal(v4.reused, false);
+    assert.equal(minted.length, 3);
+
+    const v5 = await discounts.shopVisit(attic, { previousCode: 'VC-ATTIC-NOPE00' });
+    assert.equal(v5.reused, false, 'a code we never issued mints');
+
+    delete process.env.RAILWAY_DEPLOYMENT_ID;
+    await quiet(async () => { got.off = await discounts.shopVisit(attic, { redirect: '/products/the-brooke-bra', previousCode: v4.code }); });
+    assert.deepEqual(got.off, { url: 'https://rubyshines.com/products/the-brooke-bra', code: null }, 'off Railway: the store, no code, nothing to remember');
+  } finally {
+    if (hadLive === undefined) delete process.env.RAILWAY_DEPLOYMENT_ID; else process.env.RAILWAY_DEPLOYMENT_ID = hadLive;
+    if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
+  }
+});

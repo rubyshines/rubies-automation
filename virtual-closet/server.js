@@ -98,12 +98,26 @@ app.get('/:slug', loadCentre, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Shop: issues a hidden single-use code and sends the shopper to the store (money step wires the code; until then the store).
+// Shop, or a tap on a style: a hidden single-use code applied at the store,
+// landing on the product when `to` names one. The code is remembered in a
+// cookie so a second tap on the same device reuses it while it is unused.
+const SHOP_COOKIE = 'vc_shop';
 app.get('/:slug/shop', loadCentre, async (req, res, next) => {
   try {
     const discounts = safeRequire('./lib/discounts');
-    if (discounts) return res.redirect(302, await discounts.shopUrlFor(req.centre));
-    res.redirect(302, `${catalog.STORE}/collections/all`);
+    if (!discounts) return res.redirect(302, `${catalog.STORE}${req.query.to && /^\/(products|collections)\//.test(String(req.query.to)) ? req.query.to : '/collections/all'}`);
+    const remembered = (auth.readCookie(req, SHOP_COOKIE) || '').split('|');
+    const previousCode = remembered[0] === req.centre.slug ? remembered[1] : null;
+    const visit = await discounts.shopVisit(req.centre, { redirect: req.query.to, previousCode });
+    if (visit.code) {
+      // Readable by script on purpose: the store's theme reads it later for
+      // attribution, and the code is no secret (it is in the URL we send to).
+      const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      const host = String(req.hostname || '');
+      const domain = /(^|\.)rubyshines\.com$/i.test(host) ? '; Domain=.rubyshines.com' : '';
+      res.setHeader('Set-Cookie', `${SHOP_COOKIE}=${encodeURIComponent(`${req.centre.slug}|${visit.code}`)}; Path=/; SameSite=Lax; Max-Age=${30 * 86400}${domain}${secure ? '; Secure' : ''}`);
+    }
+    res.redirect(302, visit.url);
   } catch (err) { next(err); }
 });
 

@@ -4,7 +4,7 @@
  * (wireframes 1ag, 1c, 1d, 1e, 2a) and the progress module states (1f).
  */
 const { page, esc, LINKS, img, productCard, illustration } = require('./layout');
-const { SPONSOR_TILES, productUrl } = require('../lib/catalog');
+const { SPONSOR_TILES } = require('../lib/catalog');
 const money = require('../lib/money');
 const { dollars } = money;
 const { displaySizes } = require('../lib/centres');
@@ -139,7 +139,8 @@ function productGrid(ctx, { prices = true, discounted = false, details = false, 
     const price = discounted
       ? `<s>${dollars(p.retail_cents)}</s> <b>${dollars(Math.round(p.retail_cents * 0.8))}</b>${note ? ' <span class="fine">with your 20%</span>' : ''}`
       : prices ? dollars(p.retail_cents) : '';
-    const href = details ? `/${ctx.slug}/style/${p.key}` : productUrl(p);
+    // A style tap goes through Shop so the 20% and the centre travel with it.
+    const href = details ? `/${ctx.slug}/style/${p.key}` : `/${ctx.slug}/shop?to=${encodeURIComponent(`/products/${p.handle}`)}`;
     return productCard(p, { href, price, sub: details ? 'Details' : '' });
   }).join('');
   const line = details ? `Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.` : `Tap a style to shop it with 20% off. Sizes at ${esc(ctx.name)}: ${esc(ctx.sizes)}.`;
