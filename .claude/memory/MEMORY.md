@@ -37,8 +37,6 @@
 - [B2B commitments](project_b2b_commitments.md) — one list of what Jamie owes and is waiting on; On Me derived from it; Wispr notes fetched by the server
 - [B2B deliverables](project_b2b_deliverables.md) — one piece of internal work above many promises; the fold To do rows sit under; shipping completes nothing
 - [Mailing Address Change](project_mailing_address_change.md) — tracked checklist for moving the business mailing address to The Fashion Zone
-- [Virtual Closet, the minimal cut](project_virtual_closet.md) — link-only pilot on the built app: one shop button, four sponsor tiles, a balance, a digest email; enrol and redeem by tool
-- [Virtual Closet, per-centre currency](project_closet_currency.md) — each centre's ledger, goal, page and emails in its own currency from its country; cross-currency orders converted once at the fx-reference rate
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

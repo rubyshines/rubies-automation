@@ -8,6 +8,22 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Virtual Closet: the matching claim for 30% centres
+- Parked: 2026-09-22
+- Domains: community, marketing
+- Type: decision
+- Priority: before any non-US centre has a sponsor
+- Notes: The page's total band, the sponsor thank-you and the thanks page say "RUBIES matches it: [raised × 2] of underwear and swimwear", which is true at the 50% partner rate. A centre outside the US and Australia buys at 30%, so its money buys raised / 0.7 of product (CA$88 buys about CA$126, not CA$176) and "matches" is untrue there. Lumenus (CAD) is the first such centre; nothing shows until it has a balance. Options: (a) for 30% centres drop "matches" and state the product value at their rate; (b) decide the closet match is 1:1 everywhere regardless of wholesale terms. Recommendation: (a). The theme's cart line says "will be donated" and is unaffected; the welcome already quotes the country rate.
+- Resume when: before Lumenus, or any non-US centre, has its first sponsor.
+- Last touched: 2026-09-22
+
+## Virtual Closet: test clean-up after gift-card test orders
+- Parked: 2026-09-22
+- Domains: community, tech
+- Type: build (small)
+- Notes: A `vc_test_reset` tool and a `/reset` cookie link were discussed on 2026-09-22 for cleaning up after gift-card test orders (retire the code, clear the closet cookies, reverse the test ledger row) and not built. Today: refund to the gift card, `vc_redeem` with kind adjustment for the row, and a fresh email per first-order test.
+- Last touched: 2026-09-22
+
 ## Theme: cart drawer should ignore a compare-at below price
 - Parked: 2026-09-22
 - Domains: marketing, tech
