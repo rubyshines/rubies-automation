@@ -42,9 +42,9 @@ const MENU = [
     image: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-01.jpg?v=1777394698', hover: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/RUBY-BLK-S-char.png', colours: ['Black', 'Pink'] },
 ];
 
-// Sponsor tiles: plain even dollars (Jamie, 2026-09-21). Every tile is the
-// hidden sponsorship product's $1 unit variant times the amount, so nothing
-// on the store changes when these do.
+// Sponsor tiles: plain even dollars (Jamie, 2026-09-21), each its own variant
+// on the hidden sponsorship product (Jamie, 2026-09-22). Changing a tile here
+// means re-running `scripts/setupShopify.js --tiles --create` on the store.
 const SPONSOR_TILES = [
   { key: 'ten',        cents: 1000,  label: '$10' },
   { key: 'twentyfive', cents: 2500,  label: '$25' },

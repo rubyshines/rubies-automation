@@ -43,14 +43,42 @@ async function ensureDiscount() {
   return value;
 }
 
-/** Issue a code for this click and return the store URL that applies it. */
-async function shopUrlFor(centre, { redirect = '/collections/all' } = {}) {
+/**
+ * Where on the store a tap may land. Only a product or collection path,
+ * never a full URL, so the closet's redirect cannot be pointed off-site.
+ */
+function storePath(to) {
+  const t = String(to || '');
+  return /^\/(products|collections)\/[a-z0-9][a-z0-9-]*\/?$/i.test(t) ? t : '/collections/all';
+}
+
+/**
+ * A tap on Shop or on a style. Reuses the shopper's previous code for this
+ * centre while it is still unused (the same device tapping twice gets one
+ * code, not a trail of them); otherwise mints a fresh one. Returns the store
+ * URL that applies the code plus the code itself, for the cookie.
+ */
+async function shopVisit(centre, { redirect = '/collections/all', previousCode = null } = {}) {
+  redirect = storePath(redirect);
+  // What the theme needs, on the landing path: slug, code, tap time, name,
+  // and `used` when the code this device had before was already spent (a
+  // fresh code is minted, but Shopify will refuse it at checkout, so the cart
+  // says so up front). Kept in the theme's own cookie for 30 days.
+  const landing = (code, used) => `${redirect}?vc=${encodeURIComponent([centre.slug, code, Date.now(), centre.name || '', used ? 'used' : ''].join('|'))}`;
   // A public page click writes a permanent code to the live store, so off the
   // real deployment this sends the shopper to the store without one. Guarding
   // the click rather than the store call keeps ensureDiscount's lookup working
   // locally, which is what tells us the discount is configured at all.
   if (!allowLiveWrite(`mint a Shopify discount code for ${centre.slug}`)) {
-    return `${STORE}${redirect}`;
+    return { url: `${STORE}${redirect}`, code: null };
+  }
+  let used = false;
+  if (previousCode) {
+    const known = await centreForCode(previousCode);
+    if (known && known.centre_id === centre.id) {
+      if (!known.order_id) return { url: applyUrl(known.code, landing(known.code, false)), code: known.code, reused: true };
+      used = true;
+    }
   }
   const discount = await ensureDiscount();
   const shopify = require('../../customer-service/lib/shopify');
@@ -62,7 +90,16 @@ async function shopUrlFor(centre, { redirect = '/collections/all' } = {}) {
     }
   }
   must(await db().from('vc_discount_codes').insert({ centre_id: centre.id, code }), 'record code');
+  return { url: applyUrl(code, landing(code, used)), code, reused: false, used };
+}
+
+function applyUrl(code, redirect) {
   return `${STORE}/discount/${encodeURIComponent(code)}?redirect=${encodeURIComponent(redirect)}`;
+}
+
+/** Issue a code for this click and return the store URL that applies it. */
+async function shopUrlFor(centre, opts = {}) {
+  return (await shopVisit(centre, opts)).url;
 }
 
 /** Which centre a discount code belongs to (null when it is not ours). */
@@ -72,4 +109,4 @@ async function centreForCode(code) {
   return row;
 }
 
-module.exports = { TITLE, PERCENT, ensureDiscount, shopUrlFor, centreForCode, codeFor };
+module.exports = { TITLE, PERCENT, ensureDiscount, shopVisit, shopUrlFor, storePath, centreForCode, codeFor };

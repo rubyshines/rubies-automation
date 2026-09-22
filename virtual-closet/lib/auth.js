@@ -202,5 +202,5 @@ module.exports = {
   issueToken, consumeToken, peekToken,
   createSession, setSessionCookie, clearSessionCookie, sessionFromRequest, revokeSession, revokeAllSessions,
   attach, requireUser, requireAdmin, setSignupCookie, readSignupCookie,
-  isPersonalEmail, domainOf, logEvent,
+  isPersonalEmail, domainOf, logEvent, readCookie,
 };

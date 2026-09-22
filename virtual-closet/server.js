@@ -98,13 +98,41 @@ app.get('/:slug', loadCentre, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Shop: issues a hidden single-use code and sends the shopper to the store (money step wires the code; until then the store).
+// Shop, or a tap on a style: a hidden single-use code applied at the store,
+// landing on the product when `to` names one. The code is remembered in a
+// cookie on this host so a second tap on the same device reuses it while it
+// is unused. The store learns about the closet from a `vc` parameter on the
+// landing path (slug, code, tap time, centre name, and `used` when this
+// device's earlier code was already spent), which the theme keeps in its own
+// cookie; that is what fills the closet bar and puts the centre on the cart.
+const SHOP_COOKIE = 'vc_code';
 app.get('/:slug/shop', loadCentre, async (req, res, next) => {
   try {
     const discounts = safeRequire('./lib/discounts');
-    if (discounts) return res.redirect(302, await discounts.shopUrlFor(req.centre));
-    res.redirect(302, `${catalog.STORE}/collections/all`);
+    if (!discounts) return res.redirect(302, `${catalog.STORE}/collections/all`);
+    const remembered = (auth.readCookie(req, SHOP_COOKIE) || '').split('|');
+    const previousCode = remembered[0] === req.centre.slug ? remembered[1] : null;
+    const visit = await discounts.shopVisit(req.centre, { redirect: req.query.to, previousCode });
+    if (visit.code) {
+      const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      res.setHeader('Set-Cookie', `${SHOP_COOKIE}=${encodeURIComponent(`${req.centre.slug}|${visit.code}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure ? '; Secure' : ''}`);
+    }
+    res.redirect(302, visit.url);
   } catch (err) { next(err); }
+});
+
+// The store's theme asks whether the code in its cookie has been spent, so
+// the closet bar can go once the order is in. Public, no secrets: a code is
+// only ever in the shopper's own URL and cookie. Answers for our codes only.
+app.get('/api/code/:code', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', catalog.STORE);
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const discounts = safeRequire('./lib/discounts');
+    const known = discounts ? await discounts.centreForCode(req.params.code) : null;
+    if (!known) return res.status(404).json({ ok: false });
+    res.json({ ok: true, used: !!known.order_id });
+  } catch (err) { res.status(500).json({ ok: false }); }
 });
 
 // Sponsor tiles: cart permalink at the store with the centre attached (money step), else a holding page.

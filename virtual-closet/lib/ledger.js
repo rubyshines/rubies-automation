@@ -18,6 +18,13 @@ const sponsorship = require('./sponsorship');
 // partner orders (redemptions). The public page shows lifetime raised, which
 // only ever goes up; the centre's email shows the balance it can spend.
 const RAISED_KINDS = new Set(['order_credit', 'sponsor', 'centre_add', 'adjustment']);
+
+// Orders without a code: the store's theme writes the centre and the tap time
+// onto the cart, and they arrive as note attributes. Such an order credits the
+// centre when the tap was within the window and it is the buyer's first
+// closet order (Jamie, 2026-09-22: the first order only, 30 days from the
+// tap; the year of credit from the 09-19 draft is dropped).
+const LINK_WINDOW_MS = 30 * 86400000;
 const SPENT_KINDS = new Set(['redemption', 'adjustment']);
 
 /** Insert a ledger row unless its source is already there. Returns the row or null when it existed. */
@@ -117,32 +124,43 @@ async function digestActivity(centre, { since } = {}) {
  * From a REST order payload (webhook) or a mirror row with its line items.
  * Returns what was newly credited so the caller can send emails.
  */
-async function recordOrder(order, { lineItems = null, emit = true } = {}) {
+async function recordOrder(order, { lineItems = null, emit = true, lookupAttributes = false } = {}) {
   const orderId = String(order.id || order.shopify_order_id || '').split('/').pop();
   if (!orderId) return { credited: [] };
   if (order.financial_status && !['paid', 'partially_paid', 'authorized'].includes(String(order.financial_status).toLowerCase())) return { credited: [] };
   const credited = [];
+  const email = String(order.email || order.customer_email || order.contact_email || '').toLowerCase() || null;
+
+  // Sponsor lines in the same order are credited at face value below and
+  // never also earn the quarter: the quarter is of what was spent on product.
+  const s = await sponsorship.settings();
+  const items = lineItems || order.line_items || [];
+  const sponsorLines = items.filter(li => sponsorship.readLineItem(li, s));
+  const sponsorCents = sponsorLines.reduce((sum, li) => sum + sponsorship.readLineItem(li, s).amountCents, 0);
+  const subtotal = Math.max(0, Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100) - sponsorCents);
 
   // 1. A community order through a centre's link (discount code prefix VC-).
   const codes = (order.discount_codes || []).map(c => (typeof c === 'string' ? c : c.code)).filter(Boolean);
+  let codeCentre = null;
   for (const code of codes) {
     const known = await discounts.centreForCode(code);
     if (!known) continue;
     const centre = await centres.getById(known.centre_id);
     if (!centre) continue;
-    const subtotal = Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100);
+    codeCentre = centre;
     const box = await openBoxFor(centre);
-    const row = await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name } });
+    const row = subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name, email } }) : null;
     await db().from('vc_discount_codes').update({ order_id: orderId, used_at: new Date().toISOString() }).eq('code', known.code).is('order_id', null);
     if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents }); }
   }
 
   // 2. Sponsorship and centre top-up line items.
-  const s = await sponsorship.settings();
-  const items = lineItems || order.line_items || [];
   let orderAttrs = sponsorship.readOrderAttributes(order);
-  // Mirror rows carry no note attributes; fetch them from Shopify when a sponsorship line has no properties of its own.
-  if (!orderAttrs.slug && items.some(li => sponsorship.readLineItem(li, s) && !sponsorship.readLineItem(li, s).slug)) {
+  // Mirror rows carry no note attributes; fetch them from Shopify when a
+  // sponsorship line has no properties of its own, or when a code-less order
+  // may be a link order (the reconcile asks for that on recent orders).
+  const wantsAttrs = (sponsorLines.length && sponsorLines.some(li => !sponsorship.readLineItem(li, s).slug)) || (lookupAttributes && !codes.length);
+  if (!orderAttrs.slug && wantsAttrs) {
     try {
       const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
       const data = await shopifyGraphQL('query($id: ID!) { order(id: $id) { customAttributes { key value } } }', { id: `gid://shopify/Order/${orderId}` });
@@ -155,12 +173,49 @@ async function recordOrder(order, { lineItems = null, emit = true } = {}) {
     const centre = await centres.getBySlug(read.slug);
     if (!centre) continue;
     const box = await openBoxFor(centre);
-    const row = await credit({ centre, box, kind: read.kind, amountCents: read.amountCents, sourceType: 'shopify_line_item', sourceId: read.lineItemId || `${orderId}-${read.kind}`, detail: { order: orderId, order_number: order.order_number || order.name, email: order.email || order.customer_email || null, intended_box: read.boxNumber } });
+    const row = await credit({ centre, box, kind: read.kind, amountCents: read.amountCents, sourceType: 'shopify_line_item', sourceId: read.lineItemId || `${orderId}-${read.kind}`, detail: { order: orderId, order_number: order.order_number || order.name, email, intended_box: read.boxNumber } });
     if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', `ledger.${read.kind}`, { order: orderId, cents: row.amount_cents }); }
+  }
+
+  // 3. No code, but the theme put a centre on the cart: the shopper came
+  // from the link within the window. One credit per order, and only the
+  // buyer's first closet order, so a spent code that Shopify stripped at
+  // checkout does not turn into a second credit here.
+  if (!codes.length && subtotal > 0 && orderAttrs.slug && orderAttrs.sinceMs) {
+    const fresh = Date.now() - orderAttrs.sinceMs <= LINK_WINDOW_MS;
+    const centre = fresh ? await centres.getBySlug(orderAttrs.slug) : null;
+    if (centre && !(await hasClosetOrder(email))) {
+      const box = await openBoxFor(centre);
+      const row = await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { attributed: 'link', since: new Date(orderAttrs.sinceMs).toISOString(), subtotal_cents: subtotal, order_number: order.order_number || order.name, email } });
+      if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents, attributed: 'link' }); }
+    }
+  }
+
+  // A credited code order marks the customer on the store, so the cart can
+  // say the 20% is spent when they are signed in on another device.
+  if (codeCentre && credited.some(r => r.kind === 'order_credit' && r.detail?.code) && order.customer?.id) {
+    await tagCustomer(order.customer.id, ['closet-discount-used', `closet:${codeCentre.slug}`]);
   }
 
   if (emit && credited.length) await notify(credited, order);
   return { credited };
+}
+
+/** Has this email already been credited as a closet order, at any centre? */
+async function hasClosetOrder(email) {
+  if (!email) return false;
+  // Pilot scale: the order-credit rows are few, so read them and match in
+  // code rather than lean on a JSON-path filter the in-memory tests cannot run.
+  const rows = must(await db().from('vc_ledger').select('detail').eq('kind', 'order_credit'), 'closet orders');
+  return rows.some(r => String(r.detail?.email || '').toLowerCase() === email);
+}
+
+/** Add tags to a Shopify customer; a failure here is logged, never fatal. */
+async function tagCustomer(customerId, tags) {
+  try {
+    const shopify = require('../../customer-service/lib/shopify');
+    await shopify.addTags(`gid://shopify/Customer/${String(customerId).split('/').pop()}`, tags);
+  } catch (err) { console.warn(`[vc] customer tag failed: ${err.message}`); }
 }
 
 /** Emails for newly credited rows: sponsor thank-you, centre "someone sponsored", "box funded" when it tips over. */
@@ -221,15 +276,19 @@ async function reconcile({ days = 45 } = {}) {
     if (variantIds.length) {
       lineItems = must(await db().from('order_line_items').select('shopify_line_item_id, shopify_variant_id, quantity, unit_price, custom_attributes').eq('shopify_order_id', o.shopify_order_id).in('shopify_variant_id', variantIds), 'line items');
     }
-    if (!codes.length && !lineItems.length) continue;
+    // A code-less order from the last two days may be a link order whose
+    // attribution only exists as note attributes, which the mirror lacks;
+    // those get a lookup. Older ones were checked when they were recent.
+    const recent = new Date(o.created_at) >= new Date(Date.now() - 2 * 86400000);
+    if (!codes.length && !lineItems.length && !recent) continue;
     checked++;
     const { credited: rows } = await recordOrder({
       id: String(o.shopify_order_id).split('/').pop(), order_number: o.order_number, email: o.customer_email,
       discount_codes: codes, subtotal_price: o.subtotal_price, financial_status: o.financial_status,
-    }, { lineItems, emit: false });
+    }, { lineItems, emit: false, lookupAttributes: !codes.length && !lineItems.length });
     credited += rows.length;
   }
   return { checked, credited };
 }
 
-module.exports = { recordOrder, reconcile, credit, balance, balanceFromRows, lines, redeem, digestActivity, digestFromRows };
+module.exports = { recordOrder, reconcile, credit, balance, balanceFromRows, lines, redeem, digestActivity, digestFromRows, LINK_WINDOW_MS };

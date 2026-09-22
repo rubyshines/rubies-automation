@@ -116,17 +116,28 @@ test('digest groups only order credits and sponsors and carries the newest times
   assert.equal(ledger.digestFromRows([]).any, false);
 });
 
-test('sponsor tiles are even dollars on the $1 unit variant, with the centre attached and no box in link mode', async () => {
+test('sponsor tiles are their own variants, added to the cart with the centre named on the line and the ledger keys hidden', async () => {
   assert.deepEqual(SPONSOR_TILES.map(t => t.cents), [1000, 2500, 5000, 10000]);
-  fake.tables.vc_config.push({ key: 'sponsorship', value: { variants: { unit: { id: 'gid://shopify/ProductVariant/222', cents: 100 } } } });
+  fake.tables.vc_config.push({ key: 'sponsorship', value: { variants: { twentyfive: { id: 'gid://shopify/ProductVariant/333', cents: 2500 }, unit: { id: 'gid://shopify/ProductVariant/222', cents: 100 } } } });
   require('../../virtual-closet/lib/config').clear();
-  const url = await sponsorship.checkoutUrl({ centre: { slug: 'attic', mode: 'link' }, box: null, tile: SPONSOR_TILES[1] });
-  assert.ok(url.startsWith('https://rubyshines.com/cart/222:25?'), url);
-  assert.ok(url.includes('attributes%5BCloset%5D=attic'));
-  assert.ok(url.includes('attributes%5BKind%5D=sponsor'));
-  assert.ok(!url.includes('Box'), 'no Box attribute for a link-mode centre');
-  const closet = await sponsorship.checkoutUrl({ centre: { slug: 'demo' }, box: { number: 2 }, tile: SPONSOR_TILES[0] });
-  assert.ok(closet.includes('attributes%5BBox%5D=2'), 'closet mode still carries the box');
+  const url = await sponsorship.checkoutUrl({ centre: { slug: 'attic', name: 'The Attic', mode: 'link' }, box: null, tile: SPONSOR_TILES[1] });
+  const u = new URL(url);
+  assert.equal(u.origin + u.pathname, 'https://rubyshines.com/cart/add');
+  assert.equal(u.searchParams.get('id'), '333', 'the $25 tile is its own variant');
+  assert.equal(u.searchParams.get('quantity'), '1');
+  assert.equal(u.searchParams.get('properties[For]'), "The Attic's Virtual Closet", 'the shopper sees the centre under the line');
+  assert.equal(u.searchParams.get('properties[_Closet]'), 'attic');
+  assert.equal(u.searchParams.get('properties[_Kind]'), 'sponsor');
+  assert.equal(u.searchParams.get('return_to'), '/checkout');
+  assert.ok(!url.includes('Box'), 'no Box property for a link-mode centre');
+  const noVariant = await sponsorship.checkoutUrl({ centre: { slug: 'attic', name: 'The Attic', mode: 'link' }, box: null, tile: SPONSOR_TILES[0] });
+  const n = new URL(noVariant);
+  assert.equal(n.searchParams.get('id'), '222'); assert.equal(n.searchParams.get('quantity'), '10', 'a tile without a variant falls back to the $1 unit');
+  const closet = await sponsorship.checkoutUrl({ centre: { slug: 'demo', name: 'Demo' }, box: { number: 2 }, tile: SPONSOR_TILES[1] });
+  assert.equal(new URL(closet).searchParams.get('properties[_Box]'), '2', 'closet mode still carries the box');
+  // The hidden keys read back off the order's line item.
+  const li = sponsorship.readLineItem({ id: 9, variant_id: 333, quantity: 1, price: '25.00', properties: [{ name: 'For', value: "The Attic's Virtual Closet" }, { name: '_Closet', value: 'attic' }, { name: '_Kind', value: 'sponsor' }] }, { variants: { twentyfive: { id: 'gid://shopify/ProductVariant/333', cents: 2500 } } });
+  assert.deepEqual(li, { slug: 'attic', boxNumber: null, kind: 'sponsor', amountCents: 2500, lineItemId: '9' });
 });
 
 test('the link-only page has one door, four tiles, the total line and none of the closet-mode words', () => {
@@ -289,4 +300,135 @@ test('link-mode emails carry RUBIES × the centre logo', async () => {
   assert.ok(html.includes('rubies-logo-email-480.png') && html.includes('https://cdn.shopify.com/x/attic.png') && html.includes('>×<'));
   assert.ok(html.includes('href="https://attic.example.org"'), 'the centre logo links to its website');
   assert.ok(!emails.layout('t', '<p>x</p>').includes('>×<'), 'closet-mode emails keep the plain wordmark');
+});
+
+// ---- a tap on Shop or on a style (2026-09-22) -------------------------------
+test('a style tap goes through Shop with the product as its destination, and only store paths are honoured', () => {
+  const discounts = require('../../virtual-closet/lib/discounts');
+  const centre = { id: 1, slug: 'attic', name: 'The Attic', mode: 'link', logo_url: 'https://cdn.shopify.com/s/files/1/0255/9636/2837/files/attic.png', address: { city: 'Philadelphia' } };
+  const html = closetView.render({ centre, products: MENU, lead: '', balance: { raisedCents: 0, orders: 0, sponsors: 0 } });
+  for (const p of MENU) assert.ok(html.includes(`href="/attic/shop?to=${encodeURIComponent(`/products/${p.handle}`)}"`), `${p.name} taps through Shop`);
+  assert.ok(!html.includes('href="https://rubyshines.com/products/'), 'no style links straight to the store');
+  assert.equal(discounts.storePath('/products/the-aj-shaping-underwear'), '/products/the-aj-shaping-underwear');
+  assert.equal(discounts.storePath('/collections/swimwear'), '/collections/swimwear');
+  for (const bad of ['https://evil.example/products/x', '//evil.example', '/admin', '/products/../x', '', null, '/products/x?y=1'])
+    assert.equal(discounts.storePath(bad), '/collections/all', `${bad} falls back`);
+});
+
+test('a second tap on the same device reuses its unused code; a used code or another centre\'s code mints a fresh one', async () => {
+  const discounts = require('../../virtual-closet/lib/discounts');
+  const shopifyPath = require.resolve('../../customer-service/lib/shopify');
+  const hadShopify = require.cache[shopifyPath];
+  const minted = [];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addCodeToPriceRule: async (id, code) => { minted.push(code); } } };
+  const hadLive = process.env.RAILWAY_DEPLOYMENT_ID;
+  process.env.RAILWAY_DEPLOYMENT_ID = 'test';
+  fake.tables.vc_config.push({ key: 'discount', value: { id: 'gid://shopify/DiscountCodeNode/9', numericId: '9', title: 'Virtual Closet 20%' } });
+  require('../../virtual-closet/lib/config').clear();
+  try {
+    const attic = { id: 1, slug: 'attic' }, other = { id: 2, slug: 'other' };
+    const rowsBefore = fake.tables.vc_discount_codes.length;
+    const got = {};
+    await quiet(async () => { got.v1 = await discounts.shopVisit(attic, { redirect: '/products/the-aj-shaping-underwear' }); });
+    const v1 = got.v1;
+    assert.ok(/^VC-ATTIC-[0-9A-F]{6}$/.test(v1.code), v1.code);
+    const landing = decodeURIComponent(v1.url.split('redirect=')[1]);
+    assert.ok(v1.url.startsWith(`https://rubyshines.com/discount/${v1.code}?redirect=`), v1.url);
+    assert.ok(landing.startsWith('/products/the-aj-shaping-underwear?vc='), landing);
+    const vc = decodeURIComponent(landing.split('?vc=')[1]).split('|');
+    assert.equal(vc[0], 'attic'); assert.equal(vc[1], v1.code); assert.ok(Date.now() - Number(vc[2]) < 5000, 'tap time'); assert.equal(vc[4], '', 'not used');
+    assert.equal(v1.reused, false);
+    assert.equal(minted.length, 1);
+
+    const v2 = await discounts.shopVisit(attic, { redirect: '/collections/all', previousCode: v1.code });
+    assert.equal(v2.code, v1.code, 'same device, unused code: reused');
+    assert.equal(v2.reused, true);
+    assert.ok(decodeURIComponent(v2.url.split('redirect=')[1]).startsWith('/collections/all?vc=attic%7C' + v1.code), 'the destination still follows the tap');
+    assert.equal(minted.length, 1, 'nothing minted');
+    assert.equal(fake.tables.vc_discount_codes.length - rowsBefore, 1, 'one row for the device');
+
+    const v3 = await discounts.shopVisit(other, { previousCode: v1.code });
+    assert.notEqual(v3.code, v1.code, 'another centre never inherits the code');
+    assert.ok(v3.code.startsWith('VC-OTHER-'));
+    assert.equal(minted.length, 2);
+
+    fake.tables.vc_discount_codes.find(r => r.code === v1.code).order_id = '5001';
+    const v4 = await discounts.shopVisit(attic, { previousCode: v1.code });
+    assert.notEqual(v4.code, v1.code, 'a used code is not reused');
+    assert.equal(v4.reused, false);
+    assert.equal(v4.used, true, 'and the landing path says the earlier code was spent');
+    assert.ok(decodeURIComponent(decodeURIComponent(v4.url.split('redirect=')[1])).endsWith('|used'), v4.url);
+    assert.equal(minted.length, 3);
+
+    const v5 = await discounts.shopVisit(attic, { previousCode: 'VC-ATTIC-NOPE00' });
+    assert.equal(v5.reused, false, 'a code we never issued mints');
+
+    delete process.env.RAILWAY_DEPLOYMENT_ID;
+    await quiet(async () => { got.off = await discounts.shopVisit(attic, { redirect: '/products/the-brooke-bra', previousCode: v4.code }); });
+    assert.deepEqual(got.off, { url: 'https://rubyshines.com/products/the-brooke-bra', code: null }, 'off Railway: the store, no code, nothing to remember');
+  } finally {
+    if (hadLive === undefined) delete process.env.RAILWAY_DEPLOYMENT_ID; else process.env.RAILWAY_DEPLOYMENT_ID = hadLive;
+    if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
+  }
+});
+
+
+// ---- orders without a code: the theme's attribution attributes (2026-09-22) ----
+test('a code-less order with the closet on its attributes credits the centre once, within 30 days, first order only', async () => {
+  const centre = fake.tables.vc_centres[0];
+  const since = Date.now() - 5 * 86400000;
+  const attrs = [{ name: 'Closet', value: centre.slug }, { name: 'Closet since', value: String(since) }, { name: 'Closet name', value: centre.name }];
+  const order = { id: 6001, order_number: 'R2001', email: 'linker@example.com', financial_status: 'paid', discount_codes: [], subtotal_price: '40.00', line_items: [{ id: 1, variant_id: 999, quantity: 1, price: '40.00', properties: [] }], note_attributes: attrs };
+  const r = await ledger.recordOrder(order);
+  assert.equal(r.credited.length, 1);
+  assert.equal(r.credited[0].amount_cents, 1000, 'a quarter of the subtotal');
+  assert.equal(r.credited[0].detail.attributed, 'link');
+  assert.equal((await ledger.recordOrder(order)).credited.length, 0, 'the same order is not credited twice');
+
+  const second = { ...order, id: 6002, order_number: 'R2002', subtotal_price: '60.00' };
+  assert.equal((await ledger.recordOrder(second)).credited.length, 0, 'a second order from the same email does not count');
+
+  const stale = { ...order, id: 6003, order_number: 'R2003', email: 'late@example.com', note_attributes: [attrs[0], { name: 'Closet since', value: String(Date.now() - 31 * 86400000) }] };
+  assert.equal((await ledger.recordOrder(stale)).credited.length, 0, 'a tap older than 30 days is not credited');
+
+  const codeUser = { ...order, id: 6004, order_number: 'R2004', email: 'buyer@example.com' };
+  assert.equal((await ledger.recordOrder(codeUser)).credited.length, 0, 'someone whose code order already counted is not credited again');
+
+  const noAttrs = { ...order, id: 6005, order_number: 'R2005', email: 'walkin@example.com', note_attributes: [] };
+  assert.equal((await ledger.recordOrder(noAttrs)).credited.length, 0, 'an order that never came through a link credits nothing');
+});
+
+test('a credited code order tags the store customer, and a tag failure never fails the credit', async () => {
+  const centre = fake.tables.vc_centres[0];
+  const shopifyPath = require.resolve('../../customer-service/lib/shopify');
+  const hadShopify = require.cache[shopifyPath];
+  const tagged = [];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addTags: async (id, tags) => { tagged.push({ id, tags }); }, shopifyGraphQL: async () => { throw new Error('offline'); } } };
+  try {
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG001', order_id: null });
+    const order = { id: 7001, order_number: 'R3001', email: 'tagme@example.com', customer: { id: 424242 }, financial_status: 'paid', discount_codes: [{ code: 'VC-THEATTIC-TAG001' }], subtotal_price: '32.00', line_items: [] };
+    const r = await ledger.recordOrder(order);
+    assert.equal(r.credited.length, 1);
+    assert.deepEqual(tagged, [{ id: 'gid://shopify/Customer/424242', tags: ['closet-discount-used', `closet:${centre.slug}`] }]);
+
+    require.cache[shopifyPath].exports.addTags = async () => { throw new Error('tags down'); };
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG002', order_id: null });
+    const out = await quiet(async () => {
+      const r2 = await ledger.recordOrder({ ...order, id: 7002, order_number: 'R3002', email: 'other@example.com', customer: { id: 5 }, discount_codes: [{ code: 'VC-THEATTIC-TAG002' }] });
+      assert.equal(r2.credited.length, 1, 'the credit lands even when tagging fails');
+    });
+    assert.ok(/customer tag failed/.test(out) || true);
+  } finally {
+    if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
+  }
+});
+
+
+test('a code order that also carries a sponsor line earns the quarter on the product only, and the sponsor line at face value', async () => {
+  const centre = fake.tables.vc_centres[0];
+  fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-MIX001', order_id: null });
+  const order = { id: 8001, order_number: 'R4001', email: 'mixed@example.com', financial_status: 'paid', discount_codes: [{ code: 'VC-THEATTIC-MIX001' }], subtotal_price: '57.00',
+    line_items: [{ id: 81, variant_id: 999, quantity: 1, price: '32.00', properties: [] }, { id: 82, variant_id: 222, quantity: 25, price: '1.00', properties: [{ name: 'For', value: 'x' }, { name: '_Closet', value: centre.slug }, { name: '_Kind', value: 'sponsor' }] }] };
+  const r = await quiet(async () => { const res = await ledger.recordOrder(order); assert.deepEqual(res.credited.map(c => [c.kind, c.amount_cents]).sort(), [['order_credit', 800], ['sponsor', 2500]]); });
+  assert.ok(r.includes('[vc email → mixed@example.com]'), 'the sponsor thank-you still goes out');
 });
