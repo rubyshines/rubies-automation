@@ -212,11 +212,14 @@ async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, 
   // The subject leads with the money that came in (Jamie, 2026-09-21): "$49.60 added to [Centre]'s Virtual Closet today".
   const subject = `${dollars(orderCents + sponsorCents, c)} added to ${centre.name}'s Virtual Closet today`;
   return deliver({ to, subject, tag: 'activity',
-    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents, c)}. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
+    text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents, c)}. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal. Keep sharing your link: ${BASE}/${centre.slug}. Your table sign can be reprinted any time at ${BASE}/${centre.slug}/qr-sign. To order, email Jamie at ${OPERATOR_EMAIL}.`,
     html: layout(subject,
       lines.map(p).join('') +
       p(`Your balance is <b>${dollars(balanceCents, c)}</b>. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
+      // The sign, in a line (Jamie, 2026-09-22): the welcome has the long version.
+      h('Your table sign') +
+      p(`Print it, fold it and stand it up at the front desk or your table at events; its QR code opens your Virtual Closet. Reprint it any time at <a href="${BASE}/${centre.slug}/qr-sign">${esc(`${BASE}/${centre.slug}`.replace(/^https?:\/\//, ''))}/qr-sign</a>.`) +
       p(`To order, email Jamie at <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>.`), '', { centre }) });
 }
 
