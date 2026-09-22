@@ -5369,7 +5369,7 @@ function renderFactsPanel(data) {
   const pendingEl = document.getElementById('facts-pending');
   pendingEl.innerHTML = data.pending.length ? data.pending.map(f => `
     <div class="autosend-row" style="flex-wrap:wrap;gap:6px">
-      <textarea id="fact-text-${f.id}" style="width:100%" rows="2" maxlength="500">${esc(f.fact)}</textarea>
+      <textarea id="fact-text-${f.id}" spellcheck="true" lang="en" autocorrect="on" style="width:100%" rows="2" maxlength="500">${esc(f.fact)}</textarea>
       <span class="autosend-row-note" style="width:100%">${f.source === 'judge' ? `from a correction you made${f.source_rationale ? ': ' + esc(f.source_rationale) : ''}` : esc(f.source)}</span>
       ${factsCategorySelect(f.id, data.categories, f.category)}
       <input type="date" id="fact-exp-${f.id}" title="Optional expiry (perishable facts drop out automatically)">
@@ -8616,7 +8616,7 @@ function renderOutreachDetail(entry, draft) {
   const canGenerate = !!draft || OUTREACH_INITIATING_TYPES.includes(entry.message_type);
   const steerBlock = canGenerate ? `
     <div class="steer-row">
-      <textarea id="outreach-steer" class="steer-input" rows="1"
+      <textarea id="outreach-steer" spellcheck="true" lang="en" autocorrect="on" class="steer-input" rows="1"
         placeholder="redirect the advisor"></textarea>
       <button class="voice-mic" id="outreach-steer-mic" data-state="idle" type="button" aria-label="Voice input"></button>
       <button id="outreach-regenerate-btn" class="btn-refresh-inline" onclick="regenerateOutreachDraft()"
@@ -8634,7 +8634,7 @@ function renderOutreachDetail(entry, draft) {
     placeholder="Subject"${autosave ? ' oninput="queueComposerAutosave()"' : ''}>`;
   const editor = (autosave, placeholder) => `
     <div class="draft-editor-wrap">
-      <textarea id="outreach-draft-editor" rows="8"
+      <textarea id="outreach-draft-editor" spellcheck="true" lang="en" autocorrect="on" rows="8"
         oninput="autoExpandTextarea(this)${autosave ? '; queueComposerAutosave()' : ''}"${placeholder ? ` placeholder="${placeholder}"` : ''}></textarea>
       <button class="voice-mic voice-mic-floating" id="outreach-draft-mic" data-state="idle" type="button" aria-label="Voice input"></button>
     </div>`;
