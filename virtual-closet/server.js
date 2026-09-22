@@ -115,7 +115,17 @@ app.get('/:slug/shop', loadCentre, async (req, res, next) => {
     const visit = await discounts.shopVisit(req.centre, { redirect: req.query.to, previousCode });
     if (visit.code) {
       const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-      res.setHeader('Set-Cookie', `${SHOP_COOKIE}=${encodeURIComponent(`${req.centre.slug}|${visit.code}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure ? '; Secure' : ''}`);
+      const cookies = [`${SHOP_COOKIE}=${encodeURIComponent(`${req.centre.slug}|${visit.code}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure ? '; Secure' : ''}`];
+      // The store's theme reads `vc_closet` (same fields as the landing
+      // parameter). When this service answers on closet.rubyshines.com the
+      // cookie can be set for the whole domain, so the store has the closet
+      // even when the landing query is lost: Shopify's theme preview rewrites
+      // it, and so could any redirect the store adds later (2026-09-22).
+      if (/(^|\.)rubyshines\.com$/i.test(String(req.hostname || ''))) {
+        const value = [req.centre.slug, visit.code, Date.now(), req.centre.name || '', visit.used ? 'used' : ''].join('|');
+        cookies.push(`vc_closet=${encodeURIComponent(value)}; Domain=.rubyshines.com; Path=/; SameSite=Lax; Max-Age=${30 * 86400}${secure ? '; Secure' : ''}`);
+      }
+      res.setHeader('Set-Cookie', cookies);
     }
     res.redirect(302, visit.url);
   } catch (err) { next(err); }

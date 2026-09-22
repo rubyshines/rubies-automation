@@ -1,5 +1,29 @@
 // Progressive enhancement only: every page works without this file.
 (function () {
+  // Shop taps: the store opens after a short redirect chain (a code is
+  // minted on the way), so the button says so and a style card dims. Undone
+  // on pageshow so coming back with the back button leaves nothing stuck.
+  var shopLinks = document.querySelectorAll('a[href*="/shop"]');
+  shopLinks.forEach(function (a) {
+    a.addEventListener('click', function () {
+      if (a.classList.contains('btn')) {
+        a.classList.add('is-loading');
+        a.setAttribute('aria-busy', 'true');
+        a.dataset.label = a.textContent;
+        a.textContent = 'Opening the store';
+      } else {
+        a.classList.add('is-going');
+      }
+    });
+  });
+  window.addEventListener('pageshow', function () {
+    shopLinks.forEach(function (a) {
+      a.classList.remove('is-loading', 'is-going');
+      a.removeAttribute('aria-busy');
+      if (a.dataset.label) { a.textContent = a.dataset.label; delete a.dataset.label; }
+    });
+  });
+
   // Tabs (sponsor-first arrangement)
   document.querySelectorAll('[data-tabs]').forEach(function (root) {
     root.querySelectorAll('.tab').forEach(function (btn) {
