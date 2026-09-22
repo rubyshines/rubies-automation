@@ -173,14 +173,27 @@ async function correlateInbound(msg) {
       if (m?.[0]?.company_id) { companyId = m[0].company_id; break; }
     }
   }
-  if (!companyId && loss === 'hard_bounce' && gmail_thread_id) {
-    // Fallback for a DSN we could not read a recipient out of. Still refuses to
-    // guess on a shared thread: marking the wrong org's contact dead pauses a
-    // relationship that was perfectly healthy.
+  // Thread ownership: the sender identifies nobody, but the Gmail thread they
+  // wrote into is one WE started, and exactly one company owns it. That is not
+  // a guess — the row only exists because the send tool wrote to that company
+  // in that thread, so a reply on it is a reply to us from them. This was the
+  // DSN's fallback (a bounce comes from mailer-daemon, which says nothing about
+  // whose address died); a buyer forwarding our intro from her gmail.com
+  // address (Enchantasys, 2026-09-17) fell through the same hole, because free
+  // mail identifies nobody by design and the triage strip drops free-mail
+  // senders by design, so the reply was in Gmail and nowhere else while the
+  // ladder went on chasing info@. Still refuses to guess on a shared thread:
+  // Gmail threads on subject, and filing the reply under the wrong org — or
+  // marking the wrong org's contact dead — is worse than leaving it unmatched.
+  let matchedByThread = false;
+  if (!companyId && gmail_thread_id) {
     const { data: threads } = await sb.from('b2b_threads')
       .select('company_id').eq('gmail_thread_id', gmail_thread_id);
     const owners = [...new Set((threads || []).map(t => t.company_id))];
-    if (owners.length === 1) companyId = owners[0];
+    if (owners.length === 1) {
+      companyId = owners[0];
+      matchedByThread = loss !== 'hard_bounce';
+    }
   }
   if (!companyId) {
     // A bounce we cannot attribute is a dead address we will keep writing to.
@@ -264,17 +277,28 @@ async function correlateInbound(msg) {
     duplicate = true;
   }
 
-  // 3b. Register an address we only reached via the domain fallback, so the
-  // exact-address match handles it next time and resolveRecipient can see it.
-  // Not primary: a colleague writing in does not displace the person we have
-  // deliberately been corresponding with.
+  // 3b. Register an address we only reached via a fallback (the sender's
+  // domain, or the thread they wrote into), so the exact-address match handles
+  // it next time and resolveRecipient, the reconcile and the ladder's reply
+  // guard can all see it — every one of those decides membership by known
+  // address, so a person left unregistered stays invisible to them however
+  // many times they write. Not primary: a colleague writing in does not
+  // displace the person we have deliberately been corresponding with.
   // Never a system mailbox: a bounce DSN comes from postmaster@ at the
   // company's own domain, which matches by domain like any colleague would.
-  if (matchedByDomain && !isSystemMailbox(sender)) {
+  // Never for machine mail: an auto-responder's From is not a person to write
+  // to. Named where the header names them, so the composer greets a person.
+  if ((matchedByDomain || (matchedByThread && !inboundType)) && !isSystemMailbox(sender)) {
+    const { splitDisplayName } = require('./threadContacts');
+    const name = splitDisplayName(msg.from_name) || {};
+    const how = matchedByThread
+      ? 'wrote into a thread we started with this company'
+      : 'wrote in from a domain already on this company';
     const { error: cErr } = await sb.from('b2b_contacts').upsert({
-      id: sender, email: sender, company_id: companyId,
-      is_primary: false, is_active: true, source: 'inbound_domain_match',
-      notes: `Auto-added ${new Date().toISOString().slice(0, 10)}: wrote in from a domain already on this company.`,
+      id: sender, email: sender, company_id: companyId, ...name,
+      is_primary: false, is_active: true,
+      source: matchedByThread ? 'inbound_thread_match' : 'inbound_domain_match',
+      notes: `Auto-added ${new Date().toISOString().slice(0, 10)}: ${how}.`,
     }, { onConflict: 'id', ignoreDuplicates: true });
     if (cErr) console.warn(`[correlate] contact auto-add ${sender}: ${cErr.message}`);
   }
@@ -438,6 +462,7 @@ async function correlateInbound(msg) {
   return {
     matched: true,
     company_id: companyId,
+    matched_by: matchedByThread ? 'thread_owner' : (match.matched_by || (parsedBounce ? 'bounce' : null)),
     thread_id: threadId,
     duplicate,
     // null = a person wrote; anything else is machine mail (see classifyInbound).

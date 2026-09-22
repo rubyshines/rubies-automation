@@ -264,6 +264,85 @@ test('a hard bounce on a thread two orgs share guesses nobody', async () => {
   assert.strictEqual(r.matched, false, 'ambiguous means unknown, not "pick one"');
 });
 
+// ── thread ownership (2026-09-22) ───────────────────────────────────────────
+// A buyer forwarded our intro from her gmail.com address into the thread the
+// send tool had opened with her store. Free mail identifies nobody by design,
+// the triage strip drops free-mail senders by design, and the reconcile and
+// the ladder's reply guard decide membership by known address — so the reply
+// sat in Gmail and nowhere else while the ladder went on chasing info@. The
+// thread is ours, and one company owns it: that is evidence, not a guess.
+
+const OURS = () => ({
+  companies: [{ id: 'enchantasys', website: 'https://enchantasys.com', relationship_state: 'in_contact' }],
+  contacts: [{ email: 'info@enchantasys.com', company_id: 'enchantasys' }],
+  threads: [{ id: 633, company_id: 'enchantasys', gmail_thread_id: 't1', status: 'open' }],
+});
+const CRYSTAL = (over = {}) => MSG({
+  from_email: 'crystalenchantasys@gmail.com', from_name: 'Crystal Garcia',
+  subject: 'FW: Gender-affirming underwear and swimwear, wholesale from RUBIES',
+  body_text: 'Kim forwarded your email to me; I am the apparel buyer. Will you kindly email me your wholesale price list.',
+  ...over,
+});
+
+test('a free-mail reply into a thread we started with one company attaches to it', async () => {
+  reset(OURS());
+  const r = await correlateInbound(CRYSTAL());
+  assert.strictEqual(r.matched, true);
+  assert.strictEqual(r.company_id, 'enchantasys');
+  assert.strictEqual(r.matched_by, 'thread_owner');
+  assert.strictEqual(r.thread_id, 633, 'lands on the existing thread, not a new one');
+  assert.strictEqual(r.inbound_type, null, 'a person wrote');
+  const msg = state.inserts.find(i => i.table === 'b2b_messages');
+  assert.strictEqual(msg.row.from_email, 'crystalenchantasys@gmail.com');
+});
+
+test('the thread fallback registers the sender as a named, non-primary contact', async () => {
+  reset(OURS());
+  await correlateInbound(CRYSTAL());
+  const added = state.upserts.find(u => u.table === 'b2b_contacts');
+  assert.ok(added, 'the address must be on file so reconcile and the reply guard see her next time');
+  assert.strictEqual(added.row.email, 'crystalenchantasys@gmail.com');
+  assert.strictEqual(added.row.company_id, 'enchantasys');
+  assert.strictEqual(added.row.is_primary, false, 'must not displace info@');
+  assert.strictEqual(added.row.source, 'inbound_thread_match');
+  assert.strictEqual(added.row.first_name, 'Crystal');
+  assert.strictEqual(added.row.last_name, 'Garcia');
+});
+
+test('a free-mail reply into a thread two companies share still guesses nobody', async () => {
+  const s = OURS();
+  s.threads.push({ id: 634, company_id: 'some-other-store', gmail_thread_id: 't1', status: 'open' });
+  reset(s);
+  const r = await correlateInbound(CRYSTAL());
+  assert.strictEqual(r.matched, false, 'ambiguous means unknown, not "pick one"');
+  assert.strictEqual(state.upserts.length, 0);
+});
+
+test('a free-mail reply into a thread we have no row for stays unmatched', async () => {
+  reset(OURS());
+  const r = await correlateInbound(CRYSTAL({ gmail_thread_id: 't-unknown' }));
+  assert.strictEqual(r.matched, false, 'a thread we did not start is not evidence of anything');
+  assert.strictEqual(state.upserts.length, 0);
+});
+
+test('machine mail from a free-mail address on our thread is filed but registers no contact', async () => {
+  reset(OURS());
+  const r = await correlateInbound(CRYSTAL({
+    subject: 'Automatic reply: Gender-affirming underwear and swimwear', body_text: 'I am out of the office until Monday.',
+  }));
+  assert.strictEqual(r.matched, true);
+  assert.strictEqual(r.company_id, 'enchantasys');
+  assert.notStrictEqual(r.inbound_type, null, 'machine mail');
+  assert.strictEqual(state.upserts.filter(u => u.table === 'b2b_contacts').length, 0, "an auto-responder's From is not a person to write to");
+});
+
+test('an exact-contact sender on our thread is still an exact match, not a thread match', async () => {
+  reset(OURS());
+  const r = await correlateInbound(CRYSTAL({ from_email: 'info@enchantasys.com' }));
+  assert.strictEqual(r.matched_by, 'contact');
+  assert.strictEqual(state.upserts.length, 0);
+});
+
 // ── initiating-draft dismissal on a genuine reply (2026-09-02) ──────────────
 // A human writing in makes a waiting cold intro / check-in obsolete: the
 // conversation is now live, and live conversations are operator-written.
