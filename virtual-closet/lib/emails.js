@@ -155,6 +155,9 @@ function shareBlock(centre) {
     p(`Here's a post you can use as is:<br><span style="color:${COLOURS.soft}">${esc(linkPost(centre))}</span>`);
 }
 
+/** The sign is named for the centre, so it is findable in a downloads folder: the-attic-virtual-closet-sign.pdf (Jamie, 2026-09-21). */
+function signFilename(centre) { return `${centre.slug}-virtual-closet-sign.pdf`; }
+
 /** The welcome's attachments: the QR on its own, and the printable sign. Each is skipped, never fatal, if it cannot be built. */
 async function welcomeAttachments(centre) {
   const url = `${BASE}/${centre.slug}`;
@@ -165,7 +168,7 @@ async function welcomeAttachments(centre) {
   } catch (err) { console.warn(`[vc email] QR attachment skipped: ${err.message}`); }
   try {
     const pdf = await require('./sign').signPdf(centre, { url, logos: process.env.VC_EMAIL_MODE !== 'console' });
-    out.push({ content: pdf.toString('base64'), filename: 'closet-sign.pdf', type: 'application/pdf' });
+    out.push({ content: pdf.toString('base64'), filename: signFilename(centre), type: 'application/pdf' });
   } catch (err) { console.warn(`[vc email] sign attachment skipped: ${err.message}`); }
   return out;
 }
@@ -174,7 +177,7 @@ async function welcomeAttachments(centre) {
 async function welcomeLink({ centre, to }) {
   const url = `${BASE}/${centre.slug}`;
   const attachments = await welcomeAttachments(centre);
-  const hasSign = attachments.some(a => a.filename === 'closet-sign.pdf');
+  const hasSign = attachments.some(a => a.filename === signFilename(centre));
   return deliver({ to, subject: 'Your RUBIES Virtual Closet is ready.', tag: 'welcome', from: FROM_JAMIE, attachments,
     text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ` Attached is a table sign you can print, fold and stand up, with a QR code that opens your Virtual Closet; reprint it any time at ${url}/qr-sign. The QR code is attached on its own too.` : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
     html: layout('Your RUBIES Virtual Closet is ready.',

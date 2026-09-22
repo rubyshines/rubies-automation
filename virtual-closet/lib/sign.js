@@ -2,8 +2,8 @@
 /**
  * The printable table sign for a link-mode centre (Jamie, 2026-09-21): one
  * US Letter sheet, black and white, that folds into an A-frame tent. Attached
- * to the welcome email as closet-sign.pdf and served at /[slug]/qr-sign so
- * the centre can reprint it without asking.
+ * to the welcome email as [slug]-virtual-closet-sign.pdf and served at
+ * /[slug]/qr-sign so the centre can reprint it without asking.
  *
  * Sheet map, top to bottom (inches):
  *   0 to 1      tab, blank but for its fold note; folded under, hidden
@@ -210,12 +210,12 @@ function drawVisitorFace(ctx, top) {
   let y = blockTop + (blockH - pitchH) / 2;
   font(ctx, 'bold', 24).fillColor(BLACK).text(headline, pitchX, y, { width: pitchW, lineGap: 1 });
   y += h1H + 0.12 * IN;
-  font(ctx, 'bold', 12).text('RUBIES', pitchX, y, { continued: true, lineGap: 2 });
+  font(ctx, 'bold', 12).text('RUBIES', pitchX, y, { width: pitchW, continued: true, lineGap: 2 });
   font(ctx, 'regular', 12).text(about.slice('RUBIES'.length), { width: pitchW, lineGap: 2 });
   y += aboutH + pGap;
   font(ctx, 'regular', 12).text(quarter, pitchX, y, { width: pitchW, lineGap: 2 });
   y += quarterH + pGap;
-  font(ctx, 'bold', 11).fillColor('#222222').text(sponsorLead, pitchX, y, { continued: true, lineGap: 2 });
+  font(ctx, 'bold', 11).fillColor('#222222').text(sponsorLead, pitchX, y, { width: pitchW, continued: true, lineGap: 2 });
   font(ctx, 'regular', 11).text(sponsor, { width: pitchW, lineGap: 2 });
   doc.fillColor(BLACK);
 }
@@ -224,25 +224,26 @@ function drawStaffFace(ctx, top) {
   const { doc, centre, shown } = ctx;
   const headBottom = drawHead(ctx, top, { wordmarkH: 0.28 * IN, nameSize: 12, subSize: 8.5, rule: 1 });
 
-  // The setup box sits at the bottom, by the crease once folded.
-  const boxText = 'fold the tab at each end under, along its arrows. Fold the sheet in half at the "fold here" arrows, print facing out. Stand it up so the two tabs lie flat on the table and meet in the middle, then tape the tabs together. Cardstock is best. Plain paper works indoors.';
+  // The setup box sits at the bottom, by the crease once folded. One line of
+  // instructions and the reprint address; no diagram (Jamie, 2026-09-21: how
+  // to stand it up is obvious).
+  const boxText = 'fold the tabs under and the sheet in half, stand it up, and tape the tabs together underneath. Cardstock is best; plain paper works indoors.';
   const reprint = `${shown}/qr-sign`;
-  const boxPad = { x: 0.14 * IN, y: 0.08 * IN };
-  const diagramW = 1 * IN, diagramH = 0.62 * IN;
-  const textX = PAD.side + boxPad.x + diagramW + 0.16 * IN;
-  const textW = PAGE.w - PAD.side - boxPad.x - textX;
+  const boxPad = { x: 0.14 * IN, y: 0.09 * IN };
+  const textX = PAD.side + boxPad.x;
+  const textW = INNER - boxPad.x * 2;
   font(ctx, 'regular', 9);
   const setupH = doc.heightOfString('To set up: ' + boxText, { width: textW, lineGap: 1.5 });
   const reprintH = doc.heightOfString('Reprint any time: ' + reprint, { width: textW, lineGap: 1.5 });
-  const boxH = Math.max(diagramH, setupH + reprintH) + boxPad.y * 2;
+  const boxH = setupH + reprintH + boxPad.y * 2;
   const boxTop = top + FACE - PAD.bottom - boxH;
   doc.rect(PAD.side, boxTop, INNER, boxH).lineWidth(1).stroke(BLACK);
-  drawTentDiagram(ctx, PAD.side + boxPad.x, boxTop + (boxH - diagramH) / 2, diagramW, diagramH);
-  let y = boxTop + (boxH - setupH - reprintH) / 2;
-  font(ctx, 'bold', 9).fillColor(BLACK).text('To set up: ', textX, y, { continued: true, lineGap: 1.5 });
+  // pdfkit sizes a continued run from its first call, so the width goes there.
+  let y = boxTop + boxPad.y;
+  font(ctx, 'bold', 9).fillColor(BLACK).text('To set up: ', textX, y, { width: textW, continued: true, lineGap: 1.5 });
   font(ctx, 'regular', 9).text(boxText, { width: textW, lineGap: 1.5 });
   y += setupH;
-  font(ctx, 'bold', 9).text('Reprint any time: ', textX, y, { continued: true, lineGap: 1.5 });
+  font(ctx, 'bold', 9).text('Reprint any time: ', textX, y, { width: textW, continued: true, lineGap: 1.5 });
   font(ctx, 'regular', 9).text(reprint, { width: textW, lineGap: 1.5 });
 
   // The facts, between the head and the box.
@@ -264,18 +265,6 @@ function drawStaffFace(ctx, top) {
     doc.text(fact, listX, fy, { width: listW, lineGap: 1.5 });
     fy += doc.heightOfString(fact, { width: listW, lineGap: 1.5 }) + 0.04 * IN;
   }
-}
-
-/** A little A-frame standing on two tabs that meet and are taped. */
-function drawTentDiagram(ctx, x, y, w, h) {
-  const { doc } = ctx;
-  const sx = w / 100, sy = h / 62;
-  doc.save().translate(x, y).scale(sx, sy).lineJoin('round');
-  doc.moveTo(8, 54).lineTo(50, 8).lineTo(92, 54).lineWidth(2 / sx).stroke(BLACK);
-  doc.moveTo(8, 54).lineTo(92, 54).lineWidth(2 / sy).stroke(BLACK);
-  doc.rect(44, 50, 12, 8).lineWidth(1 / sx).fillAndStroke('#FFFFFF', BLACK);
-  doc.restore();
-  font(ctx, 'bold', 6).fillColor(BLACK).text('tabs meet, taped', x, y + 34 * sy, { width: w, align: 'center', lineBreak: false });
 }
 
 /** "closet.rubyshines.com/the-attic" as ["closet.rubyshines.com", "/the-attic"], so the line under the QR never breaks mid-word. */
