@@ -1957,11 +1957,23 @@ async function createProductVariants(productId, variants) {
  * @param {Array<{id: string, price: string|number}>} variantPrices
  * @returns {Array} Updated variants with { id, price }
  */
+/**
+ * Bulk-update price and/or compare-at price on variants of one product.
+ * Each entry: { id, price?, compareAtPrice? }
+ * - price: number|string → sets the retail price; omit to leave it alone.
+ * - compareAtPrice: number|string → sets the struck-through "was" price;
+ *   null → clears it; omit (undefined) to leave it alone.
+ * Shopify accepts a compare-at below the price; callers guard against that.
+ */
 async function updateVariantPrices(productId, variantPrices) {
-  const variants = variantPrices.map(v => ({
-    id: v.id,
-    price: String(v.price),
-  }));
+  const variants = variantPrices.map(v => {
+    const input = { id: v.id };
+    if (v.price !== undefined && v.price !== null) input.price = String(v.price);
+    if (v.compareAtPrice !== undefined) {
+      input.compareAtPrice = v.compareAtPrice === null ? null : String(v.compareAtPrice);
+    }
+    return input;
+  });
   const data = await shopifyGraphQL(`
     mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
       productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -1969,12 +1981,85 @@ async function updateVariantPrices(productId, variantPrices) {
           id
           sku
           price
+          compareAtPrice
         }
         userErrors { field message }
       }
     }
   `, { productId, variants });
+  const errs = data.productVariantsBulkUpdate.userErrors || [];
+  if (errs.length) {
+    throw new Error(`productVariantsBulkUpdate: ${errs.map(e => e.message).join('; ')}`);
+  }
   return data.productVariantsBulkUpdate.productVariants;
+}
+
+const VARIANT_PRICING_FIELDS = `
+  id
+  title
+  sku
+  price
+  compareAtPrice
+  selectedOptions { name value }
+`;
+
+/**
+ * Live price + compare-at for every variant of one product. The Supabase
+ * mirror does not carry compare-at, so anything that needs the current
+ * value reads it here rather than from productCache.
+ * Returns { id, title, status, variants: [{ id, title, sku, price, compareAtPrice, selectedOptions }] } or null.
+ */
+async function fetchVariantPricing(productId) {
+  const gid = normalizeGid(productId, 'Product');
+  const data = await shopifyGraphQL(`
+    query variantPricing($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        status
+        variants(first: 100) {
+          edges { node { ${VARIANT_PRICING_FIELDS} } }
+        }
+      }
+    }
+  `, { id: gid });
+  if (!data.product) return null;
+  const node = data.product;
+  return { ...node, variants: node.variants.edges.map(e => e.node) };
+}
+
+/**
+ * Live price + compare-at for every variant of every product in the store,
+ * paginated. Same shape per product as fetchVariantPricing.
+ */
+async function fetchAllVariantPricing() {
+  const products = [];
+  let after = null;
+  for (;;) {
+    const data = await shopifyGraphQL(`
+      query allVariantPricing($after: String) {
+        products(first: 50, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node {
+              id
+              title
+              status
+              variants(first: 100) {
+                edges { node { ${VARIANT_PRICING_FIELDS} } }
+              }
+            }
+          }
+        }
+      }
+    `, { after });
+    for (const e of data.products.edges) {
+      products.push({ ...e.node, variants: e.node.variants.edges.map(v => v.node) });
+    }
+    if (!data.products.pageInfo.hasNextPage) break;
+    after = data.products.pageInfo.endCursor;
+  }
+  return products;
 }
 
 /**
@@ -2448,6 +2533,8 @@ module.exports = {
   createProductVariants,
   updateProductStatus,
   updateVariantPrices,
+  fetchVariantPricing,
+  fetchAllVariantPricing,
   updateVariantPreOrder,
   deleteVariantMetafields,
   // Order Edit API

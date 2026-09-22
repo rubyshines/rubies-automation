@@ -48,6 +48,7 @@ const passportClaimsTools = require('./lib/tools/passportClaims');
 const editOrderTools = require('./lib/tools/editOrder');
 const deliveryTimeReportTools = require('./lib/tools/deliveryTimeReport');
 const setPricesTools = require('./lib/tools/setPrices');
+const compareAtAuditTools = require('./lib/tools/compareAtAudit');
 const createProductTools = require('./lib/tools/createProduct');
 const colourwayTools = require('./lib/tools/colourway');
 const updateCustomerTools = require('./lib/tools/updateCustomer');
@@ -112,6 +113,7 @@ const allTools = [
   ...editOrderTools,
   ...deliveryTimeReportTools,
   ...setPricesTools,
+  ...compareAtAuditTools,
   ...createProductTools,
   ...colourwayTools,
   ...updateCustomerTools,
