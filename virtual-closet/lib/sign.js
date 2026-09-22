@@ -192,7 +192,7 @@ function drawVisitorFace(ctx, top) {
   const h1LineH = h1Size * 1.15;
   const about = `RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear.`;
   const quarter = `A quarter of every order goes to ${centre.name}'s Virtual Closet.`;
-  const sponsorLead = 'Not shopping?';
+  const sponsorLead = 'Here as an ally?';
   const sponsor = ' Sponsor the closet from $10 at the same link.';
   const pGap = 0.09 * IN;
   const h1H = h1Lines.length * h1LineH;
@@ -260,7 +260,7 @@ function drawStaffFace(ctx, top) {
     'RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear.',
     '20% off is one order per person, applied at checkout. No code to type.',
     `A quarter of every order and every sponsor dollar goes to ${centre.name}'s Virtual Closet.`,
-    'Not shopping? Anyone can sponsor the closet from $10 at the same link.',
+    'Here as an ally? Anyone can sponsor the closet from $10 at the same link.',
     'Questions: jamie@rubyshines.com',
   ];
   const listX = PAD.side + 0.18 * IN;

@@ -127,7 +127,7 @@ function linkOnly(ctx) {
 ${aboutSection(LINK_ABOUT)}
 ${totalLine(ctx)}
 <section id="sponsor">
-  <h2>Not shopping? Sponsor the closet. Help someone feel comfortable and confident.</h2>
+  <h2>Here as an ally? Sponsor the closet. Help someone feel comfortable and confident.</h2>
   <div class="gifts gifts-4">${tiles(ctx)}</div>
   <p class="fine fine-after">You pay at the RUBIES online store. It goes straight to ${esc(ctx.name)}'s Virtual Closet.</p>
 </section>
