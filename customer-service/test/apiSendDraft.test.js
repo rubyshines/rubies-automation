@@ -84,7 +84,7 @@ require.cache[gorgiasPath] = {
     closeTicket: async (ticketId) => { (captured.closes ||= []).push({ ticketId }); },
     assignTicket: async () => {},
     addTicketTag: async () => {},
-    createOutboundTicket: async () => ({ id: 1 }),
+    createOutboundTicket: async (args) => { (captured.outbound ||= []).push(args); return { id: 1 }; },
     getTicketMessages: async () => [],
   },
 };
@@ -250,5 +250,48 @@ describe('action ledger — update_shipping_speed registration', () => {
     // executed tool must file under the same type or the send guard misfires.
     assert.equal(actionTypeFromTool('update_shipping_speed', null), 'order_modification');
     assert.equal(actionTypeFromTool('update_shipping_speed', 'order_modification'), 'order_modification');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Outbound drafts (no Gorgias ticket yet) carry their subject in
+// structured_output. The dashboard shows and edits it for tickets we
+// initiated; the send creates the Gorgias ticket with what the operator
+// approved and writes it back so the stored draft matches what went out.
+// ---------------------------------------------------------------------------
+
+describe('apiSendDraft — outbound draft subject', () => {
+  it('creates the Gorgias ticket with the operator-edited subject and records it on the draft', async () => {
+    DRAFT.gorgias_ticket_id = null;
+    DRAFT.structured_output = { status: 'outbound_draft', source: 'operator_outreach', subject: 'Quick address check' };
+
+    await apiSendDraft(1106, { response: 'Hi there', subject: '  ACTION REQUIRED: Quick address check  ', after: 'snooze' });
+
+    assert.equal(captured.outbound.length, 1);
+    assert.equal(captured.outbound[0].subject, 'ACTION REQUIRED: Quick address check');
+    const persisted = (captured.updates || []).find(u => u.table === 'cs_ai_drafts' && u.payload.structured_output?.subject);
+    assert.ok(persisted, 'edited subject written back to structured_output');
+    assert.equal(persisted.payload.structured_output.subject, 'ACTION REQUIRED: Quick address check');
+    assert.equal(persisted.payload.structured_output.source, 'operator_outreach', 'other structured_output keys survive the write-back');
+  });
+
+  it('falls back to the composer subject when the send carries none', async () => {
+    DRAFT.gorgias_ticket_id = null;
+    DRAFT.structured_output = { subject: 'Quick address check' };
+
+    await apiSendDraft(1106, { response: 'Hi there', after: 'snooze' });
+
+    assert.equal(captured.outbound[0].subject, 'Quick address check');
+    const rewritten = (captured.updates || []).filter(u => u.table === 'cs_ai_drafts' && u.payload.structured_output?.subject && u.payload.structured_output.subject !== 'Quick address check');
+    assert.equal(rewritten.length, 0, 'no subject rewrite when nothing was edited');
+  });
+
+  it('ignores a subject on an inbound reply (the customer\'s thread owns it)', async () => {
+    await apiSendDraft(1106, { response: 'Hi there', subject: 'ACTION REQUIRED: nope', after: 'snooze' });
+
+    assert.equal(captured.outbound, undefined, 'no outbound ticket created for an inbound reply');
+    assert.equal(captured.replies.length, 1);
+    const rewritten = (captured.updates || []).filter(u => u.table === 'cs_ai_drafts' && u.payload.structured_output?.subject);
+    assert.equal(rewritten.length, 0);
   });
 });

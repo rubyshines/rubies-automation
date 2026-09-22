@@ -18,6 +18,7 @@ const {
   plainToHtml,
   normalizeProposedAction,
   OUTREACH_ACTION_TYPES,
+  SYSTEM_PROMPT,
 } = require('../lib/composeOutboundDraft');
 
 const SAMPLE_CONTEXT = {
@@ -177,5 +178,28 @@ describe('plainToHtml', () => {
   it('escapes html special characters', () => {
     const html = plainToHtml('5 < 6 & 7 > 0');
     assert.match(html, /5 &lt; 6 &amp; 7 &gt; 0/);
+  });
+});
+
+describe('SYSTEM_PROMPT — subject tiers', () => {
+  // The tier rule is prompt guidance the advisor applies (prompt, not code).
+  // This pins the rule's presence and shape so a prompt edit cannot silently
+  // drop it: the ACTION REQUIRED prefix for "stuck until they reply", the
+  // fixed "Important update" subject for a material-but-not-blocking change,
+  // and the no-all-caps guard.
+  it('names the three tiers and the one question that picks between them', () => {
+    assert.match(SYSTEM_PROMPT, /## Subject line/);
+    assert.match(SYSTEM_PROMPT, /does anything stay stuck\?/);
+    assert.match(SYSTEM_PROMPT, /"ACTION REQUIRED: "/);
+    assert.match(SYSTEM_PROMPT, /"Important update on your RUBIES order #12345"/);
+    assert.match(SYSTEM_PROMPT, /Never write the whole subject in capitals/);
+  });
+
+  it('reserves the prefix for blocking asks, not for pre-order delays', () => {
+    const tiers = SYSTEM_PROMPT.split('## Subject line')[1].split('## Paired operator action')[0];
+    const [, stuck, update] = tiers.split(/\n- /);
+    assert.match(stuck, /returned to sender/);
+    assert.match(update, /pre-order delay/);
+    assert.doesNotMatch(update, /ACTION REQUIRED: "/);
   });
 });

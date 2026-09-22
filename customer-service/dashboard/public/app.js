@@ -1195,6 +1195,7 @@ function renderTicketDetail(ticket) {
     // a stale internal scrollTop, which strands the caret until a blur/refocus.
     // Reset to top so the caret is computed from a clean scroll state.
     editor.scrollTop = 0;
+    renderDraftSubject(ticket, d);
 
     // Message type + confidence + status badges
     const msgTypeEl = document.getElementById('detail-message-type');
@@ -1231,6 +1232,7 @@ function renderTicketDetail(ticket) {
   } else {
     // No active draft — show empty editor for manual compose
     document.getElementById('draft-editor').value = '';
+    renderDraftSubject(ticket, null);
 
     const msgTypeEl = document.getElementById('detail-message-type');
     msgTypeEl.textContent = '';
@@ -2854,6 +2856,31 @@ function initAdhocAttachments() {
 document.addEventListener('DOMContentLoaded', initAdhocAttachments);
 
 // ---------------------------------------------------------------------------
+// Draft Subject — only outbound tickets we initiated carry one. An inbound
+// reply threads on the customer's own subject, so the box stays hidden there.
+// Editable while the draft is pending: the send path creates the Gorgias
+// ticket with whatever is in this box, so what Jamie approves is what goes out.
+// ---------------------------------------------------------------------------
+
+function renderDraftSubject(ticket, draft) {
+  const el = document.getElementById('draft-subject');
+  if (!el) return;
+  const owns = !!draft && ticket?.initiated_by === 'operator';
+  el.hidden = !owns;
+  el.value = owns ? (draft.subject || '') : '';
+  el.readOnly = owns && draft.status !== 'pending';
+}
+
+// Send payload fragment: {subject} when the box is visible and editable, else
+// nothing, so inbound sends never carry a stray subject field.
+function getDraftSubjectPayload() {
+  const el = document.getElementById('draft-subject');
+  if (!el || el.hidden || el.readOnly) return {};
+  const subject = el.value.trim();
+  return subject ? { subject } : {};
+}
+
+// ---------------------------------------------------------------------------
 // Draft Attachments — drag-and-drop file/image attach
 // ---------------------------------------------------------------------------
 
@@ -2985,7 +3012,7 @@ function sendDraft(afterAction) {
     : `/api/tickets/${ticketId}/message`;
   const attachments = getDraftAttachmentsPayload();
   const body = draftId
-    ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) }
+    ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }), ...getDraftSubjectPayload() }
     : { message: response, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
 
   // Unexecuted-action check happens HERE, synchronous with the click — same
@@ -3074,7 +3101,7 @@ function executeAndSend() {
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
   const attachments = getDraftAttachmentsPayload();
-  const body = { response, command, after: 'close', focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
+  const body = { response, command, after: 'close', focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }), ...getDraftSubjectPayload() };
 
   // Optimistic: clear local state and advance immediately so the operator moves on.
   clearDraftAttachments();

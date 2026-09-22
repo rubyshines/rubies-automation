@@ -353,7 +353,14 @@ async function apiSendDraft(id, body) {
   let replyResult;
   const isOutboundInitiated = !draft.gorgias_ticket_id;
   if (isOutboundInitiated) {
-    const subject = draft.structured_output?.subject || '(no subject)';
+    // The operator-edited subject wins over the composer's, and is written back
+    // so the stored draft records what the customer actually received.
+    const editedSubject = typeof body.subject === 'string' ? body.subject.trim() : '';
+    const subject = editedSubject || draft.structured_output?.subject || '(no subject)';
+    if (editedSubject && editedSubject !== draft.structured_output?.subject) {
+      draft.structured_output = { ...(draft.structured_output || {}), subject: editedSubject };
+      await supabase.from('cs_ai_drafts').update({ structured_output: draft.structured_output }).eq('id', id);
+    }
     const newTicket = await gorgias.createOutboundTicket({
       customerEmail: draft.customer_email,
       customerName: draft.customer_name || '',
@@ -2181,6 +2188,7 @@ async function apiExecuteAndSend(draftId, body = {}) {
     runPhase2: (r1) => apiActionChat(draftId, { message: 'yes confirm', history: r1.history }),
     sendDraft: () => apiSendDraft(draftId, {
       response: body.response,
+      subject: body.subject,
       after: body.after || 'snooze',
       focus_time_seconds: body.focus_time_seconds,
       attachments: body.attachments,
@@ -3832,7 +3840,10 @@ async function apiGetTicket(id) {
   // Get all drafts for this ticket (for history/training panel)
   const { data: allDrafts } = await supabase
     .from('cs_ai_drafts')
-    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, action_executed_at, actions, order_number, status, turn_number, sent_at, created_at')
+    // subject: only outbound drafts we initiated carry one (it lives in
+    // structured_output, never on the ticket); the dashboard shows and edits
+    // it for those tickets and the send path creates the Gorgias ticket with it.
+    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, action_executed_at, actions, order_number, status, turn_number, sent_at, created_at, subject:structured_output->>subject')
     .eq('ticket_id', id)
     .order('created_at', { ascending: true });
 

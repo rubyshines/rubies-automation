@@ -2420,6 +2420,31 @@ main { height: calc(100vh - 56px); }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* Subject line for outbound drafts we initiated (hidden on inbound tickets,
+   where a reply threads on the customer's own subject). */
+.draft-subject {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.draft-subject:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.draft-subject[readonly] {
+  background: var(--bg-subtle, #f6f6f6);
+  font-weight: 500;
+}
+
 /* ─── Reasoning Trace ──────────────────────────────────────
    Shared component for AI Draft refresh + Operator Agent.
    A quiet, breathing timeline of what the model is doing.

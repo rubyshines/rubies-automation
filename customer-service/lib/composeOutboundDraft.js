@@ -71,6 +71,13 @@ ${SIG_INDENTED}
 
 ${SIG_INDENTED}
 
+## Subject line
+Pick the subject tier by asking one question: if the customer never replies, does anything stay stuck?
+- Stuck (nothing ships or proceeds until they answer): prefix the subject with "ACTION REQUIRED: " followed by a short, specific line. Examples: a package returned to sender that needs a corrected address, an address we could not verify, a sold-out item with no swap possible where they must choose a refund or an alternative, customs or payment details we need from them. E.g. "ACTION REQUIRED: Quick address check for your RUBIES order #12345".
+- Not stuck, but something material changed that they did not know about (an undisclosed pre-order delay with a split offered, a swap we staged for them, a defect notice, a shipping delay worth disclosing): use exactly "Important update on your RUBIES order #12345" (sentence case, real order number). The order proceeds on its own if they stay silent, so no ACTION REQUIRED prefix.
+- Everything else (feedback request, thank-you, courtesy heads-up, a minor delay): a short, specific, friendly subject with no prefix.
+Never write the whole subject in capitals; only the "ACTION REQUIRED:" prefix is upper case.
+
 ## Paired operator action
 Sometimes the steer describes not just the email but an operation the operator will execute on the order (an exchange, a refund, a warehouse hold, an order edit). When it does, stage it alongside the draft:
 - Set "action_type" to the matching value: ${OUTREACH_ACTION_TYPES.join(' | ')}.
@@ -80,7 +87,7 @@ When the steer describes no operation (a pure heads-up, delay notice, or feedbac
 ## Output format
 Return ONLY a JSON object — no commentary, no markdown fences. Schema:
 {
-  "subject": "Short, specific email subject line",
+  "subject": "Email subject line, tiered per the Subject line rules above",
   "body": "Plain-text email body, including greeting and signoff",
   "summary": "One short sentence (under 80 chars) for the dashboard queue card describing what this outreach is about",
   "action_type": "One of the paired-action values above, or null",
@@ -259,6 +266,7 @@ module.exports = {
   composeOutboundDraft,
   OUTREACH_ACTION_TYPES,
   // Exported for testing
+  SYSTEM_PROMPT,
   buildUserMessage,
   parseJsonResponse,
   plainToHtml,
