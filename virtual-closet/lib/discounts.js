@@ -64,7 +64,10 @@ async function shopVisit(centre, { redirect = '/collections/all', previousCode =
   // and `used` when the code this device had before was already spent (a
   // fresh code is minted, but Shopify will refuse it at checkout, so the cart
   // says so up front). Kept in the theme's own cookie for 30 days.
-  const landing = (code, used) => `${redirect}?vc=${encodeURIComponent([centre.slug, code, Date.now(), centre.name || '', used ? 'used' : ''].join('|'))}`;
+  // The value goes in raw: applyUrl encodes the whole landing path once, and
+  // Shopify's discount redirect decodes it and re-encodes what a URL needs.
+  // Pre-encoding the pipes here made them arrive double-encoded (2026-09-22).
+  const landing = (code, used) => `${redirect}?vc=${[centre.slug, code, Date.now(), centre.name || '', used ? 'used' : ''].join('|')}`;
   // A public page click writes a permanent code to the live store, so off the
   // real deployment this sends the shopper to the store without one. Guarding
   // the click rather than the store call keeps ensureDiscount's lookup working
