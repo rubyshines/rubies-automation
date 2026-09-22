@@ -56,6 +56,8 @@ ${styled}
 </table></td></tr></table></body></html>`;
 }
 const p = t => `<p style="margin:0 0 14px;line-height:1.6;color:${COLOURS.ink}">${t}</p>`;
+// A section label inside an email: between the title and the bold figures in the body (Jamie, 2026-09-22).
+const h = t => `<h2 style="margin:24px 0 8px;font-size:18px;line-height:1.3;font-weight:600;${font}color:${COLOURS.ink}">${t}</h2>`;
 const soft = t => p(`<span style="color:${COLOURS.soft}">${t}</span>`);
 const btnStyle = fill => `display:inline-block;padding:13px 26px;border:1px solid ${COLOURS.black};background:${fill ? COLOURS.black : COLOURS.white};color:${fill ? COLOURS.white : COLOURS.black};text-decoration:none;font-weight:500;font-size:15px;line-height:1.2;${font}`;
 const btn = (href, label) => `<p style="margin:20px 0"><a href="${href}" style="${btnStyle(true)}">${esc(label)}</a></p>`;
@@ -154,8 +156,10 @@ function linkPost(centre) {
 /** The sharing block, the same in the welcome and in every digest (Jamie, 2026-09-21). */
 function shareBlock(centre) {
   const url = `${BASE}/${centre.slug}`;
-  return p(`<b>Your link</b><br><a href="${url}">${esc(url.replace(/^https?:\/\//, ''))}</a><br>Share it on your socials, your website and your newsletter. Anyone who opens it gets 20% off a RUBIES order, and every order and every sponsor dollar adds to your closet.`) +
-    p(`Here's a post you can use as is:<br><span style="color:${COLOURS.soft}">${esc(linkPost(centre))}</span>`);
+  return h('Your link') +
+    p(`<a href="${url}">${esc(url.replace(/^https?:\/\//, ''))}</a><br>Share it on your socials, your website and your newsletter. Anyone who opens it gets 20% off a RUBIES order, and every order and every sponsor dollar adds to your closet.`) +
+    h(`Here's a post you can use as is`) +
+    p(`<span style="color:${COLOURS.soft}">${esc(linkPost(centre))}</span>`);
 }
 
 /** The sign is named for the centre, so it is findable in a downloads folder: the-attic-virtual-closet-sign.pdf (Jamie, 2026-09-21). */
@@ -208,7 +212,7 @@ async function activity({ centre, to, orders = 0, orderCents = 0, sponsors = 0, 
   const subject = `${dollars(orderCents + sponsorCents, c)} added to ${centre.name}'s Virtual Closet today`;
   return deliver({ to, subject, tag: 'activity',
     text: `${textLines.join(' ')} Your balance is ${dollars(balanceCents, c)}. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal. Keep sharing your link: ${BASE}/${centre.slug}. To order, email Jamie at ${OPERATOR_EMAIL}.`,
-    html: layout(esc(subject),
+    html: layout(subject,
       lines.map(p).join('') +
       p(`Your balance is <b>${dollars(balanceCents, c)}</b>. Raised so far: ${dollars(raisedCents, c)} of your ${dollars(goalCents, c)} goal.`) +
       p(`<b>Keep it going.</b>`) + shareBlock(centre) +
