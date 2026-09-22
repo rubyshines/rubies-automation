@@ -12,6 +12,8 @@
  *   node virtual-closet/scripts/setupShopify.js --create   # create what is missing
  *   node virtual-closet/scripts/setupShopify.js --tiles    # preview the tile variants against SPONSOR_TILES
  *   node virtual-closet/scripts/setupShopify.js --tiles --create   # replace stale tile variants with the current tiles
+ *   node virtual-closet/scripts/setupShopify.js --discount          # show the live discount's class and combination rules
+ *   node virtual-closet/scripts/setupShopify.js --discount --create # align it: product discount on the eligible collection, combines with all
  */
 require('dotenv').config();
 const shopify = require('../../customer-service/lib/shopify');
@@ -75,9 +77,27 @@ async function syncTiles(create) {
   console.log('Stored variants:', Object.keys(keep).join(', '));
 }
 
+async function showDiscount(label) {
+  const d = await config.get('discount');
+  if (!d?.id) { console.log(label, 'discount not configured'); return; }
+  const data = await shopify.shopifyGraphQL(`query($id: ID!) { codeDiscountNode(id: $id) { codeDiscount { ... on DiscountCodeBasic {
+    title discountClass appliesOncePerCustomer combinesWith { orderDiscounts productDiscounts shippingDiscounts }
+    customerGets { items { __typename ... on AllDiscountItems { allItems } ... on DiscountCollections { collections(first: 3) { nodes { handle productsCount { count } } } } } } } } } }`, { id: d.id });
+  const x = data.codeDiscountNode?.codeDiscount || {};
+  console.log(label, JSON.stringify({ title: x.title, class: x.discountClass, once: x.appliesOncePerCustomer, combines: x.combinesWith, items: x.customerGets?.items }));
+}
+
 async function main() {
   const create = process.argv.includes('--create');
   if (process.argv.includes('--tiles')) return syncTiles(create);
+  if (process.argv.includes('--discount')) {
+    await showDiscount('Now:');
+    if (!create) { console.log('\nRun with --discount --create to align it (product discount on the "' + discounts.COLLECTION_HANDLE + '" collection, combines with order, product and shipping discounts).'); return; }
+    const r = await discounts.alignDiscount();
+    console.log('Collection:', r.collectionId);
+    await showDiscount('After:');
+    return;
+  }
   const existing = await config.get('sponsorship');
   console.log('Sponsorship product:', existing ? `configured (${existing.productId})` : 'not configured');
   const discount = await config.get('discount');

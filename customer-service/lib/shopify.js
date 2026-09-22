@@ -1698,6 +1698,21 @@ async function deleteDiscountRedeemCodes(discountId, search) {
   return data.discountRedeemCodeBulkDelete.job;
 }
 
+/** Update a code discount (DiscountCodeBasicInput fields only). */
+async function updateDiscountCode(id, input) {
+  const data = await shopifyGraphQL(`
+    mutation($id: ID!, $basicCodeDiscount: DiscountCodeBasicInput!) {
+      discountCodeBasicUpdate(id: $id, basicCodeDiscount: $basicCodeDiscount) {
+        codeDiscountNode { id codeDiscount { ... on DiscountCodeBasic { title discountClass combinesWith { orderDiscounts productDiscounts shippingDiscounts } } } }
+        userErrors { field message }
+      }
+    }
+  `, { id, basicCodeDiscount: input });
+  const errs = data?.discountCodeBasicUpdate?.userErrors || [];
+  if (errs.length) throw new Error(`updateDiscountCode: ${errs.map(e => e.message).join('; ')}`);
+  return data.discountCodeBasicUpdate.codeDiscountNode;
+}
+
 async function addCodeToPriceRule(priceRuleId, code) {
   const { storeUrl, token } = getConfig();
   const url = `https://${storeUrl}/admin/api/${SHOPIFY_API_VERSION}/price_rules/${priceRuleId}/discount_codes.json`;
@@ -2417,6 +2432,7 @@ module.exports = {
   randomDiscountCode,
   addCodeToPriceRule,
   deleteDiscountRedeemCodes,
+  updateDiscountCode,
   findDiscountCodeByCode,
   findRedeemCode,
   deleteRedeemCodes,
