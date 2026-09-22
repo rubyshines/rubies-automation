@@ -183,7 +183,7 @@
             <div id="action-panel-header"></div>
             <div class="action-chat-messages" id="action-chat-messages"></div>
             <div class="action-chat-input-row">
-              <textarea class="action-chat-input" id="action-chat-input" rows="4"
+              <textarea class="action-chat-input" id="action-chat-input" spellcheck="true" lang="en" autocorrect="on" rows="4"
                 placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
                 onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}"></textarea>
               <button class="voice-mic" id="action-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
@@ -217,7 +217,7 @@
           <div id="detail-draft" class="detail-section">
             <h3>AI Draft <span id="detail-message-type" class="category-badge"></span> <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
             <div class="steer-row">
-              <textarea id="steer-input" class="steer-input" rows="1"
+              <textarea id="steer-input" spellcheck="true" lang="en" autocorrect="on" class="steer-input" rows="1"
                 placeholder="redirect the advisor"
                 onkeydown="handleSteerKeydown(event)"></textarea>
               <button class="voice-mic" id="steer-mic" data-state="idle" type="button" aria-label="Voice input"></button>
@@ -226,7 +226,7 @@
             <div id="draft-reasoning" class="reasoning-trace" hidden></div>
             <input type="text" id="draft-subject" class="draft-subject" placeholder="Subject" aria-label="Email subject" hidden>
             <div id="draft-editor-wrap" class="draft-editor-wrap">
-              <textarea id="draft-editor" rows="8"></textarea>
+              <textarea id="draft-editor" spellcheck="true" lang="en" autocorrect="on" rows="8"></textarea>
               <button class="voice-mic voice-mic-floating" id="draft-editor-mic" data-state="idle" type="button" aria-label="Voice input"></button>
               <div id="draft-drop-overlay" class="draft-drop-overlay">
                 <div class="draft-drop-inner">
@@ -287,7 +287,7 @@
           <div class="adhoc-empty-hint">What can I help with?</div>
           <div class="action-chat-input-row">
             <div class="adhoc-attachments msg-attachments" id="adhoc-attachments" hidden></div>
-            <textarea class="action-chat-input" id="adhoc-chat-input" rows="4"
+            <textarea class="action-chat-input" id="adhoc-chat-input" spellcheck="true" lang="en" autocorrect="on" rows="4"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdhocMessage()}"></textarea>
             <div class="adhoc-button-row">
               <input type="file" id="adhoc-file-input" multiple hidden>
