@@ -343,7 +343,7 @@ test('a second tap on the same device reuses its unused code; a used code or ano
     const v2 = await discounts.shopVisit(attic, { redirect: '/collections/all', previousCode: v1.code });
     assert.equal(v2.code, v1.code, 'same device, unused code: reused');
     assert.equal(v2.reused, true);
-    assert.ok(decodeURIComponent(v2.url.split('redirect=')[1]).startsWith('/collections/all?vc=attic%7C' + v1.code), 'the destination still follows the tap');
+    assert.ok(decodeURIComponent(v2.url.split('redirect=')[1]).startsWith('/collections/all?vc=attic|' + v1.code), 'the destination still follows the tap');
     assert.equal(minted.length, 1, 'nothing minted');
     assert.equal(fake.tables.vc_discount_codes.length - rowsBefore, 1, 'one row for the device');
 
