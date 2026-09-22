@@ -182,14 +182,19 @@ function drawVisitorFace(ctx, top) {
   const urlLines = rest ? 2 : 1;
   const qrBlockH = qrSize + 0.08 * IN + urlLines * 9.5 * 1.2;
 
-  // Three set lines, so the wrap never lands inside "gender-affirming".
-  const headline = 'Scan for 20% off\ngender-affirming\nunderwear and swimwear.';
+  // Two set lines, so the wrap never lands inside "gender-affirming", at the
+  // largest size where both fit the column (Jamie, 2026-09-21: two lines).
+  const h1Lines = ['Scan for 20% off gender-affirming', 'underwear and swimwear.'];
+  let h1Size = 24;
+  font(ctx, 'bold', h1Size);
+  while (h1Size > 14 && h1Lines.some(l => doc.widthOfString(l) > pitchW)) font(ctx, 'bold', h1Size -= 0.5);
+  const headline = h1Lines.join('\n');
   const about = `RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear.`;
   const quarter = `A quarter of every order goes to ${centre.name}'s Virtual Closet.`;
   const sponsorLead = 'Not shopping?';
   const sponsor = ' Sponsor the closet from $10 at the same link.';
   const pGap = 0.09 * IN;
-  font(ctx, 'bold', 24);
+  font(ctx, 'bold', h1Size);
   const h1H = doc.heightOfString(headline, { width: pitchW, lineGap: 1 });
   font(ctx, 'regular', 12);
   const aboutH = doc.heightOfString(about, { width: pitchW, lineGap: 2 });
@@ -208,7 +213,7 @@ function drawVisitorFace(ctx, top) {
   if (rest) doc.text(rest, PAD.side, qrY + qrSize + 0.08 * IN + 9.5 * 1.2, { width: qrSize, align: 'center', lineBreak: false });
 
   let y = blockTop + (blockH - pitchH) / 2;
-  font(ctx, 'bold', 24).fillColor(BLACK).text(headline, pitchX, y, { width: pitchW, lineGap: 1 });
+  font(ctx, 'bold', h1Size).fillColor(BLACK).text(headline, pitchX, y, { width: pitchW, lineGap: 1 });
   y += h1H + 0.12 * IN;
   font(ctx, 'bold', 12).text('RUBIES', pitchX, y, { width: pitchW, continued: true, lineGap: 2 });
   font(ctx, 'regular', 12).text(about.slice('RUBIES'.length), { width: pitchW, lineGap: 2 });
