@@ -41,7 +41,7 @@ function layout(title, inner, footerLinks = '', { centre } = {}) {
   // Link-mode emails carry "RUBIES × [centre logo]" like the page (Jamie, 2026-09-21).
   const rubies = `<a href="${STORE}" style="text-decoration:none"><img src="${LOGO_PNG}" width="150" alt="RUBIES" style="display:block;border:0;width:150px;height:auto"></a>`;
   const head = centre?.logo_url
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="vertical-align:middle">${rubies}</td><td style="vertical-align:middle;padding:0 14px;${font}font-size:22px;color:${COLOURS.soft}">×</td><td style="vertical-align:middle">${centre.website ? `<a href="${esc(centre.website)}" style="text-decoration:none">` : ''}<img src="${esc(centre.logo_url)}" alt="${esc(centre.name)}" height="44" style="display:block;border:0;height:44px;width:auto;max-width:160px">${centre.website ? '</a>' : ''}</td></tr></table>`
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="vertical-align:middle">${rubies}</td><td style="vertical-align:middle;padding:0 8px;${font}font-size:22px;color:${COLOURS.soft}">×</td><td style="vertical-align:middle">${centre.website ? `<a href="${esc(centre.website)}" style="text-decoration:none">` : ''}<img src="${esc(centre.logo_url)}" alt="${esc(centre.name)}" height="44" style="display:block;border:0;height:44px;width:auto;max-width:160px">${centre.website ? '</a>' : ''}</td></tr></table>`
     : rubies;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${COLOURS.white};${font}color:${COLOURS.ink}">
