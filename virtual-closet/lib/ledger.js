@@ -131,6 +131,14 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
   const credited = [];
   const email = String(order.email || order.customer_email || order.contact_email || '').toLowerCase() || null;
 
+  // Sponsor lines in the same order are credited at face value below and
+  // never also earn the quarter: the quarter is of what was spent on product.
+  const s = await sponsorship.settings();
+  const items = lineItems || order.line_items || [];
+  const sponsorLines = items.filter(li => sponsorship.readLineItem(li, s));
+  const sponsorCents = sponsorLines.reduce((sum, li) => sum + sponsorship.readLineItem(li, s).amountCents, 0);
+  const subtotal = Math.max(0, Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100) - sponsorCents);
+
   // 1. A community order through a centre's link (discount code prefix VC-).
   const codes = (order.discount_codes || []).map(c => (typeof c === 'string' ? c : c.code)).filter(Boolean);
   let codeCentre = null;
@@ -140,22 +148,18 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
     const centre = await centres.getById(known.centre_id);
     if (!centre) continue;
     codeCentre = centre;
-    const subtotal = Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100);
     const box = await openBoxFor(centre);
-    const row = await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name, email } });
+    const row = subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name, email } }) : null;
     await db().from('vc_discount_codes').update({ order_id: orderId, used_at: new Date().toISOString() }).eq('code', known.code).is('order_id', null);
     if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents }); }
   }
 
   // 2. Sponsorship and centre top-up line items.
-  const s = await sponsorship.settings();
-  const items = lineItems || order.line_items || [];
   let orderAttrs = sponsorship.readOrderAttributes(order);
-  const sponsorLines = items.filter(li => sponsorship.readLineItem(li, s));
   // Mirror rows carry no note attributes; fetch them from Shopify when a
   // sponsorship line has no properties of its own, or when a code-less order
   // may be a link order (the reconcile asks for that on recent orders).
-  const wantsAttrs = (sponsorLines.length && sponsorLines.some(li => !sponsorship.readLineItem(li, s).slug)) || (lookupAttributes && !codes.length && !sponsorLines.length);
+  const wantsAttrs = (sponsorLines.length && sponsorLines.some(li => !sponsorship.readLineItem(li, s).slug)) || (lookupAttributes && !codes.length);
   if (!orderAttrs.slug && wantsAttrs) {
     try {
       const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
@@ -173,15 +177,14 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
     if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', `ledger.${read.kind}`, { order: orderId, cents: row.amount_cents }); }
   }
 
-  // 3. No code, no sponsor line, but the theme put a centre on the cart: the
-  // shopper came from the link within the window. One credit per order, and
-  // only the buyer's first closet order, so a spent code that Shopify
-  // stripped at checkout does not turn into a second credit here.
-  if (!codes.length && !sponsorLines.length && orderAttrs.slug && orderAttrs.sinceMs) {
+  // 3. No code, but the theme put a centre on the cart: the shopper came
+  // from the link within the window. One credit per order, and only the
+  // buyer's first closet order, so a spent code that Shopify stripped at
+  // checkout does not turn into a second credit here.
+  if (!codes.length && subtotal > 0 && orderAttrs.slug && orderAttrs.sinceMs) {
     const fresh = Date.now() - orderAttrs.sinceMs <= LINK_WINDOW_MS;
     const centre = fresh ? await centres.getBySlug(orderAttrs.slug) : null;
     if (centre && !(await hasClosetOrder(email))) {
-      const subtotal = Math.round(parseFloat(order.subtotal_price ?? order.current_subtotal_price ?? 0) * 100);
       const box = await openBoxFor(centre);
       const row = await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { attributed: 'link', since: new Date(orderAttrs.sinceMs).toISOString(), subtotal_cents: subtotal, order_number: order.order_number || order.name, email } });
       if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents, attributed: 'link' }); }

@@ -10,6 +10,8 @@
  *
  *   node virtual-closet/scripts/setupShopify.js            # preview
  *   node virtual-closet/scripts/setupShopify.js --create   # create what is missing
+ *   node virtual-closet/scripts/setupShopify.js --tiles    # preview the tile variants against SPONSOR_TILES
+ *   node virtual-closet/scripts/setupShopify.js --tiles --create   # replace stale tile variants with the current tiles
  */
 require('dotenv').config();
 const shopify = require('../../customer-service/lib/shopify');
@@ -19,12 +21,63 @@ const { PRODUCT_TITLE } = require('../lib/sponsorship');
 const discounts = require('../lib/discounts');
 
 const VARIANTS = [
-  ...SPONSOR_TILES.map(t => ({ key: t.key, label: `${t.label}: ${t.sub}`, cents: t.cents })),
+  ...SPONSOR_TILES.map(t => ({ key: t.key, label: t.sub ? `${t.label}: ${t.sub}` : t.label, cents: t.cents })),
   { key: 'unit', label: '$1 toward the box', cents: 100 },
 ];
 
+/**
+ * Bring the product's variants in line with SPONSOR_TILES: one variant per
+ * tile titled exactly as the tile ("$25"), plus the $1 unit. Variants whose
+ * title no longer matches a tile are deleted; missing ones are created.
+ */
+async function syncTiles(create) {
+  const existing = await config.get('sponsorship');
+  if (!existing?.productId) { console.log('Sponsorship product not configured; run --create first.'); return; }
+  const want = SPONSOR_TILES.map(t => ({ key: t.key, label: t.label, cents: t.cents }));
+  const keep = {}, stale = [], missing = [];
+  for (const [key, v] of Object.entries(existing.variants || {})) {
+    if (key === 'unit') { keep.unit = v; continue; }
+    const tile = want.find(t => t.key === key && t.label === v.label && t.cents === v.cents);
+    if (tile) keep[key] = v; else stale.push({ key, ...v });
+  }
+  for (const t of want) if (!keep[t.key]) missing.push(t);
+  console.log('Keep:', Object.keys(keep).join(', ') || 'none');
+  console.log('Delete:', stale.map(v => `${v.key} (${v.label})`).join(', ') || 'none');
+  console.log('Create:', missing.map(t => t.label).join(', ') || 'none');
+  if (!create) { console.log('\nRun with --tiles --create to apply.'); return; }
+
+  if (missing.length) {
+    const created = await shopify.createProductVariants(existing.productId, missing.map(t => ({
+      optionValues: [{ optionName: 'Amount', name: t.label }],
+      price: (t.cents / 100).toFixed(2),
+      inventoryPolicy: 'CONTINUE',
+      inventoryItem: { tracked: false, requiresShipping: false },
+      taxable: true,
+    })));
+    for (const t of missing) {
+      const v = created.find(x => x.title === t.label);
+      if (!v) throw new Error(`variant ${t.label} was not created`);
+      keep[t.key] = { id: v.id, cents: t.cents, label: t.label };
+    }
+    console.log('Created:', missing.map(t => t.label).join(', '));
+  }
+  if (stale.length) {
+    const { shopifyGraphQL } = shopify;
+    const data = await shopifyGraphQL(`
+      mutation($productId: ID!, $variantsIds: [ID!]!) {
+        productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) { userErrors { field message } }
+      }`, { productId: existing.productId, variantsIds: stale.map(v => v.id) });
+    const errs = data.productVariantsBulkDelete.userErrors || [];
+    if (errs.length) throw new Error(`delete failed: ${errs.map(e => e.message).join('; ')}`);
+    console.log('Deleted:', stale.map(v => v.label).join(', '));
+  }
+  await config.set('sponsorship', { ...existing, variants: keep });
+  console.log('Stored variants:', Object.keys(keep).join(', '));
+}
+
 async function main() {
   const create = process.argv.includes('--create');
+  if (process.argv.includes('--tiles')) return syncTiles(create);
   const existing = await config.get('sponsorship');
   console.log('Sponsorship product:', existing ? `configured (${existing.productId})` : 'not configured');
   const discount = await config.get('discount');
