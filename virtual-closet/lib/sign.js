@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
+const money = require('./money');
 
 const IN = 72; // points per inch
 const PAGE = { w: 8.5 * IN, h: 11 * IN };
@@ -193,7 +194,8 @@ function drawVisitorFace(ctx, top) {
   const about = `RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear.`;
   const quarter = `A quarter of every order goes to ${centre.name}'s Virtual Closet.`;
   const sponsorLead = 'Here as an ally?';
-  const sponsor = ' Sponsor the closet from $10 at the same link.';
+  // The smallest tile, in the centre's own currency (£10 for a UK centre).
+  const sponsor = ` Sponsor the closet from ${money.dollars(1000, centre.currency)} at the same link.`;
   const pGap = 0.09 * IN;
   const h1H = h1Lines.length * h1LineH;
   font(ctx, 'regular', 12);
@@ -260,7 +262,7 @@ function drawStaffFace(ctx, top) {
     'RUBIES makes great fitting, super comfortable clothing made specifically for trans girls and women that look, wear and feel like regular underwear and swimwear.',
     '20% off is one order per person, applied at checkout. No code to type.',
     `A quarter of every order and every sponsor dollar goes to ${centre.name}'s Virtual Closet.`,
-    'Here as an ally? Anyone can sponsor the closet from $10 at the same link.',
+    `Here as an ally? Anyone can sponsor the closet from ${money.dollars(1000, centre.currency)} at the same link.`,
     'Questions: jamie@rubyshines.com',
   ];
   const listX = PAD.side + 0.18 * IN;

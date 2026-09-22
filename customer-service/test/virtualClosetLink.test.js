@@ -137,7 +137,7 @@ test('sponsor tiles are their own variants, added to the cart with the centre na
   assert.equal(new URL(closet).searchParams.get('properties[_Box]'), '2', 'closet mode still carries the box');
   // The hidden keys read back off the order's line item.
   const li = sponsorship.readLineItem({ id: 9, variant_id: 333, quantity: 1, price: '25.00', properties: [{ name: 'For', value: "The Attic's Virtual Closet" }, { name: '_Closet', value: 'attic' }, { name: '_Kind', value: 'sponsor' }] }, { variants: { twentyfive: { id: 'gid://shopify/ProductVariant/333', cents: 2500 } } });
-  assert.deepEqual(li, { slug: 'attic', boxNumber: null, kind: 'sponsor', amountCents: 2500, lineItemId: '9' });
+  assert.deepEqual(li, { slug: 'attic', boxNumber: null, kind: 'sponsor', amountCents: 2500, shopCurrency: null, presentment: null, lineItemId: '9' });
 });
 
 test('the link-only page has one door, four tiles, the total line and none of the closet-mode words', () => {
@@ -453,4 +453,209 @@ test('the closet discount is a product discount on the eligible collection that 
   assert.deepEqual(shape.customerGets.items, { all: false, collections: { add: ['gid://shopify/Collection/77'] } });
   assert.equal(shape.customerGets.value.percentage, 0.2);
   assert.equal(discounts.COLLECTION_HANDLE, 'virtual-closet-eligible');
+});
+
+
+// ---- per-centre currency (Jamie, 2026-09-22) ---------------------------------
+// A centre's money is in its own currency, set from its country. Orders paid in
+// that currency record as paid; anything else converts once at the store's
+// fx-reference rate and keeps what was paid beside it.
+const money = require('../../virtual-closet/lib/money');
+const fx = require('../../virtual-closet/lib/fx');
+const shopifyPath = require.resolve('../../customer-service/lib/shopify');
+
+/** Stand in for the Shopify client: the fx-reference priced at USD 9,900 and GBP 8,316 (rate 0.84), counting reads. */
+function stubShopify({ fxReads = { n: 0 }, gbp = '8316.0', fail = false } = {}) {
+  const had = require.cache[shopifyPath];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: {
+    shopifyGraphQL: async (query, vars) => {
+      if (/productByHandle/.test(query) && vars?.handle === 'fx-reference') {
+        fxReads.n++;
+        if (fail) throw new Error('shopify down');
+        return { productByHandle: { variants: { nodes: [{ price: '9900.00', contextualPricing: { price: { amount: vars.country === 'GB' ? gbp : '14081.0', currencyCode: vars.country === 'GB' ? 'GBP' : 'CAD' } } }] } } };
+      }
+      throw new Error(`unexpected shopify call: ${query.slice(0, 40)}`);
+    },
+    addTags: async () => {}, deleteDiscountRedeemCodes: async () => {},
+  } };
+  return () => { if (had) require.cache[shopifyPath] = had; else delete require.cache[shopifyPath]; };
+}
+
+test('currency follows the country, and money shows its currency wherever it is not USD', () => {
+  assert.equal(money.currencyForCountry('US'), 'USD');
+  assert.equal(money.currencyForCountry('ca'), 'CAD');
+  assert.equal(money.currencyForCountry('GB'), 'GBP');
+  assert.equal(money.currencyForCountry('UK'), 'GBP');
+  assert.equal(money.currencyForCountry('DE'), 'EUR'); assert.equal(money.currencyForCountry('FR'), 'EUR'); assert.equal(money.currencyForCountry('IE'), 'EUR');
+  assert.equal(money.currencyForCountry('AU'), 'AUD');
+  assert.equal(money.currencyForCountry('MX'), 'USD', 'anything unmapped is the shop currency');
+  assert.equal(money.currencyForCountry(undefined), 'USD');
+  assert.equal(money.dollars(100000), '$1,000');
+  assert.equal(money.dollars(100000, 'USD'), '$1,000');
+  assert.equal(money.dollars(100000, 'CAD'), 'CA$1,000');
+  assert.equal(money.dollars(100000, 'GBP'), '£1,000');
+  assert.equal(money.dollars(100000, 'EUR'), '€1,000');
+  assert.equal(money.dollars(100000, 'AUD'), 'A$1,000');
+  assert.equal(money.dollars(4960, 'GBP'), '£49.60');
+  assert.equal(money.dollars(-2000, 'GBP'), '-£20');
+  assert.equal(money.dollars(500, 'NZD'), 'NZD 5', 'an unknown currency is still named, never shown as dollars');
+});
+
+test('a centre enrolled with country GB is in GBP with a £1,000 goal, and its page, tiles and totals read in pounds', async () => {
+  const c = await centres.enrol({ name: 'The Proud Trust', notify_email: 'closet@theproudtrust.org', city: 'Manchester', country: 'GB', actor: 'operator:test' });
+  assert.equal(c.currency, 'GBP');
+  assert.equal(c.goal_cents, 100000, 'the default goal is 1,000 in the centre currency');
+  assert.equal(c.address.country, 'GB');
+  const uk = await centres.enrol({ name: 'Alias UK', notify_email: 'a@uk.org', country: 'uk' });
+  assert.equal(uk.currency, 'GBP'); assert.equal(uk.address.country, 'GB', 'UK is accepted as GB');
+  const us = fake.tables.vc_centres.find(x => x.slug === 'the-attic-youth-center');
+  assert.equal(us.currency, 'USD', 'a US centre stays in dollars');
+
+  const empty = closetView.render({ centre: c, products: MENU, lead: '', balance: { raisedCents: 0, orders: 0, sponsors: 0 } });
+  assert.ok(empty.includes('£0 <small>raised of £1,000 goal</small>'), 'the goal reads in pounds');
+  for (const t of ['£10', '£25', '£50', '£100']) assert.ok(empty.includes(`<b>${t}</b>`), `tile ${t}`);
+  assert.ok(!/<b>\$\d/.test(empty), 'no dollar tiles on a UK page');
+  assert.ok(!/<s>\$|with your 20%/.test(empty), 'no USD style prices on a UK page; the store shows its own');
+  const some = closetView.render({ centre: c, products: MENU, lead: '', balance: { raisedCents: 8800, orders: 9, sponsors: 3 } });
+  assert.ok(some.includes('£88 <small>raised of £1,000 goal</small>') && some.includes('RUBIES matches it: <b>£176</b>'));
+  assert.ok(!some.includes('$'), 'not a dollar sign anywhere on a UK centre page');
+  const usPage = closetView.render({ centre: us, products: MENU, lead: '', balance: { raisedCents: 8800, orders: 9, sponsors: 3 } });
+  assert.ok(usPage.includes('$88 <small>raised of $1,000 goal</small>') && usPage.includes('<b>$25</b>') && usPage.includes('<s>$32</s>'), 'the US page is exactly as before');
+});
+
+test('an order paid in GBP for a GBP centre credits a quarter of the GBP subtotal exactly, with no rate involved', async () => {
+  const centre = fake.tables.vc_centres.find(x => x.slug === 'the-proud-trust');
+  const fxReads = { n: 0 };
+  const restore = stubShopify({ fxReads, fail: true });
+  fx.clear();
+  try {
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEPROUD-GBP001', order_id: null });
+    const order = { id: 9001, order_number: 'R9001', email: 'uk-buyer@example.com', financial_status: 'paid', currency: 'USD', discount_codes: [{ code: 'VC-THEPROUD-GBP001' }],
+      subtotal_price: '40.00', subtotal_price_set: { shop_money: { amount: '40.00', currency_code: 'USD' }, presentment_money: { amount: '33.00', currency_code: 'GBP' } }, line_items: [{ id: 1, variant_id: 999, quantity: 1, price: '40.00', price_set: { shop_money: { amount: '40.00', currency_code: 'USD' }, presentment_money: { amount: '33.00', currency_code: 'GBP' } }, properties: [] }] };
+    const r = await ledger.recordOrder(order);
+    assert.equal(r.credited.length, 1);
+    const row = r.credited[0];
+    assert.equal(row.amount_cents, 825, 'a quarter of £33.00, not of $40.00');
+    assert.equal(row.currency, 'GBP');
+    assert.equal(row.detail.subtotal_cents, 3300);
+    assert.equal(row.paid_amount_cents, 3300); assert.equal(row.paid_currency, 'GBP'); assert.equal(row.fx_rate, null);
+    assert.equal(fxReads.n, 0, 'the fx-reference was never read');
+    assert.equal((await ledger.recordOrder(order)).credited.length, 0, 'idempotent');
+  } finally { restore(); }
+});
+
+test('an order paid in USD for a GBP centre credits pounds at the fx-reference rate and keeps the dollars it was paid in', async () => {
+  const centre = fake.tables.vc_centres.find(x => x.slug === 'the-proud-trust');
+  const fxReads = { n: 0 };
+  const restore = stubShopify({ fxReads });
+  fx.clear();
+  try {
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEPROUD-USD001', order_id: null });
+    const order = { id: 9002, order_number: 'R9002', email: 'us-buyer@example.com', financial_status: 'paid', currency: 'USD', discount_codes: [{ code: 'VC-THEPROUD-USD001' }],
+      subtotal_price: '40.00', subtotal_price_set: { shop_money: { amount: '40.00', currency_code: 'USD' }, presentment_money: { amount: '40.00', currency_code: 'USD' } }, line_items: [] };
+    const r = await ledger.recordOrder(order);
+    assert.equal(r.credited.length, 1);
+    const row = r.credited[0];
+    assert.equal(fxReads.n, 1, 'one fx-reference read');
+    assert.equal(row.fx_rate, 0.84, '8316 / 9900');
+    assert.equal(row.detail.subtotal_cents, 3360, '$40.00 at 0.84 is £33.60');
+    assert.equal(row.amount_cents, 840, 'a quarter of £33.60');
+    assert.equal(row.currency, 'GBP');
+    assert.equal(row.paid_amount_cents, 4000); assert.equal(row.paid_currency, 'USD');
+
+    // A shopper who paid in CAD converts from Shopify's USD settlement, never CAD to GBP directly.
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEPROUD-CAD001', order_id: null });
+    const cad = { ...order, id: 9003, order_number: 'R9003', email: 'ca-buyer@example.com', discount_codes: [{ code: 'VC-THEPROUD-CAD001' }], subtotal_price: '20.53', subtotal_price_set: { shop_money: { amount: '20.53', currency_code: 'USD' }, presentment_money: { amount: '28.80', currency_code: 'CAD' } } };
+    const r2 = await ledger.recordOrder(cad);
+    assert.equal(r2.credited[0].detail.subtotal_cents, Math.round(2053 * 0.84));
+    assert.equal(r2.credited[0].paid_amount_cents, 2880); assert.equal(r2.credited[0].paid_currency, 'CAD');
+    assert.equal(fxReads.n, 1, 'the rate is cached for the hour');
+
+    // The store down: the credit waits for the reconcile rather than guessing a rate.
+    fx.clear();
+    restore(); const restore2 = stubShopify({ fail: true });
+    try {
+      fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEPROUD-DOWN01', order_id: null });
+      await assert.rejects(ledger.recordOrder({ ...order, id: 9004, order_number: 'R9004', email: 'later@example.com', discount_codes: [{ code: 'VC-THEPROUD-DOWN01' }] }), /shopify down/);
+      assert.ok(!fake.tables.vc_ledger.some(l => l.source_id === '9004'), 'nothing was written');
+    } finally { restore2(); }
+  } finally { fx.clear(); }
+});
+
+test('a £25 sponsor tile paid in pounds records £25 and thanks the sponsor in pounds; the same tile paid in dollars converts once', async () => {
+  const centre = fake.tables.vc_centres.find(x => x.slug === 'the-proud-trust');
+  const restore = stubShopify();
+  fx.clear();
+  try {
+    const gbp = { id: 9101, order_number: 'R9101', email: 'uk-sponsor@example.com', financial_status: 'paid', currency: 'USD', discount_codes: [], subtotal_price: '25.00',
+      subtotal_price_set: { shop_money: { amount: '25.00', currency_code: 'USD' }, presentment_money: { amount: '25.00', currency_code: 'GBP' } },
+      line_items: [{ id: 91, variant_id: 333, quantity: 1, price: '25.00', price_set: { shop_money: { amount: '25.00', currency_code: 'USD' }, presentment_money: { amount: '25.00', currency_code: 'GBP' } }, properties: [{ name: 'For', value: "The Proud Trust's Virtual Closet" }, { name: '_Closet', value: centre.slug }, { name: '_Kind', value: 'sponsor' }] }] };
+    const out = await quiet(async () => {
+      const r = await ledger.recordOrder(gbp);
+      assert.deepEqual(r.credited.map(c => [c.kind, c.amount_cents, c.currency, c.paid_amount_cents, c.paid_currency, c.fx_rate]), [['sponsor', 2500, 'GBP', 2500, 'GBP', null]], 'exactly £25, no quarter on a sponsor-only order');
+    });
+    assert.ok(out.includes("Your £25 went to The Proud Trust's Virtual Closet. Thanks for your support."), out);
+    assert.ok(!out.includes('$'), 'no dollars in a UK sponsor thank-you');
+
+    const usd = { ...gbp, id: 9102, order_number: 'R9102', email: 'us-sponsor@example.com', subtotal_price_set: { shop_money: { amount: '25.00', currency_code: 'USD' }, presentment_money: { amount: '25.00', currency_code: 'USD' } },
+      line_items: [{ ...gbp.line_items[0], id: 92, price_set: { shop_money: { amount: '25.00', currency_code: 'USD' }, presentment_money: { amount: '25.00', currency_code: 'USD' } } }] };
+    const out2 = await quiet(async () => {
+      const r = await ledger.recordOrder(usd);
+      assert.deepEqual(r.credited.map(c => [c.kind, c.amount_cents, c.currency, c.paid_amount_cents, c.paid_currency, c.fx_rate]), [['sponsor', 2100, 'GBP', 2500, 'USD', 0.84]], '$25 lands as £21 at the day\'s rate, with the $25 kept');
+    });
+    assert.ok(out2.includes("Your £21 went to The Proud Trust's Virtual Closet."), 'the thank-you says what landed in the closet');
+  } finally { restore(); fx.clear(); }
+});
+
+test('the reconcile settles a mirror row from its presentment money the same way the webhook does', async () => {
+  const centre = fake.tables.vc_centres.find(x => x.slug === 'the-proud-trust');
+  const fxReads = { n: 0 };
+  const restore = stubShopify({ fxReads, fail: true });
+  fx.clear();
+  try {
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEPROUD-MIR001', order_id: null });
+    fake.tables.orders = fake.tables.orders || [];
+    fake.tables.orders.push({ shopify_order_id: 'gid://shopify/Order/9201', order_number: 'R9201', customer_email: 'mirror@example.com', discount_codes: ['VC-THEPROUD-MIR001'], subtotal_price: 40, shop_currency: 'USD', presentment_currency: 'GBP', presentment_subtotal_price: 33, financial_status: 'paid', created_at: new Date().toISOString() });
+    const r = await ledger.reconcile({ days: 1 });
+    assert.ok(r.credited >= 1, JSON.stringify(r));
+    const row = fake.tables.vc_ledger.find(l => l.source_id === '9201');
+    assert.ok(row, 'the mirror order was credited');
+    assert.equal(row.amount_cents, 825); assert.equal(row.currency, 'GBP'); assert.equal(row.paid_currency, 'GBP'); assert.equal(row.fx_rate, null);
+    assert.equal(fxReads.n, 0);
+  } finally { restore(); }
+});
+
+test('the digest, the sign and the operator tools show a UK centre in pounds, and the US centre exactly as before', async () => {
+  const centre = fake.tables.vc_centres.find(x => x.slug === 'the-proud-trust');
+  const out = await quiet(async () => { const r = await daily.run({ live: true }); assert.ok(r.digests >= 1, JSON.stringify(r)); });
+  const uk = out.split('[vc email → closet@theproudtrust.org]')[1] || '';
+  const expected = fake.tables.vc_ledger.filter(l => l.centre_id === centre.id && ['order_credit', 'sponsor'].includes(l.kind)).reduce((a, l) => a + l.amount_cents, 0);
+  assert.ok(uk.startsWith(` ${money.dollars(expected, 'GBP')} added to The Proud Trust's Virtual Closet today`), uk.slice(0, 120));
+  assert.ok(uk.includes('2 sponsors put £46 in.'), 'the £25 as paid plus the $25 converted to £21');
+  assert.ok(uk.includes('of your £1,000 goal'), 'the digest names the goal in pounds');
+  assert.ok(!/\$/.test(uk.split('[vc email')[0]), 'no dollars in the UK digest');
+
+  const { signPdf } = require('../../virtual-closet/lib/sign');
+  const pdf = await signPdf(centre, { url: 'https://closet.rubyshines.com/the-proud-trust', logos: false });
+  const { PDFParse } = require('pdf-parse');
+  const parser = new PDFParse({ data: pdf });
+  const text = (await parser.getText()).text.replace(/\s+/g, ' ');
+  await parser.destroy();
+  assert.ok(text.includes('Sponsor the closet from £10'), 'the visitor face');
+  assert.ok(text.includes('sponsor the closet from £10 at the same link'), 'the staff face');
+  assert.ok(!text.includes('$10'));
+
+  const tools = Object.fromEntries(require('../lib/tools/virtualCloset').map(t => [t.name, t]));
+  const preview = await tools.vc_enrol_centre.handler({ name: 'Mermaids', notify_email: 'x@mermaids.org', country: 'GB' });
+  assert.ok(preview.content[0].text.includes('currency: GBP (from country GB) · goal: £1,000'), preview.content[0].text);
+  const goal = await tools.vc_set_goal.handler({ centre_id: centre.id, goal_dollars: 2500 });
+  // The in-memory update mutates the row `before` points at, so only the shape and the new goal are asserted.
+  assert.match(goal.content[0].text, /^The Proud Trust: goal £[\d,]+ → £2,500\.$/);
+  const redeemed = await tools.vc_redeem.handler({ centre_id: centre.id, amount_cents: 1000, order_number: 'UK-1' });
+  assert.match(redeemed.content[0].text, /^Redeemed £10 against order UK-1 for The Proud Trust\. Balance £[\d,.]+ → £[\d,.]+ \(raised £[\d,.]+, redeemed £10\)\.$/);
+  const usTool = await tools.vc_set_goal.handler({ centre_id: fake.tables.vc_centres[0].id, goal_dollars: 1000 });
+  assert.equal(usTool.content[0].text, 'The Attic Youth Center: goal $1,000 → $1,000.');
+  const usRows = fake.tables.vc_ledger.filter(l => l.centre_id === fake.tables.vc_centres[0].id);
+  assert.ok(usRows.length > 3);
+  assert.ok(usRows.every(l => l.currency === 'USD' && l.paid_currency === 'USD' && l.fx_rate === null), 'every US row is in dollars with no rate');
 });

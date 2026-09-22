@@ -96,14 +96,21 @@ test('personal email detection and centre domain suggestion', () => {
 test('a sponsorship line item is read from either the webhook or the mirror shape', () => {
   const s = { variants: { pair: { id: 'gid://shopify/ProductVariant/111', cents: 1600 }, unit: { id: 'gid://shopify/ProductVariant/222', cents: 100 } } };
   const webhook = sponsorship.readLineItem({ id: 9, variant_id: 111, quantity: 1, price: '16.00', properties: [{ name: 'Closet', value: 'demo' }, { name: 'Box', value: '2' }, { name: 'Kind', value: 'sponsor' }] }, s);
-  assert.deepEqual(webhook, { slug: 'demo', boxNumber: 2, kind: 'sponsor', amountCents: 1600, lineItemId: '9' });
+  assert.deepEqual(webhook, { slug: 'demo', boxNumber: 2, kind: 'sponsor', amountCents: 1600, shopCurrency: null, presentment: null, lineItemId: '9' });
   const mirror = sponsorship.readLineItem({ shopify_line_item_id: 'gid://shopify/LineItem/10', shopify_variant_id: 'gid://shopify/ProductVariant/222', quantity: 50, unit_price: 1, custom_attributes: [{ key: 'Closet', value: 'demo' }, { key: 'Kind', value: 'centre' }] }, s);
-  assert.deepEqual(mirror, { slug: 'demo', boxNumber: null, kind: 'centre_add', amountCents: 5000, lineItemId: '10' });
+  assert.deepEqual(mirror, { slug: 'demo', boxNumber: null, kind: 'centre_add', amountCents: 5000, shopCurrency: null, presentment: null, lineItemId: '10' });
   assert.equal(sponsorship.readLineItem({ variant_id: 999 }, s), null);
   const attrs = sponsorship.readOrderAttributes({ note_attributes: [{ name: 'Closet', value: 'demo' }, { name: 'Box', value: '3' }, { name: 'Kind', value: 'centre' }] });
   assert.deepEqual(attrs, { slug: 'demo', boxNumber: 3, kind: 'centre_add', sinceMs: null });
   const viaOrder = sponsorship.readLineItem({ id: 11, variant_id: 222, quantity: 40, price: '1.00' }, s, attrs);
-  assert.deepEqual(viaOrder, { slug: 'demo', boxNumber: 3, kind: 'centre_add', amountCents: 4000, lineItemId: '11' });
+  assert.deepEqual(viaOrder, { slug: 'demo', boxNumber: 3, kind: 'centre_add', amountCents: 4000, shopCurrency: null, presentment: null, lineItemId: '11' });
+  // What the shopper paid rides along from price_set (webhook) or the mirror's presentment columns.
+  const paid = sponsorship.readLineItem({ id: 12, variant_id: 111, quantity: 2, price: '16.00', price_set: { shop_money: { amount: '16.00', currency_code: 'USD' }, presentment_money: { amount: '13.00', currency_code: 'GBP' } }, properties: [{ name: 'Closet', value: 'demo' }] }, s);
+  assert.equal(paid.amountCents, 3200); assert.equal(paid.shopCurrency, 'USD'); assert.deepEqual(paid.presentment, { cents: 2600, currency: 'GBP' });
+  const mirrorPaid = sponsorship.readLineItem({ shopify_line_item_id: '13', shopify_variant_id: 'gid://shopify/ProductVariant/222', quantity: 25, unit_price: 1, unit_price_currency: 'USD', presentment_unit_price: 1.4, presentment_unit_price_currency: 'CAD', custom_attributes: [{ key: 'Closet', value: 'demo' }] }, s);
+  assert.equal(mirrorPaid.shopCurrency, 'USD'); assert.deepEqual(mirrorPaid.presentment, { cents: 3500, currency: 'CAD' });
+  const noCurrency = sponsorship.readLineItem({ shopify_line_item_id: '14', shopify_variant_id: 'gid://shopify/ProductVariant/222', quantity: 1, unit_price: 1, presentment_unit_price: 1, presentment_unit_price_currency: null, custom_attributes: [] }, s);
+  assert.equal(noCurrency.presentment, null, 'a mirror row with no presentment currency says nothing about how it was paid');
   const cartUrl = 'https://rubyshines.com/cart/222:40?attributes%5BCloset%5D=demo&attributes%5BBox%5D=3&attributes%5BKind%5D=centre';
   assert.ok(cartUrl.includes('/cart/222:40'));
 });
