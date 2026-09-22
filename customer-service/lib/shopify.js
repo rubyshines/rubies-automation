@@ -1682,20 +1682,22 @@ async function findDiscountNodeByTitle(title) {
  */
 /**
  * Remove codes matching `search` from a code discount (GraphQL, async job on
- * Shopify's side). Used to retire a Virtual Closet code once its order lands.
+ * Shopify's side; the mutation is discountCodeRedeemCodeBulkDelete on 2025-10,
+ * the older discountRedeemCodeBulkDelete name is gone). Used to retire a
+ * Virtual Closet code once its order lands.
  */
 async function deleteDiscountRedeemCodes(discountId, search) {
   const data = await shopifyGraphQL(`
     mutation($discountId: ID!, $search: String) {
-      discountRedeemCodeBulkDelete(discountId: $discountId, search: $search) {
+      discountCodeRedeemCodeBulkDelete(discountId: $discountId, search: $search) {
         job { id done }
         userErrors { field message }
       }
     }
   `, { discountId, search });
-  const errs = data?.discountRedeemCodeBulkDelete?.userErrors || [];
+  const errs = data?.discountCodeRedeemCodeBulkDelete?.userErrors || [];
   if (errs.length) throw new Error(`deleteDiscountRedeemCodes: ${errs.map(e => e.message).join('; ')}`);
-  return data.discountRedeemCodeBulkDelete.job;
+  return data.discountCodeRedeemCodeBulkDelete.job;
 }
 
 /** Update a code discount (DiscountCodeBasicInput fields only). */
