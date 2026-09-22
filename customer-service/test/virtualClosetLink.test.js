@@ -402,14 +402,24 @@ test('a credited code order tags the store customer, and a tag failure never fai
   const centre = fake.tables.vc_centres[0];
   const shopifyPath = require.resolve('../../customer-service/lib/shopify');
   const hadShopify = require.cache[shopifyPath];
-  const tagged = [];
-  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addTags: async (id, tags) => { tagged.push({ id, tags }); }, shopifyGraphQL: async () => { throw new Error('offline'); } } };
+  const tagged = [], retired = [];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addTags: async (id, tags) => { tagged.push({ id, tags }); }, deleteDiscountRedeemCodes: async (id, search) => { retired.push({ id, search }); }, shopifyGraphQL: async () => { throw new Error('offline'); } } };
+  const hadLive = process.env.RAILWAY_DEPLOYMENT_ID;
+  process.env.RAILWAY_DEPLOYMENT_ID = 'test';
+  fake.tables.vc_config.push({ key: 'discount', value: { id: 'gid://shopify/DiscountCodeNode/9', numericId: '9', title: 'Virtual Closet 20%' } });
+  require('../../virtual-closet/lib/config').clear();
   try {
     fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG001', order_id: null });
     const order = { id: 7001, order_number: 'R3001', email: 'tagme@example.com', customer: { id: 424242 }, financial_status: 'paid', discount_codes: [{ code: 'VC-THEATTIC-TAG001' }], subtotal_price: '32.00', line_items: [] };
     const r = await ledger.recordOrder(order);
     assert.equal(r.credited.length, 1);
     assert.deepEqual(tagged, [{ id: 'gid://shopify/Customer/424242', tags: ['closet-discount-used', `closet:${centre.slug}`] }]);
+    assert.deepEqual(retired, [{ id: 'gid://shopify/DiscountCodeNode/9', search: 'VC-THEATTIC-TAG001' }], 'the code is taken off the store once its order lands');
+    assert.ok(fake.tables.vc_events.some(e => e.kind === 'code.retired' && e.detail.code === 'VC-THEATTIC-TAG001'));
+    assert.equal((await ledger.recordOrder(order)).credited.length, 0);
+    assert.equal(retired.length, 1, 'a replayed webhook does not retire twice');
+
+    require.cache[shopifyPath].exports.deleteDiscountRedeemCodes = async () => { throw new Error('shopify down'); };
 
     require.cache[shopifyPath].exports.addTags = async () => { throw new Error('tags down'); };
     fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG002', order_id: null });
@@ -419,6 +429,7 @@ test('a credited code order tags the store customer, and a tag failure never fai
     });
     assert.ok(/customer tag failed/.test(out) || true);
   } finally {
+    if (hadLive === undefined) delete process.env.RAILWAY_DEPLOYMENT_ID; else process.env.RAILWAY_DEPLOYMENT_ID = hadLive;
     if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
   }
 });
