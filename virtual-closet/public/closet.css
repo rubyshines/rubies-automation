@@ -93,8 +93,14 @@ b, strong { font-weight: 600; }
 .btn-small { min-height: 38px; min-width: 0; padding: 0 16px; font-size: 15px; letter-spacing: .5px; }
 .btn.disabled, .btn[aria-disabled="true"], .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
 .doors { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0 8px; }
-.btn.is-loading { pointer-events: none; opacity: .85; gap: 10px; }
-.btn.is-loading::after { content: ""; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: vc-spin .7s linear infinite; }
+/* While a shop tap is minting its code the button keeps its exact size: the
+   spinner sits in the right-hand padding, absolutely positioned, so the label
+   stays put and nothing around it shifts (Jamie, 2026-09-22). */
+.btn { position: relative; transition: opacity .2s, background-color .2s, padding .15s; }
+/* The 60px of side padding is rebalanced, not added to, so the outer size
+   holds while the label eases left and the spinner gets its own room. */
+.btn.is-loading { pointer-events: none; opacity: .85; padding: 0 42px 0 18px; }
+.btn.is-loading::after { content: ""; position: absolute; top: 50%; right: 14px; width: 14px; height: 14px; margin-top: -7px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: vc-spin .7s linear infinite; }
 .product.is-going { opacity: .55; transition: opacity .2s; }
 @keyframes vc-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .btn.is-loading::after { animation: none; border-right-color: currentColor; opacity: .5; } }
@@ -281,6 +287,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: v
   h2 { font-size: 22px; }
   .lede { font-size: 17px; }
   .btn { font-size: 16px; min-height: 44px; padding: 0 20px; }
+  .btn.is-loading { padding: 0 30px 0 10px; }
+  .btn.is-loading::after { right: 9px; width: 12px; height: 12px; margin-top: -6px; }
   .brand img { width: 90px; }
   .hd { padding: 14px 0; gap: 10px; }
   .hd nav, .hd-nav { gap: 14px; }
