@@ -93,6 +93,11 @@ b, strong { font-weight: 600; }
 .btn-small { min-height: 38px; min-width: 0; padding: 0 16px; font-size: 15px; letter-spacing: .5px; }
 .btn.disabled, .btn[aria-disabled="true"], .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
 .doors { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0 8px; }
+.btn.is-loading { pointer-events: none; opacity: .85; gap: 10px; }
+.btn.is-loading::after { content: ""; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: vc-spin .7s linear infinite; }
+.product.is-going { opacity: .55; transition: opacity .2s; }
+@keyframes vc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .btn.is-loading::after { animation: none; border-right-color: currentColor; opacity: .5; } }
 
 /* layout blocks */
 section { padding: 40px 0; }
