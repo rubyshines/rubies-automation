@@ -8,6 +8,8 @@ done_when: On the Railway service, a centre enrolled by `vc_enrol_centre` (seede
 
 # Virtual Closet, the minimal cut
 
+**Status 2026-09-22:** store side shipped (PRs #233, #234): style taps shop with the 20%, a second tap reuses its code, the landing path carries the closet to the theme, code-less link orders credit within 30 days (first order per email), sponsor tiles are their own variants with the centre named on the line. The theme half (closet bar, cart line) is on preview theme `rubies-ecom-v4/wt/virtual-closet-store`, not live. Plan: `.claude/plans/virtual-closet-theme.md`.
+
 **Status 2026-09-21, end of day:** shipped and iterated through PR #229; The Attic enrolled (#9) with its welcome in Jamie's own inbox; simulation proved every email. `VC_BASE_URL` is `https://closet.rubyshines.com` on Railway; the domain is waiting on domain.com DNS (see `reference_deployment.md`). Left: re-send The Attic's welcome once the domain answers, then a real order and a real $10 sponsorship through the live page and the next daily digest.
 
 Build spec. The full app (accounts, requests, boxes, operator pages) was built and merged 2026-09-18 to 21 (PRs #212 to #219) and runs at the Railway domain. On 2026-09-21 Jamie cut the pilot back to an affiliate-shaped programme because the risk is execution, for the centre and for RUBIES, not build cost. The programme record with every decision is `.claude/plans/org-closet-programme.md`, section "The minimal cut". This file says how the code changes.
@@ -62,7 +64,7 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 - `SPONSOR_TILES` becomes `[{key:'ten',cents:1000,label:'$10'},{key:'twentyfive',cents:2500,label:'$25'},{key:'fifty',cents:5000,label:'$50'},{key:'hundred',cents:10000,label:'$100'}]`, no `sub`. Closet-mode templates that read `sub` render without it (check `sponsorFirst` and `allEqual`).
 
 ### `virtual-closet/lib/sponsorship.js`
-- `checkoutUrl`: every tile uses the `unit` variant with `qty = cents / 100`. The per-item variants on the hidden Shopify product stay unused; no store change. In link mode the `Box` attribute is omitted. `readLineItem` and `readOrderAttributes` unchanged (the unit variant is already known, kind stays `sponsor`).
+- ~~`checkoutUrl`: every tile uses the `unit` variant with `qty = cents / 100`.~~ **Superseded 2026-09-22 (Jamie):** each tile is its own variant on the hidden product ($10, $25, $50, $100; `scripts/setupShopify.js --tiles --create` syncs the store to `SPONSOR_TILES`), the `unit` variant stays for closet mode's add-to-the-box. The sponsor link is the cart's add URL with line item properties: `For: [Centre]'s Virtual Closet` shows under the line everywhere Shopify lists it; `_Closet`, `_Kind`, `_Box` are hidden by the underscore and read by the ledger. A sponsor line in the same order as products is excluded from the product quarter.
 
 ### `virtual-closet/views/closet.js`
 - New arrangement `linkOnly(ctx)`, chosen when `centre.mode === 'link'` regardless of `?lead`. No nav links. Sections, in order:
@@ -127,8 +129,9 @@ alter table vc_ledger add constraint vc_ledger_kind_check check (kind in ('order
 5. Enrol the first centre from their partner row where one exists: The Attic Youth Center (Philadelphia) is the first likely to sign up and is not in the registry, so its fields go in directly; Uniting Pride is in the registry. Retire the test centre with status `left` (existing `setStatus`).
 
 ## Out of scope, parked or later
-- The 30-day browser attribution window on the store (parked already).
-- The store-side closet bar and cart line (`.claude/plans/virtual-closet-theme.md`), not started.
+- ~~The 30-day browser attribution window on the store.~~ Built 2026-09-22 (server side live; theme on preview).
+- The store-side closet bar and cart line (`.claude/plans/virtual-closet-theme.md`): built on the preview theme 2026-09-22, not yet on the live theme.
+- The order confirmation email line (parked).
 - Any self-serve sign-up. Jamie enrols.
 - Any centre-facing view. The email is the view.
 - Refund reversal on the ledger: by hand through `vc_redeem` with `kind: 'adjustment'`.
