@@ -443,3 +443,14 @@ test('a code order that also carries a sponsor line earns the quarter on the pro
   const r = await quiet(async () => { const res = await ledger.recordOrder(order); assert.deepEqual(res.credited.map(c => [c.kind, c.amount_cents]).sort(), [['order_credit', 800], ['sponsor', 2500]]); });
   assert.ok(r.includes('[vc email → mixed@example.com]'), 'the sponsor thank-you still goes out');
 });
+
+
+test('the closet discount is a product discount on the eligible collection that combines with everything, once per customer', () => {
+  const discounts = require('../../virtual-closet/lib/discounts');
+  const shape = discounts.discountShape('gid://shopify/Collection/77');
+  assert.deepEqual(shape.combinesWith, { orderDiscounts: true, productDiscounts: true, shippingDiscounts: true });
+  assert.equal(shape.appliesOncePerCustomer, true);
+  assert.deepEqual(shape.customerGets.items, { all: false, collections: { add: ['gid://shopify/Collection/77'] } });
+  assert.equal(shape.customerGets.value.percentage, 0.2);
+  assert.equal(discounts.COLLECTION_HANDLE, 'virtual-closet-eligible');
+});

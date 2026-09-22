@@ -1,10 +1,15 @@
 'use strict';
 /**
- * "Shop with 20% off": one Shopify discount, "Virtual Closet 20%", 20% off an
- * order, once per customer (new or returning, Jamie 2026-09-18). Each click
- * draws a fresh code on that discount so nothing reusable is ever shown, and
- * the code's prefix says which centre the order belongs to. The shopper is
- * sent to the store's discount URL, which applies it silently at checkout.
+ * "Shop with 20% off": one Shopify discount, "Virtual Closet 20%", once per
+ * customer (new or returning, Jamie 2026-09-18). Each click draws a fresh
+ * code on that discount, and the code's prefix says which centre the order
+ * belongs to. The shopper is sent to the store's discount URL, which applies
+ * it silently at checkout.
+ *
+ * It is a product discount on a collection, not an order discount (Jamie,
+ * 2026-09-22): shaped like the store's sales and volume tiers, it combines
+ * with them and with shipping discounts, and the collection leaves out the
+ * hidden sponsorship product so a sponsor tile is never 20% off.
  */
 const crypto = require('crypto');
 const config = require('./config');
@@ -14,10 +19,42 @@ const { allowLiveWrite } = require('../../shared/liveWrites');
 
 const TITLE = 'Virtual Closet 20%';
 const PERCENT = 20;
+// Everything the store sells except the sponsorship product and gift cards.
+const COLLECTION_HANDLE = 'virtual-closet-eligible';
+const COLLECTION_TITLE = 'Virtual Closet eligible';
+const COLLECTION_RULES = { appliedDisjunctively: false, rules: [
+  { column: 'TYPE', relation: 'NOT_EQUALS', condition: 'Virtual Closet' },
+  { column: 'TYPE', relation: 'NOT_EQUALS', condition: 'Gift Card' },
+] };
+// The same rule every managed discount on the store follows (promotions/discounts.js).
+const COMBINES_WITH = { orderDiscounts: true, productDiscounts: true, shippingDiscounts: true };
 
 function codeFor(centre) {
   const tag = String(centre.slug || 'closet').replace(/[^a-z0-9]/gi, '').slice(0, 8).toUpperCase() || 'CLOSET';
   return `VC-${tag}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+/** The eligible-products collection's id, creating it (unpublished) on first use. */
+async function ensureCollection() {
+  const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
+  const found = await shopifyGraphQL('query($h: String!) { collectionByHandle(handle: $h) { id } }', { h: COLLECTION_HANDLE });
+  if (found.collectionByHandle?.id) return found.collectionByHandle.id;
+  const made = await shopifyGraphQL(`
+    mutation($input: CollectionInput!) { collectionCreate(input: $input) { collection { id } userErrors { field message } } }
+  `, { input: { title: COLLECTION_TITLE, handle: COLLECTION_HANDLE, ruleSet: COLLECTION_RULES } });
+  const errs = made.collectionCreate.userErrors || [];
+  if (errs.length) throw new Error(`collection: ${errs.map(e => e.message).join('; ')}`);
+  return made.collectionCreate.collection.id;
+}
+
+/** What the discount should look like: the shape sent on create and on align. */
+function discountShape(collectionId) {
+  return {
+    appliesOncePerCustomer: true,
+    customerSelection: { all: true },
+    customerGets: { value: { percentage: PERCENT / 100 }, items: { all: false, collections: { add: [collectionId] } } },
+    combinesWith: COMBINES_WITH,
+  };
 }
 
 /** The discount's numeric id, creating the discount on first use. */
@@ -27,20 +64,26 @@ async function ensureDiscount() {
   const shopify = require('../../customer-service/lib/shopify');
   let node = await shopify.findDiscountNodeByTitle(TITLE);
   if (!node) {
-    const created = await shopify.createDiscountCode({
-      title: TITLE,
-      code: codeFor({ slug: 'seed' }),
-      startsAt: new Date().toISOString(),
-      appliesOncePerCustomer: true,
-      customerSelection: { all: true },
-      customerGets: { value: { percentage: PERCENT / 100 }, items: { all: true } },
-      combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: true },
-    });
+    const collectionId = await ensureCollection();
+    const created = await shopify.createDiscountCode({ title: TITLE, code: codeFor({ slug: 'seed' }), startsAt: new Date().toISOString(), ...discountShape(collectionId) });
     node = { id: created.id, numericId: created.id.split('/').pop() };
   }
   const value = { id: node.id, numericId: node.numericId, title: TITLE };
   await config.set('discount', value);
   return value;
+}
+
+/**
+ * Bring the live discount in line with discountShape: the collection, the
+ * combination rules, once per customer. Run from setupShopify.js --discount.
+ */
+async function alignDiscount() {
+  const discount = await ensureDiscount();
+  const collectionId = await ensureCollection();
+  const shopify = require('../../customer-service/lib/shopify');
+  const node = await shopify.updateDiscountCode(discount.id, discountShape(collectionId));
+  await config.set('discount', { ...discount, collectionId });
+  return { discount, collectionId, node };
 }
 
 /**
@@ -132,4 +175,4 @@ async function centreForCode(code) {
   return row;
 }
 
-module.exports = { TITLE, PERCENT, ensureDiscount, shopVisit, shopUrlFor, storePath, centreForCode, codeFor, retireCode };
+module.exports = { TITLE, PERCENT, COLLECTION_HANDLE, COMBINES_WITH, ensureCollection, ensureDiscount, alignDiscount, discountShape, shopVisit, shopUrlFor, storePath, centreForCode, codeFor, retireCode };
