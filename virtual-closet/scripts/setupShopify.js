@@ -3,7 +3,7 @@
 /**
  * One-time store setup for the Virtual Closet (idempotent):
  *   1. A hidden product "Sponsor a closet" with one variant per sponsor tile
- *      and a $1 unit variant for "add to the box". No shipping, no inventory,
+ *      and a $1 unit variant for "add to the box". No shipping, no tax, no inventory,
  *      not in any collection, so it never shows in the store's own pages.
  *   2. The "Virtual Closet 20%" discount (20% off, once per customer).
  * Ids are stored in vc_config so the service reads them at runtime.
@@ -54,7 +54,7 @@ async function syncTiles(create) {
       price: (t.cents / 100).toFixed(2),
       inventoryPolicy: 'CONTINUE',
       inventoryItem: { tracked: false, requiresShipping: false },
-      taxable: true,
+      taxable: false,
     })));
     for (const t of missing) {
       const v = created.find(x => x.title === t.label);
@@ -120,7 +120,7 @@ async function main() {
       price: (v.cents / 100).toFixed(2),
       inventoryPolicy: 'CONTINUE',
       inventoryItem: { tracked: false, requiresShipping: false },
-      taxable: true,
+      taxable: false,
     })));
     const map = {};
     for (const v of VARIANTS) {
