@@ -2,7 +2,7 @@
 
 - **Domains:** community, marketing, tech
 - **Initiative:** Virtual Closet
-- **Status:** DISCUSSED 2026-09-19, revised 2026-09-22 for the minimal cut and Jamie's decisions that day. Not started. Decisions are marked; open questions at the end.
+- **Status:** DISCUSSED 2026-09-19, revised 2026-09-22 for the minimal cut and Jamie's decisions that day. BUILT 2026-09-22 on branch `wt/virtual-closet-store` of rubies-ecom-v4 (preview theme `rubies-ecom-v4/wt/virtual-closet-store`) and `wt/closet-style-taps` here. The order confirmation email block is still to do.
 - **Companion:** `.claude/memory/initiative_virtual_closet.md`. The programme record is `.claude/plans/org-closet-programme.md`.
 
 ## Why the store has to know anything
@@ -17,13 +17,13 @@ The closet page lives on closet.rubyshines.com; the shopper buys on rubyshines.c
 ## What already exists (as of 2026-09-22)
 
 - One Shopify discount, "Virtual Closet 20%", once per customer. Every tap on Shop or on a style mints a code on it (`VC-<SLUG>-<hex>`) and redirects to the store's discount URL, landing on the product when a style was tapped.
-- The Shop route sets a cookie `vc_shop=<slug>|<code>`, 30 days, script-readable, on `.rubyshines.com` once the service answers there. A second tap on the same device reuses the code while it is unused. **This cookie is the store's only signal that a shopper came from a closet link.**
+- The Shop route lands the shopper on the store with `?vc=slug|code|tapTime|centreName|used` on the path (built 2026-09-22; it replaces the earlier idea of a `.rubyshines.com` cookie set by the service, which needed the subdomain and could not be read until DNS settled). The theme keeps it in its own cookie `vc_closet` for 30 days. The service keeps its own host-only cookie `vc_code` so a second tap reuses an unused code. **The `vc` parameter, then the theme's cookie, is the store's only signal that a shopper came from a closet link.**
 - The orders webhook credits the centre a quarter of the post-discount subtotal when the order carries a `VC-` code, and a sponsor line's face value when it carries one.
 - The hidden "Sponsor a closet" product; tiles are cart permalinks with `Closet` and `Kind` cart attributes.
 
-## Prerequisite: closet.rubyshines.com
+## Prerequisite: the closet service deployed
 
-The cookie is only readable by the store when it is set on `.rubyshines.com`, which needs the closet service answering on the subdomain (custom domain on Railway, DNS at domain.com; `reference_deployment.md` has the state). Until then nothing here can be tested end to end.
+The bar and cart line need nothing from the subdomain: the landing parameter carries everything. The used-code lookup (`GET /api/code/:code`) is called at `https://closet.rubyshines.com`, so until DNS settles that one call fails quietly and the bar simply stays until the cookie expires or a new tap replaces it.
 
 ## Rule one: nothing shows unless they came from a closet link (Jamie, 2026-09-22)
 
