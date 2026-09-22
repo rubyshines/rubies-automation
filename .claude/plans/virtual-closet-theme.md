@@ -54,8 +54,8 @@ Shopify already lists the discount by title and code in both. Two changes and on
 - **The used-discount message** (Jamie, 2026-09-22: on the cart, never by email). Shopify only checks once-per-customer at checkout, after it knows the email, and the theme cannot strip a code from the cart, so we explain rather than remove. Three cases, all showing the same line as bar variant D:
   1. **Same device.** The cookie's code was used (the webhook set `order_id` on its row). The script asks the closet service `GET /api/code/<code>` and gets `{ used: true }`.
   2. **Signed-in customer, any device.** When an order with a `VC-` code lands, the orders webhook tags the Shopify customer `closet-discount-used`. The cart snippet reads `customer.tags`; no script call.
-  3. **Guest who typed their email at checkout, then came back to the cart.** The storefront never sees a checkout's email, but Shopify's `checkouts/create` and `checkouts/update` webhooks carry `email`, `cart_token` and the discount codes. New handler on the webhook server: when a checkout carries a `VC-` code, look up whether that email already has a credited closet order, and record `(cart_token, used)` on the closet service. The script reads the cart token from `/cart.js` and asks `GET /api/cart/<token>` the same way as case 1. Verify at build that the checkout webhook's `cart_token` matches the Ajax cart's `token`, and how long the webhook lags the email step.
-  Until any of these fire, a guest carrying a code sees the plain hedge on the closet line: "One per customer; checkout will say if you've used yours."
+  3. **Guest on a new device: not detected (Jamie, 2026-09-22).** The storefront never sees a checkout's email. It could be inferred from Shopify's `checkouts/update` webhook (email plus cart token) and a cart-token lookup from the theme, but the tokens and the lag are unproven and the group is small: most people remember they used it, and Shopify says so at checkout. Not built; revisit only if the pilot shows confusion.
+  Until case 1 or 2 fires, a guest carrying a code sees the plain hedge on the closet line: "One per customer; checkout will say if you've used yours."
 
 ## Attribution plumbing (settled 2026-09-19, revised 2026-09-22)
 
@@ -78,22 +78,22 @@ Shopify's Order confirmation notification is a Liquid template that can read the
 | Taps on a phone, buys on a laptop with the same email, first time | F | Nothing | Nothing on that order. Accepted. |
 | Used the 20% before, taps again, same device | D | Used message, closet line | Note attribute after Shopify strips the code. |
 | Used the 20% before, signed in, any device | D | Used message, closet line | Note attribute. |
-| Used the 20% before, guest, new device: types email at checkout, comes back | D once the checkout webhook has landed | Used message | Note attribute. |
+| Used the 20% before, guest, new device | A with the hedge | Hedge line; Shopify's own message at checkout | Note attribute after Shopify strips the code. |
 | Sponsor tile | E | Sponsor line | Sponsor line item, as today. |
 | Typed rubyshines.com, no cookie | F | The store as today | Nothing. |
 
 ## Where it lives
 
 - Theme (`rubies-ecom-v4`, Dawn-derived): `sections/closet-bar.liquid` (new, under the announcement bar in `header-group.json`); `assets/global-custom.js` (cookie read, cart attribute write, bar fill, dismiss, the two used-code lookups); `snippets/closet-cart-line.liquid` (new, rendered in `snippets/cart-drawer.liquid` and the cart page totals); the discount-line override in the same two places; `locales/en.default.json`; `assets/closets.json` published from rubies-automations.
-- Closet service: `GET /api/code/:code` and `GET /api/cart/:token` (CORS for rubyshines.com, no secrets, answers `{ used }` only); the checkout-token table.
-- rubies-automations: `checkouts/*` webhook subscription and handler; customer tag on a credited order in `webhooks/handlers/shopifyOrders.js`; note-attribute path in `virtual-closet/lib/ledger.js`; `closets.json` publish step beside the wholesale pricing page.
+- Closet service: `GET /api/code/:code` (CORS for rubyshines.com, no secrets, answers `{ used }` only).
+- rubies-automations: customer tag on a credited order in `webhooks/handlers/shopifyOrders.js`; note-attribute path in `virtual-closet/lib/ledger.js`; `closets.json` publish step beside the wholesale pricing page.
 - Shopify Admin: the Order confirmation template block.
 
 ## Build order
 
 0. Subdomain answers on https (in progress, DNS).
-1. Closet service: timestamp in the cookie; `closets.json` publish; the two lookup endpoints; checkout-token table. Small.
-2. rubies-automations: note-attribute path and reconcile window; customer tag on credit; checkouts webhook handler. Half a day.
+1. Closet service: timestamp in the cookie; `closets.json` publish; the code lookup endpoint. Small.
+2. rubies-automations: note-attribute path and reconcile window; customer tag on credit. Half a day.
 3. Theme: script, bar, cart snippet, discount-line override, locale strings, on a preview theme. About a day, most of it testing that the attribute survives the discount redirect and checkout.
 4. Order confirmation template block.
 5. Real-browser tests: Safari and Chrome, a guest and a signed-in customer, one real order per row of the scenarios table, then reconcile.
