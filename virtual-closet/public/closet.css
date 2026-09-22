@@ -62,7 +62,7 @@ b, strong { font-weight: 600; }
 .hd-user { color: var(--soft); font-size: 14px; }
 /* link mode: the centre's name as the title, "RUBIES × logo" on the right */
 .hd-title { font-size: 22px; font-weight: 500; letter-spacing: .01em; line-height: 1.2; }
-.hd-x { display: flex; align-items: center; gap: 14px; }
+.hd-x { display: flex; align-items: center; gap: 8px; } /* RUBIES × centre: a tight pair, not three items (Jamie, 2026-09-22) */
 .hd-x .brand img { width: 130px; }
 .hd-x-mark { font-size: 22px; color: var(--soft); line-height: 1; }
 .hd-clogo { max-height: 48px; max-width: 160px; display: block; }
