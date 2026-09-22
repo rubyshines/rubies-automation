@@ -16,10 +16,10 @@ The closet page lives on closet.rubyshines.com; the shopper buys on rubyshines.c
 
 ## What already exists (as of 2026-09-22)
 
-- One Shopify discount, "Virtual Closet 20%", once per customer. Every tap on Shop or on a style mints a code on it (`VC-<SLUG>-<hex>`) and redirects to the store's discount URL, landing on the product when a style was tapped.
+- One Shopify discount, "Virtual Closet 20%", once per customer: a product discount on the automatic collection `virtual-closet-eligible` (every product except the sponsorship product and gift cards), combining with order, product and shipping discounts like the store's managed discounts, which means highest-wins against sales and volume tiers (2026-09-22). Every tap on Shop or on a style mints a code on it (`VC-<SLUG>-<hex>`) and redirects to the store's discount URL, landing on the product when a style was tapped. The code is removed from Shopify once its order is credited.
 - The Shop route lands the shopper on the store with `?vc=slug|code|tapTime|centreName|used` on the path (built 2026-09-22; it replaces the earlier idea of a `.rubyshines.com` cookie set by the service, which needed the subdomain and could not be read until DNS settled). The theme keeps it in its own cookie `vc_closet` for 30 days. The service keeps its own host-only cookie `vc_code` so a second tap reuses an unused code. **The `vc` parameter, then the theme's cookie, is the store's only signal that a shopper came from a closet link.**
-- The orders webhook credits the centre a quarter of the post-discount subtotal when the order carries a `VC-` code, and a sponsor line's face value when it carries one.
-- The hidden "Sponsor a closet" product; tiles are cart permalinks with `Closet` and `Kind` cart attributes.
+- The orders webhook credits the centre a quarter of the post-discount product subtotal when the order carries a `VC-` code (sponsor lines excluded from the quarter), a sponsor line's face value when it carries one, and the quarter on a code-less order that carries the theme's closet attributes within 30 days of the tap, first order per email. A credited code order tags the customer `closet-discount-used`.
+- The hidden "Sponsor a closet" product with one variant per tile ($10, $25, $50, $100) and a $1 unit; a tile is the cart's add URL with line properties: `For: [Centre]'s Virtual Closet` visible, `_Closet` and `_Kind` hidden for the ledger.
 
 ## Prerequisite: the closet service deployed
 
@@ -49,7 +49,7 @@ The customer-year variant (C) from the 2026-09-19 draft is dropped from this tab
 
 Shopify already lists the discount by title and code in both. Two changes and one new line, all gated on rule one.
 
-- **The discount line.** When the code starts with `VC-`, show "20% off, shopping for [Centre]'s Virtual Closet" instead of the raw code.
+- **The discount line.** Built: a product-class code sits on the lines, so the drawer shows the friendly label under each item, one footer line "20% OFF - [CENTRE] VIRTUAL CLOSET (-$X)" summed from the line allocations, and no removable pill for closet codes (Jamie, 2026-09-22).
 - **The closet line**, under the totals: "A quarter of this order, $X, goes to [Centre]'s Virtual Closet, and RUBIES matches it." X is a quarter of the cart total after the discount, excluding sponsor lines, which mirrors the ledger. A Liquid snippet over `cart.attributes`, so Dawn's cart re-render keeps it current. If the cart holds only sponsor items: "$Y goes to [Centre]'s Virtual Closet, and RUBIES matches it."
 - **The used-discount message** (Jamie, 2026-09-22: on the cart, never by email). Shopify only checks once-per-customer at checkout, after it knows the email, and the theme cannot strip a code from the cart, so we explain rather than remove. Three cases, all showing the same line as bar variant D:
   1. **Same device.** The cookie's code was used (the webhook set `order_id` on its row). The script asks the closet service `GET /api/code/<code>` and gets `{ used: true }`.
