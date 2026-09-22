@@ -105,6 +105,26 @@ async function shopUrlFor(centre, opts = {}) {
   return (await shopVisit(centre, opts)).url;
 }
 
+/**
+ * Once a code's order has landed, take the code off the Shopify discount so
+ * it cannot be used again (Jamie, 2026-09-22). Our row keeps it for
+ * attribution. Fails soft: a code left behind is the state we had before.
+ */
+async function retireCode(code) {
+  if (!code) return false;
+  if (!allowLiveWrite(`retire closet code ${code}`)) return false;
+  try {
+    const discount = await config.get('discount');
+    if (!discount?.id) return false;
+    const shopify = require('../../customer-service/lib/shopify');
+    await shopify.deleteDiscountRedeemCodes(discount.id, String(code).toUpperCase());
+    return true;
+  } catch (err) {
+    console.warn(`[vc] could not retire code ${code}: ${err.message}`);
+    return false;
+  }
+}
+
 /** Which centre a discount code belongs to (null when it is not ours). */
 async function centreForCode(code) {
   if (!code || !/^VC-/i.test(code)) return null;
@@ -112,4 +132,4 @@ async function centreForCode(code) {
   return row;
 }
 
-module.exports = { TITLE, PERCENT, ensureDiscount, shopVisit, shopUrlFor, storePath, centreForCode, codeFor };
+module.exports = { TITLE, PERCENT, ensureDiscount, shopVisit, shopUrlFor, storePath, centreForCode, codeFor, retireCode };

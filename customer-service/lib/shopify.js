@@ -1680,6 +1680,24 @@ async function findDiscountNodeByTitle(title) {
  * @returns {{id:number, code:string, price_rule_id:number}} created code
  * @throws on Shopify error; duplicate codes surface as "code ... taken".
  */
+/**
+ * Remove codes matching `search` from a code discount (GraphQL, async job on
+ * Shopify's side). Used to retire a Virtual Closet code once its order lands.
+ */
+async function deleteDiscountRedeemCodes(discountId, search) {
+  const data = await shopifyGraphQL(`
+    mutation($discountId: ID!, $search: String) {
+      discountRedeemCodeBulkDelete(discountId: $discountId, search: $search) {
+        job { id done }
+        userErrors { field message }
+      }
+    }
+  `, { discountId, search });
+  const errs = data?.discountRedeemCodeBulkDelete?.userErrors || [];
+  if (errs.length) throw new Error(`deleteDiscountRedeemCodes: ${errs.map(e => e.message).join('; ')}`);
+  return data.discountRedeemCodeBulkDelete.job;
+}
+
 async function addCodeToPriceRule(priceRuleId, code) {
   const { storeUrl, token } = getConfig();
   const url = `https://${storeUrl}/admin/api/${SHOPIFY_API_VERSION}/price_rules/${priceRuleId}/discount_codes.json`;
@@ -2398,6 +2416,7 @@ module.exports = {
   findDiscountNodeByTitle,
   randomDiscountCode,
   addCodeToPriceRule,
+  deleteDiscountRedeemCodes,
   findDiscountCodeByCode,
   findRedeemCode,
   deleteRedeemCodes,

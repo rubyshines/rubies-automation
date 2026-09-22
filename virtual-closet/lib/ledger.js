@@ -151,7 +151,12 @@ async function recordOrder(order, { lineItems = null, emit = true, lookupAttribu
     const box = await openBoxFor(centre);
     const row = subtotal > 0 ? await credit({ centre, box, kind: 'order_credit', amountCents: money.orderCreditCents(subtotal), sourceType: 'shopify_order', sourceId: orderId, detail: { code, subtotal_cents: subtotal, order_number: order.order_number || order.name, email } }) : null;
     await db().from('vc_discount_codes').update({ order_id: orderId, used_at: new Date().toISOString() }).eq('code', known.code).is('order_id', null);
-    if (row) { credited.push({ ...row, centre, box }); await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents }); }
+    if (row) {
+      credited.push({ ...row, centre, box });
+      await logEvent(centre.id, 'system', 'ledger.order_credit', { order: orderId, cents: row.amount_cents });
+      // The code has done its job; off the store it goes so nobody reuses it.
+      if (await discounts.retireCode(known.code)) await logEvent(centre.id, 'system', 'code.retired', { code: known.code, order: orderId });
+    }
   }
 
   // 2. Sponsorship and centre top-up line items.
