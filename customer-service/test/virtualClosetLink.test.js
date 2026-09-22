@@ -254,7 +254,16 @@ test('the link-mode emails compose from the right sender with the locked sentenc
   assert.ok(out.includes('3 orders through your link put $24.60 in.'));
   assert.ok(out.includes('Your balance is $112.40.'));
   assert.ok(out.includes('Raised so far: $188 of your $1,000 goal'), 'the digest names the goal');
-  assert.ok(out.includes('50% off any order where the retail value before the discount is $600 or more'));
+  assert.ok(out.includes('Partner pricing stays as it is: 50% off retail with a $300 minimum order.'), 'a centre with no country on file is treated as US');
+  // The welcome's partner pricing follows the country and the wholesale minimum, the same sources as every wholesale surface (Jamie, 2026-09-22).
+  assert.equal(emails.partnerPricingLine({ address: { country: 'US' } }), 'Partner pricing stays as it is: 50% off retail with a $300 minimum order.');
+  assert.equal(emails.partnerPricingLine({ address: { country: 'AU' } }), 'Partner pricing stays as it is: 50% off retail, priced in USD, with a $300 USD minimum order.');
+  assert.equal(emails.partnerPricingLine({ address: { country: 'CA' } }), 'Partner pricing stays as it is: 30% off retail, priced in USD, with a $300 USD minimum order.');
+  assert.equal(emails.partnerPricingLine({ address: { country: 'GB' } }).slice(0, 34), 'Partner pricing stays as it is: 30');
+  assert.equal(emails.partnerPricingLine({ address: { country: 'DE' } }).slice(0, 34), 'Partner pricing stays as it is: 30');
+  const ca = await quiet(() => emails.welcome({ centre: { ...centre, slug: 'lumenus', name: 'Lumenus', currency: 'CAD', address: { city: 'Toronto', country: 'CA' } }, to: 'x@lumenus.ca' }));
+  assert.ok(ca.includes('30% off retail, priced in USD, with a $300 USD minimum order'), 'a Canadian centre is quoted 30%');
+  assert.ok(!ca.includes('50%') && !ca.includes('$600'), 'and never 50% or the old $600 line');
   assert.ok(!/printable|fact sheet/i.test(out), 'no printable promise');
   assert.ok(!/\bmatch/i.test(out.split("added to The Attic's Virtual Closet today")[1].split('Thank you from')[0]), 'the digest does not use the word match');
   assert.ok(!out.includes('—'), 'no em dashes');

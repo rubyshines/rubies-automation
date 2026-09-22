@@ -181,13 +181,32 @@ async function welcomeAttachments(centre) {
   return out;
 }
 
+/**
+ * The partner-pricing sentence in the welcome, from the same two sources every
+ * wholesale surface uses: the rate is the country lookup (US and Australia
+ * 50%, everywhere else 30%; b2b-outreach/lib/donationAgreement.js) and the
+ * minimum is the wholesale order minimum in USD (wholesalePriceList.js). The
+ * welcome used to say "$600 retail", which is the same $300 order minimum
+ * expressed at 50%; stating the order minimum keeps it true at 30% too.
+ * Outside the US it says USD, since the centre's own money is in another currency.
+ */
+function partnerPricingLine(centre) {
+  const { partnerDiscountPercent } = require('../../b2b-outreach/lib/donationAgreement');
+  const { MINIMUM_ORDER_USD, isDomestic } = require('../../b2b-outreach/lib/wholesalePriceList');
+  const country = centre.address?.country || 'US';
+  const pct = partnerDiscountPercent(country);
+  const usd = isDomestic(country) ? '' : ' USD';
+  return `Partner pricing stays as it is: ${pct}% off retail${usd ? ', priced in USD,' : ''} with a $${MINIMUM_ORDER_USD}${usd} minimum order.`;
+}
+
 /** Link mode: from Jamie, congratulations, the link, the QR, the terms in plain words. */
 async function welcomeLink({ centre, to }) {
   const url = `${BASE}/${centre.slug}`;
+  const pricing = partnerPricingLine(centre);
   const attachments = await welcomeAttachments(centre);
   const hasSign = attachments.some(a => a.filename === signFilename(centre));
   return deliver({ to, subject: 'Your RUBIES Virtual Closet is ready.', tag: 'welcome', from: FROM_JAMIE, attachments,
-    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ` Attached is a table sign you can print, fold and stand up, with a QR code that opens your Virtual Closet; reprint it any time at ${url}/qr-sign. The QR code is attached on its own too.` : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more. Jamie`,
+    text: `Congratulations, ${centre.name}'s Virtual Closet is ready: ${url}. Share it on your socials, your website and your newsletter.${hasSign ? ` Attached is a table sign you can print, fold and stand up, with a QR code that opens your Virtual Closet; reprint it any time at ${url}/qr-sign. The QR code is attached on its own too.` : ''} Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar. When you're ready to order, email me your order and I'll apply what your closet has earned. ${pricing} Jamie`,
     html: layout('Your RUBIES Virtual Closet is ready.',
       p(`Hi ${esc(centre.name)} team,`) +
       p(`Congratulations, ${esc(centre.name)}'s Virtual Closet is ready.`) +
@@ -196,7 +215,7 @@ async function welcomeLink({ centre, to }) {
         ? `<b>Attached is a table sign you can print</b>, fold and stand up wherever your community will see it: the front desk, a counter, your table at events. Its QR code opens your Virtual Closet, so anyone can scan it to shop or sponsor, and the back tells whoever is at the table what to say. Print it at 100%, not fit to page, so the folds line up; reprint it any time at <a href="${url}/qr-sign">${esc(url.replace(/^https?:\/\//, ''))}/qr-sign</a>. The QR code is attached on its own too, for your website, socials and newsletter.`
         : `Your QR code is attached${attachments.length ? '' : ` (or fetch it any time at <a href="${url}/qr.png">${esc(url.replace(/^https?:\/\//, ''))}/qr.png</a>)`}.`) +
       p(`<b>How it adds up.</b> Your Virtual Closet earns 25% of what shoppers pay through your link, plus every sponsor dollar.`) +
-      p(`<b>When you're ready to order,</b> email me your order and I'll apply what your closet has earned. Partner pricing stays as it is: 50% off any order where the retail value before the discount is $600 or more.`) +
+      p(`<b>When you're ready to order,</b> email me your order and I'll apply what your closet has earned. ${pricing}`) +
       p(`Questions any time.<br>Jamie<br><a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`),
       `RUBIES · <a href="mailto:${OPERATOR_EMAIL}">${OPERATOR_EMAIL}</a>`, { centre }) });
 }
@@ -371,7 +390,7 @@ module.exports = {
   BASE, OPS_BASE, OPERATOR_EMAIL, deliver, layout, btn, btns,
   verifyEmail, resetPassword, invitation, addedToCentre, madeAdmin, emailChanged, confirmEmailChange,
   operatorSignup, operatorNeedsAttention,
-  welcome, welcomeLink, activity, linkPost, sponsored, requestNeedsAnswer, requestAutoApproved, boxFunded, boxOnItsWay, boxArrived, statement, byHandReminder,
+  welcome, welcomeLink, activity, linkPost, partnerPricingLine, sponsored, requestNeedsAnswer, requestAutoApproved, boxFunded, boxOnItsWay, boxArrived, statement, byHandReminder,
   requestConfirm, requestReceived, requestOnItsWay, requestReady, requestDeclined, requestEnded,
   sponsorThanks, sponsorArrived,
 };
