@@ -95,6 +95,15 @@ async function buildOrderContextFromMirror(orderNumber) {
 }
 
 /**
+ * Subject tiers (the same rule the outbound composer prompt applies; a driver
+ * script picks by hand, so pick the same way). Ask: if the customer never
+ * replies, does anything stay stuck?
+ *   - Stuck (nothing ships until they answer):  "ACTION REQUIRED: <short specific line>"
+ *   - Not stuck, but a material change they did not know about:
+ *                                               "Important update on your RUBIES order #NNNNN"
+ *   - Everything else (heads-up, thank-you, feedback): a plain, friendly subject.
+ * Only the ACTION REQUIRED prefix is upper case; never an all-caps subject.
+ *
  * @param {object} args
  * @param {Array<{order_number, customer_email, customer_name?, subject, html_body, plain_body?, summary?}>} args.outreaches
  *   summary (optional): short string shown on the dashboard queue card.

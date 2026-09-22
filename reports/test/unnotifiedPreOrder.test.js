@@ -11,6 +11,7 @@ const {
   isPreOrderByTags,
   olderThanMinutes,
   MIN_ORDER_AGE_MINUTES,
+  subjectFor,
 } = require('../lib/unnotifiedPreOrder');
 
 // Build a candidate in the shape detectUnnotifiedPreOrders produces.
@@ -426,4 +427,15 @@ test('composeBody adds delay acknowledgement when order is older than threshold'
   assert.equal(recent.includes('apologies for the delay'), false);
   assert.match(stale, /apologies for the delay reaching out/);
   assert.match(stale, /I only just caught this/);
+});
+
+test('subjectFor: an unnotified pre-order is an Important update, never ACTION REQUIRED', () => {
+  // The order ships when stock lands whether or not the customer replies, so
+  // the blocking-ask prefix would overstate it (see the tier rules in
+  // composeOutboundDraft.js). The order number rides on the subject so the
+  // customer can place it; a staged swap is good news, not a warning.
+  assert.equal(subjectFor('33009', false), 'Important update on your RUBIES order #33009');
+  assert.equal(subjectFor('#33009', false), 'Important update on your RUBIES order #33009');
+  assert.equal(subjectFor(33009, true), 'Good news about your recent RUBIES order');
+  assert.doesNotMatch(subjectFor('33009', false), /ACTION/i);
 });

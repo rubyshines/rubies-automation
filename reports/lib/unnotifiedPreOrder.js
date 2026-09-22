@@ -68,9 +68,19 @@ const NOTE_PREFIX = '[auto-draft] Unnotified pre-order outreach drafted';
 // identify these drafts and regenerate them through this module's A/B/C
 // template rather than the general outbound composer.
 const OUTREACH_KIND = 'unnotified_pre_order';
-const SUBJECT = 'ACTION required on your recent RUBIES order';
-// Swap-done drafts require no customer action, so no ACTION-required subject.
+// Subject tier: an unnotified pre-order is a material change the customer was
+// never told about, but the order still ships when stock lands whether or not
+// they reply, so it is an "Important update", not "ACTION REQUIRED" (that
+// prefix is reserved for outreach where nothing moves until they answer; see
+// the tier rules in composeOutboundDraft.js and customerOutreach.js).
+const SUBJECT_PREFIX = 'Important update on your RUBIES order';
+// Swap-done drafts carry good news, not a warning.
 const SUBJECT_SWAPPED = 'Good news about your recent RUBIES order';
+function subjectFor(orderNumber, swapped) {
+  if (swapped) return SUBJECT_SWAPPED;
+  const num = String(orderNumber || '').replace('#', '');
+  return num ? `${SUBJECT_PREFIX} #${num}` : SUBJECT_PREFIX;
+}
 // These drafts are seeded into the dashboard and sent through the normal draft
 // send path (autoLinkProducts turns the markdown link into a real <a>), so the
 // markdown signature form is the correct one here — same as the advisor's.
@@ -819,7 +829,7 @@ async function recomposeOutreachForOrder(orderNumber, { supabase = null } = {}) 
     case: classification.case,
     plain,
     html: plainToHtml(plain),
-    subject: swapped ? SUBJECT_SWAPPED : SUBJECT,
+    subject: subjectFor(orderNum, swapped),
     summary: buildSummary(classification, swapped),
     actionType: swapped ? 'order_modification' : null,
     operatorActionSummary: swapped ? buildSwapActionSummary(orderNum, autoSwaps) : null,
@@ -855,7 +865,7 @@ async function draftLeakOutreach({ leaks, write = false }) {
         orderNumber,
         customerEmail: order.customer_email,
         customerName: null,
-        subject: swapped ? SUBJECT_SWAPPED : SUBJECT,
+        subject: subjectFor(orderNumber, swapped),
         plainBody: plain,
         htmlBody: html,
         summary,
@@ -1059,6 +1069,7 @@ module.exports = {
   recomposeOutreachForOrder,
   attachSwapData,
   buildSummary,
+  subjectFor,
   OUTREACH_KIND,
   isPreOrderByTags,
   olderThanMinutes,
