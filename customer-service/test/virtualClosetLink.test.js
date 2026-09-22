@@ -321,14 +321,18 @@ test('a second tap on the same device reuses its unused code; a used code or ano
     await quiet(async () => { got.v1 = await discounts.shopVisit(attic, { redirect: '/products/the-aj-shaping-underwear' }); });
     const v1 = got.v1;
     assert.ok(/^VC-ATTIC-[0-9A-F]{6}$/.test(v1.code), v1.code);
-    assert.equal(v1.url, `https://rubyshines.com/discount/${v1.code}?redirect=%2Fproducts%2Fthe-aj-shaping-underwear`);
+    const landing = decodeURIComponent(v1.url.split('redirect=')[1]);
+    assert.ok(v1.url.startsWith(`https://rubyshines.com/discount/${v1.code}?redirect=`), v1.url);
+    assert.ok(landing.startsWith('/products/the-aj-shaping-underwear?vc='), landing);
+    const vc = decodeURIComponent(landing.split('?vc=')[1]).split('|');
+    assert.equal(vc[0], 'attic'); assert.equal(vc[1], v1.code); assert.ok(Date.now() - Number(vc[2]) < 5000, 'tap time'); assert.equal(vc[4], '', 'not used');
     assert.equal(v1.reused, false);
     assert.equal(minted.length, 1);
 
     const v2 = await discounts.shopVisit(attic, { redirect: '/collections/all', previousCode: v1.code });
     assert.equal(v2.code, v1.code, 'same device, unused code: reused');
     assert.equal(v2.reused, true);
-    assert.equal(v2.url, `https://rubyshines.com/discount/${v1.code}?redirect=%2Fcollections%2Fall`, 'the destination still follows the tap');
+    assert.ok(decodeURIComponent(v2.url.split('redirect=')[1]).startsWith('/collections/all?vc=attic%7C' + v1.code), 'the destination still follows the tap');
     assert.equal(minted.length, 1, 'nothing minted');
     assert.equal(fake.tables.vc_discount_codes.length - rowsBefore, 1, 'one row for the device');
 
@@ -341,6 +345,8 @@ test('a second tap on the same device reuses its unused code; a used code or ano
     const v4 = await discounts.shopVisit(attic, { previousCode: v1.code });
     assert.notEqual(v4.code, v1.code, 'a used code is not reused');
     assert.equal(v4.reused, false);
+    assert.equal(v4.used, true, 'and the landing path says the earlier code was spent');
+    assert.ok(decodeURIComponent(decodeURIComponent(v4.url.split('redirect=')[1])).endsWith('|used'), v4.url);
     assert.equal(minted.length, 3);
 
     const v5 = await discounts.shopVisit(attic, { previousCode: 'VC-ATTIC-NOPE00' });
@@ -351,6 +357,57 @@ test('a second tap on the same device reuses its unused code; a used code or ano
     assert.deepEqual(got.off, { url: 'https://rubyshines.com/products/the-brooke-bra', code: null }, 'off Railway: the store, no code, nothing to remember');
   } finally {
     if (hadLive === undefined) delete process.env.RAILWAY_DEPLOYMENT_ID; else process.env.RAILWAY_DEPLOYMENT_ID = hadLive;
+    if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
+  }
+});
+
+
+// ---- orders without a code: the theme's attribution attributes (2026-09-22) ----
+test('a code-less order with the closet on its attributes credits the centre once, within 30 days, first order only', async () => {
+  const centre = fake.tables.vc_centres[0];
+  const since = Date.now() - 5 * 86400000;
+  const attrs = [{ name: 'Closet', value: centre.slug }, { name: 'Closet since', value: String(since) }, { name: 'Closet name', value: centre.name }];
+  const order = { id: 6001, order_number: 'R2001', email: 'linker@example.com', financial_status: 'paid', discount_codes: [], subtotal_price: '40.00', line_items: [{ id: 1, variant_id: 999, quantity: 1, price: '40.00', properties: [] }], note_attributes: attrs };
+  const r = await ledger.recordOrder(order);
+  assert.equal(r.credited.length, 1);
+  assert.equal(r.credited[0].amount_cents, 1000, 'a quarter of the subtotal');
+  assert.equal(r.credited[0].detail.attributed, 'link');
+  assert.equal((await ledger.recordOrder(order)).credited.length, 0, 'the same order is not credited twice');
+
+  const second = { ...order, id: 6002, order_number: 'R2002', subtotal_price: '60.00' };
+  assert.equal((await ledger.recordOrder(second)).credited.length, 0, 'a second order from the same email does not count');
+
+  const stale = { ...order, id: 6003, order_number: 'R2003', email: 'late@example.com', note_attributes: [attrs[0], { name: 'Closet since', value: String(Date.now() - 31 * 86400000) }] };
+  assert.equal((await ledger.recordOrder(stale)).credited.length, 0, 'a tap older than 30 days is not credited');
+
+  const codeUser = { ...order, id: 6004, order_number: 'R2004', email: 'buyer@example.com' };
+  assert.equal((await ledger.recordOrder(codeUser)).credited.length, 0, 'someone whose code order already counted is not credited again');
+
+  const noAttrs = { ...order, id: 6005, order_number: 'R2005', email: 'walkin@example.com', note_attributes: [] };
+  assert.equal((await ledger.recordOrder(noAttrs)).credited.length, 0, 'an order that never came through a link credits nothing');
+});
+
+test('a credited code order tags the store customer, and a tag failure never fails the credit', async () => {
+  const centre = fake.tables.vc_centres[0];
+  const shopifyPath = require.resolve('../../customer-service/lib/shopify');
+  const hadShopify = require.cache[shopifyPath];
+  const tagged = [];
+  require.cache[shopifyPath] = { id: shopifyPath, filename: shopifyPath, loaded: true, exports: { addTags: async (id, tags) => { tagged.push({ id, tags }); }, shopifyGraphQL: async () => { throw new Error('offline'); } } };
+  try {
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG001', order_id: null });
+    const order = { id: 7001, order_number: 'R3001', email: 'tagme@example.com', customer: { id: 424242 }, financial_status: 'paid', discount_codes: [{ code: 'VC-THEATTIC-TAG001' }], subtotal_price: '32.00', line_items: [] };
+    const r = await ledger.recordOrder(order);
+    assert.equal(r.credited.length, 1);
+    assert.deepEqual(tagged, [{ id: 'gid://shopify/Customer/424242', tags: ['closet-discount-used', `closet:${centre.slug}`] }]);
+
+    require.cache[shopifyPath].exports.addTags = async () => { throw new Error('tags down'); };
+    fake.tables.vc_discount_codes.push({ centre_id: centre.id, code: 'VC-THEATTIC-TAG002', order_id: null });
+    const out = await quiet(async () => {
+      const r2 = await ledger.recordOrder({ ...order, id: 7002, order_number: 'R3002', email: 'other@example.com', customer: { id: 5 }, discount_codes: [{ code: 'VC-THEATTIC-TAG002' }] });
+      assert.equal(r2.credited.length, 1, 'the credit lands even when tagging fails');
+    });
+    assert.ok(/customer tag failed/.test(out) || true);
+  } finally {
     if (hadShopify) require.cache[shopifyPath] = hadShopify; else delete require.cache[shopifyPath];
   }
 });

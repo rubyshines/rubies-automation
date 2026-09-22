@@ -15,6 +15,7 @@ const PRODUCT_TITLE = 'Sponsor a closet';
 const PROP_CENTRE = 'Closet';
 const PROP_BOX = 'Box';
 const PROP_KIND = 'Kind';
+const PROP_SINCE = 'Closet since'; // the tap time (ms), written by the store's theme
 
 /** { productId, variants: { pair: {id, numericId, cents}, ..., unit: {...} } } or null before setup. */
 async function settings() {
@@ -46,10 +47,12 @@ async function checkoutUrl({ centre, box, tile, centreAdd = false }) {
 function readOrderAttributes(order) {
   const props = {};
   for (const a of order?.note_attributes || order?.customAttributes || []) props[(a.name || a.key || '').toLowerCase()] = a.value;
+  const since = parseInt(props[PROP_SINCE.toLowerCase()], 10);
   return {
     slug: props[PROP_CENTRE.toLowerCase()] || null,
     boxNumber: parseInt(props[PROP_BOX.toLowerCase()], 10) || null,
     kind: props[PROP_KIND.toLowerCase()] === 'centre' ? 'centre_add' : 'sponsor',
+    sinceMs: Number.isFinite(since) ? since : null,
   };
 }
 
@@ -74,4 +77,4 @@ function readLineItem(li, s, orderAttrs = null) {
   };
 }
 
-module.exports = { PRODUCT_TITLE, PROP_CENTRE, PROP_BOX, PROP_KIND, SPONSOR_TILES, settings, checkoutUrl, readLineItem, readOrderAttributes, numericId };
+module.exports = { PRODUCT_TITLE, PROP_CENTRE, PROP_BOX, PROP_KIND, PROP_SINCE, SPONSOR_TILES, settings, checkoutUrl, readLineItem, readOrderAttributes, numericId };

@@ -101,7 +101,7 @@ test('a sponsorship line item is read from either the webhook or the mirror shap
   assert.deepEqual(mirror, { slug: 'demo', boxNumber: null, kind: 'centre_add', amountCents: 5000, lineItemId: '10' });
   assert.equal(sponsorship.readLineItem({ variant_id: 999 }, s), null);
   const attrs = sponsorship.readOrderAttributes({ note_attributes: [{ name: 'Closet', value: 'demo' }, { name: 'Box', value: '3' }, { name: 'Kind', value: 'centre' }] });
-  assert.deepEqual(attrs, { slug: 'demo', boxNumber: 3, kind: 'centre_add' });
+  assert.deepEqual(attrs, { slug: 'demo', boxNumber: 3, kind: 'centre_add', sinceMs: null });
   const viaOrder = sponsorship.readLineItem({ id: 11, variant_id: 222, quantity: 40, price: '1.00' }, s, attrs);
   assert.deepEqual(viaOrder, { slug: 'demo', boxNumber: 3, kind: 'centre_add', amountCents: 4000, lineItemId: '11' });
   const cartUrl = 'https://rubyshines.com/cart/222:40?attributes%5BCloset%5D=demo&attributes%5BBox%5D=3&attributes%5BKind%5D=centre';

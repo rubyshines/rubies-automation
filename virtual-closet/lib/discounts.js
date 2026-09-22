@@ -60,6 +60,11 @@ function storePath(to) {
  */
 async function shopVisit(centre, { redirect = '/collections/all', previousCode = null } = {}) {
   redirect = storePath(redirect);
+  // What the theme needs, on the landing path: slug, code, tap time, name,
+  // and `used` when the code this device had before was already spent (a
+  // fresh code is minted, but Shopify will refuse it at checkout, so the cart
+  // says so up front). Kept in the theme's own cookie for 30 days.
+  const landing = (code, used) => `${redirect}?vc=${encodeURIComponent([centre.slug, code, Date.now(), centre.name || '', used ? 'used' : ''].join('|'))}`;
   // A public page click writes a permanent code to the live store, so off the
   // real deployment this sends the shopper to the store without one. Guarding
   // the click rather than the store call keeps ensureDiscount's lookup working
@@ -67,10 +72,12 @@ async function shopVisit(centre, { redirect = '/collections/all', previousCode =
   if (!allowLiveWrite(`mint a Shopify discount code for ${centre.slug}`)) {
     return { url: `${STORE}${redirect}`, code: null };
   }
+  let used = false;
   if (previousCode) {
     const known = await centreForCode(previousCode);
-    if (known && known.centre_id === centre.id && !known.order_id) {
-      return { url: applyUrl(known.code, redirect), code: known.code, reused: true };
+    if (known && known.centre_id === centre.id) {
+      if (!known.order_id) return { url: applyUrl(known.code, landing(known.code, false)), code: known.code, reused: true };
+      used = true;
     }
   }
   const discount = await ensureDiscount();
@@ -83,7 +90,7 @@ async function shopVisit(centre, { redirect = '/collections/all', previousCode =
     }
   }
   must(await db().from('vc_discount_codes').insert({ centre_id: centre.id, code }), 'record code');
-  return { url: applyUrl(code, redirect), code, reused: false };
+  return { url: applyUrl(code, landing(code, used)), code, reused: false, used };
 }
 
 function applyUrl(code, redirect) {
