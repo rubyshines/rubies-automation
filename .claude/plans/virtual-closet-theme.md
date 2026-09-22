@@ -98,6 +98,12 @@ Shopify's Order confirmation notification is a Liquid template that can read the
 4. Order confirmation template block.
 5. Real-browser tests: Safari and Chrome, a guest and a signed-in customer, one real order per row of the scenarios table, then reconcile.
 
+## Testing without a card (2026-09-22)
+
+Pay with the store gift card `jamietestcard` (issued to Jamie, Shopify Admin, Gift cards). It runs the real checkout with the closet code, the order lands as paid so the ledger credits it at once, and a refund to the gift card restores the balance for the next test. Use a fresh email per "first order" test; reuse one to see the used-20% state. A 100% code cannot stack with the closet code, draft orders carry no code, and a manual payment method shows to every shopper while on.
+
+Preview theme for the store side: `rubies-ecom-v4/wt/virtual-closet-store` (id 190141694230). Open `https://rubyshines.com/?preview_theme_id=190141694230` once, then `https://closet.rubyshines.com/the-attic`. Shopify's preview rewrites the landing query, which is why the closet service also sets the `vc_closet` cookie on `.rubyshines.com` at the tap.
+
 ## Open questions for Jamie
 
 - The customer year (a year of code-less credit after a first closet order, with customer tags and a year table) was in the 2026-09-19 draft and is not in the terms locked on 2026-09-21. Recommendation: drop it for the pilot; the 30-day window is the whole story.
